@@ -8,6 +8,9 @@ use tokio::sync::{RwLock, broadcast};
 /// 64-bit value exactly; the server treats it as opaque.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct StrokeMsg {
+    /// `ink` for the user's own strokes, `agent` for marks an assistant added (cleared as a set).
+    #[serde(default = "default_layer")]
+    pub layer: String,
     pub preset: u32,
     pub argb: i32,
     pub scale: f32,
@@ -17,6 +20,13 @@ pub struct StrokeMsg {
     /// Microseconds since the stroke started, one per sample.
     pub times: Vec<i32>,
 }
+
+fn default_layer() -> String {
+    "ink".to_owned()
+}
+
+/// Marks a stroke as assistant-authored.
+pub const AGENT_LAYER: &str = "agent";
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct PageFile {
@@ -66,6 +76,38 @@ impl ServerState {
     pub async fn snapshot_frame(&self) -> String {
         let strokes = self.strokes.read().await;
         page_frame(&strokes)
+    }
+
+    /// Appends several strokes with one save and one broadcast (agent annotations).
+    pub async fn append_many(&self, strokes: Vec<StrokeMsg>) -> usize {
+        let strokes: Vec<StrokeMsg> = strokes.into_iter().filter(is_well_formed).collect();
+        if strokes.is_empty() {
+            return 0;
+        }
+        let added = strokes.len();
+        let all = {
+            let mut current = self.strokes.write().await;
+            current.extend(strokes);
+            current.clone()
+        };
+        self.save(&all).await;
+        let _ = self.tx.send(page_frame(&all));
+        added
+    }
+
+    /// Removes every agent-authored stroke; returns how many were removed.
+    pub async fn clear_agent(&self) -> usize {
+        let (all, removed) = {
+            let mut current = self.strokes.write().await;
+            let before = current.len();
+            current.retain(|stroke| stroke.layer != AGENT_LAYER);
+            (current.clone(), before - current.len())
+        };
+        if removed > 0 {
+            self.save(&all).await;
+            let _ = self.tx.send(page_frame(&all));
+        }
+        removed
     }
 
     /// Appends a stroke, persists, and fans it out. Returns false for a malformed stroke.

@@ -132,6 +132,37 @@ fn tools_list() -> serde_json::Value {
                 "name": "penwise_page_status",
                 "description": "Number of strokes currently on the Penwise page.",
                 "inputSchema": { "type": "object", "properties": {} }
+            },
+            {
+                "name": "penwise_annotate",
+                "description": "Draw polylines on the user's page (marks appear as a separate agent layer and can be cleared).",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "strokes": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "points": {
+                                        "type": "array",
+                                        "description": "Page-pixel points [[x, y], …]; two or more make a line.",
+                                        "items": { "type": "array", "items": { "type": "number" } }
+                                    },
+                                    "color": { "type": "string", "description": "#RRGGBB or #AARRGGBB (default red)" },
+                                    "width": { "type": "number", "description": "Stroke width in page px (default 3)" }
+                                },
+                                "required": ["points"]
+                            }
+                        }
+                    },
+                    "required": ["strokes"]
+                }
+            },
+            {
+                "name": "penwise_clear_agent_marks",
+                "description": "Remove every mark this or another agent drew on the page (the user's own ink is untouched).",
+                "inputSchema": { "type": "object", "properties": {} }
             }
         ]
     })
@@ -168,6 +199,22 @@ fn call_tool(
             let text = String::from_utf8_lossy(&body).to_string();
             Ok(serde_json::json!({ "content": [{ "type": "text", "text": text }] }))
         }
+        "penwise_annotate" => {
+            let body = request
+                .pointer("/params/arguments")
+                .map(serde_json::Value::to_string)
+                .unwrap_or_else(|| "{\"strokes\":[]}".to_owned());
+            let reply = endpoint
+                .post("/annotate", &body)
+                .map_err(|failure| error(-32603, &failure))?;
+            Ok(text_content(&String::from_utf8_lossy(&reply)))
+        }
+        "penwise_clear_agent_marks" => {
+            let reply = endpoint
+                .post("/annotate/clear", "{}")
+                .map_err(|failure| error(-32603, &failure))?;
+            Ok(text_content(&String::from_utf8_lossy(&reply)))
+        }
         other => Err(error(-32602, &format!("unknown tool {other}"))),
     }
 }
@@ -175,13 +222,22 @@ fn call_tool(
 impl Endpoint {
     /// Minimal HTTP/1.1 GET with `Connection: close`; returns the body.
     fn get(&self, path: &str) -> Result<Vec<u8>, String> {
+        self.request("GET", path, None)
+    }
+
+    /// Minimal HTTP/1.1 POST with a JSON body; returns the response body.
+    fn post(&self, path: &str, body: &str) -> Result<Vec<u8>, String> {
+        self.request("POST", path, Some(body))
+    }
+
+    fn request(&self, method: &str, path: &str, body: Option<&str>) -> Result<Vec<u8>, String> {
         let mut stream = TcpStream::connect((self.host.as_str(), self.port))
             .map_err(|e| format!("connect: {e}"))?;
         stream
             .set_read_timeout(Some(Duration::from_secs(30)))
             .map_err(|e| e.to_string())?;
         let mut request = format!(
-            "GET {path} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n",
+            "{method} {path} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n",
             self.host
         );
         if !self.token.is_empty() {
@@ -189,7 +245,17 @@ impl Endpoint {
             request.push_str(&self.token);
             request.push_str("\r\n");
         }
+        if let Some(body) = body {
+            let _ = write!(
+                request,
+                "Content-Type: application/json\r\nContent-Length: {}\r\n",
+                body.len()
+            );
+        }
         request.push_str("\r\n");
+        if let Some(body) = body {
+            request.push_str(body);
+        }
         stream
             .write_all(request.as_bytes())
             .map_err(|e| e.to_string())?;
@@ -208,6 +274,10 @@ impl Endpoint {
         }
         Ok(raw[split + 4..].to_vec())
     }
+}
+
+fn text_content(text: &str) -> serde_json::Value {
+    serde_json::json!({ "content": [{ "type": "text", "text": text }] })
 }
 
 fn error(code: i32, message: &str) -> serde_json::Value {

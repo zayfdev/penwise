@@ -3,6 +3,7 @@
 //! Thin vertical slice of the M3 contract: JSON over WebSocket instead of the postcard/HLC op log, and no pairing
 //! or mDNS yet (see `docs/contracts/m3-server.md` for the full design).
 
+mod annotate;
 mod auth;
 mod http;
 mod render;
@@ -16,7 +17,7 @@ use std::sync::Arc;
 use axum::Router;
 use axum::extract::{Query, State, WebSocketUpgrade};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 
 use state::ServerState;
 
@@ -45,6 +46,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/ws", get(upgrade))
         .route("/page.png", get(page_png))
         .route("/health", get(health))
+        .route("/annotate", post(annotate))
+        .route("/annotate/clear", post(clear_annotations))
         .fallback(get(file))
         .with_state(AppState {
             state,
@@ -105,6 +108,35 @@ async fn page_png(
             .into_response(),
         Err(error) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),
     }
+}
+
+/// `POST /annotate` — draws polylines on the agent layer. Body: `{"strokes":[{"points":[[x,y],…],
+/// "color":"#RRGGBB","width":3}]}`. Returns how many strokes were added.
+async fn annotate(
+    State(app): State<AppState>,
+    Query(auth_query): Query<AuthQuery>,
+    headers: axum::http::HeaderMap,
+    axum::Json(request): axum::Json<annotate::AnnotateRequest>,
+) -> Response {
+    if !auth::authorized(&app.token, auth_query.token.as_deref(), &headers) {
+        return auth::deny();
+    }
+    let strokes = annotate::to_strokes(&request);
+    let added = app.state.append_many(strokes).await;
+    axum::Json(serde_json::json!({ "added": added })).into_response()
+}
+
+/// `POST /annotate/clear` — removes every agent-authored stroke.
+async fn clear_annotations(
+    State(app): State<AppState>,
+    Query(auth_query): Query<AuthQuery>,
+    headers: axum::http::HeaderMap,
+) -> Response {
+    if !auth::authorized(&app.token, auth_query.token.as_deref(), &headers) {
+        return auth::deny();
+    }
+    let removed = app.state.clear_agent().await;
+    axum::Json(serde_json::json!({ "removed": removed })).into_response()
 }
 
 /// `GET /health` — stroke count, for scripts and agents.
