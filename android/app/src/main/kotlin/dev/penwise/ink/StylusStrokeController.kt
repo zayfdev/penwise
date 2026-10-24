@@ -145,7 +145,8 @@ internal class StylusStrokeController(
                 release()
             } else {
                 addErasePoints(event, index)
-                erase(persist = true)
+                erase(persist = false)
+                store.commitErase()
                 erasing = false
                 eraseCount = 0
                 penId = NO_POINTER
@@ -237,7 +238,7 @@ internal class StylusStrokeController(
             sink.cancelStroke()
         }
         if (erasing) {
-            store.persist()
+            store.commitErase()
             release()
         }
     }

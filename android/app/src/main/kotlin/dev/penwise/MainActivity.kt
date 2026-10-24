@@ -50,6 +50,7 @@ class MainActivity : ComponentActivity() {
                 Toolbar(
                     state = tools,
                     onUndo = store::undo,
+                    onRedo = store::redo,
                     onClear = store::clear,
                     onSync = { showSync = true },
                     modifier =

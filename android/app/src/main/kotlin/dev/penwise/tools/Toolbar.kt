@@ -30,6 +30,7 @@ private const val SECTION_GAP_DP = 16
 fun Toolbar(
     state: ToolState,
     onUndo: () -> Unit,
+    onRedo: () -> Unit,
     onClear: () -> Unit,
     onSync: () -> Unit,
     modifier: Modifier = Modifier,
@@ -50,6 +51,7 @@ fun Toolbar(
             ToolChip(stringResource(R.string.tool_eraser), selected = state.eraserMode, onClick = state::toggleEraser)
             ShapeChips(state)
             ToolChip(stringResource(R.string.tool_undo), selected = false, onClick = onUndo)
+            ToolChip(stringResource(R.string.tool_redo), selected = false, onClick = onRedo)
             ToolChip(stringResource(R.string.tool_clear_page), selected = false, onClick = onClear)
             ToolChip(stringResource(R.string.tool_sync), selected = false, onClick = onSync)
         }
