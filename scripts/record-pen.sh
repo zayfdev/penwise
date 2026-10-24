@@ -68,7 +68,8 @@ while (( i < ${#sections[@]} )); do
   read -r -p "    Enter = start, s = skip > " ans
   if [[ "$ans" == "s" ]]; then i=$((i + 1)); echo; continue; fi
 
-  adbq exec-out getevent -t > "$file" &
+  # Background adb itself (not a function subshell) so $! is the capture process and kill stops it.
+  "$ADB" exec-out getevent -t > "$file" < /dev/null &
   pid=$!
   read -r -p "    recording... Enter = done, r = redo > " ans
   stop_capture "$pid"
