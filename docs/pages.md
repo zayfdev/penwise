@@ -143,6 +143,16 @@ Frames without a page are applied to the sender's selected page (back-compat wit
   the first page.
 - Chips show a background glyph (Blank ▢, Ruled ☰, Grid ▦, Infinite ∞) and the page title.
 
+## Undo history
+
+Each page keeps its undo/redo stacks beside its strokes: `pages/<id>.undo` (`PWUN` v1). A step stores the exact
+strokes it needs — added, removed with their positions, or swapped (precise erase) — using the same binary stroke
+records as the page file, so reopening the app lets you undo edits from the previous session. Writes are
+debounced (400 ms) and atomic; the stacks are capped at 200 steps.
+
+Steps address strokes by seed, not by object identity, so a history loaded from disk still applies to strokes
+read back from the page file.
+
 ## Precise erase
 
 The eraser has two modes, toggled from the toolbar while the eraser is selected:

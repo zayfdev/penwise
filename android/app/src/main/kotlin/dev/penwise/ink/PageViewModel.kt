@@ -7,12 +7,16 @@ import androidx.lifecycle.viewModelScope
 import dev.penwise.R
 import dev.penwise.tools.ToolState
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+
+private const val HISTORY_SAVE_DELAY_MS = 400L
 
 /** A page template the new-page dialog offers. */
 enum class PageTemplate(
@@ -48,6 +52,8 @@ class PageViewModel(
     val pages: StateFlow<PageList> = _pages.asStateFlow()
 
     private var file = library.strokes(_pages.value.active)
+    private var undoFile = UndoHistoryFile(getApplication<Application>().filesDir, _pages.value.active)
+    private var historySave: Job? = null
     private var sync = newClient()
     private var loading = false
 
@@ -63,6 +69,7 @@ class PageViewModel(
             viewModelScope.launch { file.rewrite(strokes) }
         }
         store.onOp = { op -> send(op) }
+        store.onHistoryChanged = ::scheduleHistorySave
     }
 
     /** Streams the in-progress stroke to the PC mirror. */
@@ -340,14 +347,54 @@ class PageViewModel(
         }
     }
 
-    /** Loads `id`'s strokes and hands them to the store; clears undo history. */
+    /** Loads `id`'s strokes and saved undo history. */
     private suspend fun openPage(id: String) {
         file = library.strokes(id)
+        undoFile = UndoHistoryFile(getApplication<Application>().filesDir, id)
         sync.pageId = id
         val saved = withContext(Dispatchers.IO) { file.load() }
         withContext(Dispatchers.Default) { saved.forEach { it.rebuild() } }
         store.restore(saved)
+        val (undo, redo) = withContext(Dispatchers.IO) { undoFile.load() }
+        withContext(Dispatchers.Default) { rebuildHistory(undo + redo) }
+        store.restoreHistory(undo, redo)
         store.onPageChanged?.invoke()
-        Log.i("PenwiseSync", "page $id loaded: ${saved.size} strokes")
+        Log.i("PenwiseSync", "page $id loaded: ${saved.size} strokes, ${undo.size} undo steps")
+    }
+
+    /** Every stroke a persisted step refers to needs its geometry before undo can paint it. */
+    private fun rebuildHistory(steps: List<HistoryStep>) {
+        steps.forEach { step ->
+            when (step) {
+                is HistoryStep.Added -> {
+                    if (step.stroke.geometry == null) step.stroke.rebuild()
+                }
+
+                is HistoryStep.Removed -> {
+                    step.removed.forEach { (_, stroke) ->
+                        if (stroke.geometry ==
+                            null
+                        ) {
+                            stroke.rebuild()
+                        }
+                    }
+                }
+
+                is HistoryStep.Replaced -> {
+                    (step.removed + step.added).forEach { if (it.geometry == null) it.rebuild() }
+                }
+            }
+        }
+    }
+
+    /** Writes the undo history after a short quiet period: drawing must never wait on a file. */
+    private fun scheduleHistorySave() {
+        historySave?.cancel()
+        historySave =
+            viewModelScope.launch(Dispatchers.IO) {
+                delay(HISTORY_SAVE_DELAY_MS)
+                val (undo, redo) = store.historySnapshot()
+                undoFile.save(undo, redo)
+            }
     }
 }

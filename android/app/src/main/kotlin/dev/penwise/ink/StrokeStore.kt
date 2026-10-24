@@ -14,25 +14,8 @@ import dev.penwise.core.InkGeometry
 class StrokeStore {
     private val entries = ArrayList<SavedStroke>()
 
-    /** One undoable step: strokes appended, or strokes removed with their original positions. */
-    private sealed interface Step {
-        data class Added(
-            val stroke: SavedStroke,
-        ) : Step
-
-        data class Removed(
-            val removed: List<Pair<Int, SavedStroke>>,
-        ) : Step
-
-        /** A precise erase: strokes swapped for the fragments they left behind. */
-        data class Replaced(
-            val removed: List<SavedStroke>,
-            val added: List<SavedStroke>,
-        ) : Step
-    }
-
-    private val undoStack = ArrayDeque<Step>()
-    private val redoStack = ArrayDeque<Step>()
+    private val undoStack = ArrayDeque<HistoryStep>()
+    private val redoStack = ArrayDeque<HistoryStep>()
 
     @Volatile
     var strokes: List<InkGeometry> = emptyList()
@@ -47,18 +30,37 @@ class StrokeStore {
     /** Fires for edits that the mirror can apply incrementally instead of resending the page. */
     var onOp: ((PageOp) -> Unit)? = null
 
-    /** Strokes loaded from disk, with geometry already rebuilt. Undo history is not restored. */
+    /** Fires whenever the undo or redo stack changes, so the history can be persisted. */
+    var onHistoryChanged: (() -> Unit)? = null
+
+    /** Strokes loaded from disk, with geometry already rebuilt. Undo history is cleared. */
     fun restore(saved: List<SavedStroke>) {
         entries.clear()
         saved.mapNotNullTo(entries) { stroke -> if (stroke.geometry != null) stroke else null }
         undoStack.clear()
         redoStack.clear()
         publish()
+        onHistoryChanged?.invoke()
+    }
+
+    /** The current stacks, oldest first, for persisting them. */
+    fun historySnapshot(): Pair<List<HistoryStep>, List<HistoryStep>> = undoStack.toList() to redoStack.toList()
+
+    /** Puts persisted steps back after [restore]; geometry is rebuilt by the caller. */
+    fun restoreHistory(
+        undo: List<HistoryStep>,
+        redo: List<HistoryStep>,
+    ) {
+        undoStack.clear()
+        undoStack.addAll(undo.takeLast(MAX_STEPS))
+        redoStack.clear()
+        redoStack.addAll(redo.takeLast(MAX_STEPS))
+        onHistoryChanged?.invoke()
     }
 
     fun add(stroke: SavedStroke) {
         entries.add(stroke)
-        record(Step.Added(stroke))
+        record(HistoryStep.Added(stroke))
         redoStack.clear()
         publish()
         onAppend?.invoke(stroke)
@@ -85,12 +87,13 @@ class StrokeStore {
     fun undo() {
         val step = undoStack.removeLastOrNull() ?: return
         when (step) {
-            is Step.Added -> {
-                entries.removeAll { it === step.stroke }
+            is HistoryStep.Added -> {
+                // Seeds are the stroke's identity (they survive a restart); instances are not.
+                entries.removeAll { it.seed == step.stroke.seed }
                 onOp?.invoke(PageOp.Remove(listOf(step.stroke.seed)))
             }
 
-            is Step.Removed -> {
+            is HistoryStep.Removed -> {
                 // Reinsert at the original indices, ascending, so positions land where they were.
                 step.removed.sortedBy { it.first }.forEach { (index, stroke) ->
                     entries.add(index.coerceAtMost(entries.size), stroke)
@@ -98,7 +101,7 @@ class StrokeStore {
                 onOp?.invoke(PageOp.Add(step.removed.map { it.second }))
             }
 
-            is Step.Replaced -> {
+            is HistoryStep.Replaced -> {
                 entries.removeAll { entry -> step.added.any { it.seed == entry.seed } }
                 entries.addAll(step.removed)
                 onOp?.invoke(PageOp.Replace(step.added.map { it.seed }, step.removed))
@@ -107,23 +110,24 @@ class StrokeStore {
         redoStack.addLast(step)
         publish()
         onPageChanged?.invoke()
+        onHistoryChanged?.invoke()
         persist()
     }
 
     fun redo() {
         val step = redoStack.removeLastOrNull() ?: return
         when (step) {
-            is Step.Added -> {
+            is HistoryStep.Added -> {
                 entries.add(step.stroke)
                 onOp?.invoke(PageOp.Add(listOf(step.stroke)))
             }
 
-            is Step.Removed -> {
-                entries.removeAll { entry -> step.removed.any { it.second === entry } }
+            is HistoryStep.Removed -> {
+                entries.removeAll { entry -> step.removed.any { it.second.seed == entry.seed } }
                 onOp?.invoke(PageOp.Remove(step.removed.map { it.second.seed }))
             }
 
-            is Step.Replaced -> {
+            is HistoryStep.Replaced -> {
                 entries.removeAll { entry -> step.removed.any { it.seed == entry.seed } }
                 entries.addAll(step.added)
                 onOp?.invoke(PageOp.Replace(step.removed.map { it.seed }, step.added))
@@ -132,6 +136,7 @@ class StrokeStore {
         undoStack.addLast(step)
         publish()
         onPageChanged?.invoke()
+        onHistoryChanged?.invoke()
         persist()
     }
 
@@ -139,11 +144,12 @@ class StrokeStore {
         if (entries.isEmpty()) return
         val removed = entries.mapIndexed { index, stroke -> index to stroke }
         entries.clear()
-        record(Step.Removed(removed))
+        record(HistoryStep.Removed(removed))
         redoStack.clear()
         publish()
         onPageChanged?.invoke()
         onOp?.invoke(PageOp.Clear)
+        onHistoryChanged?.invoke()
         persist()
     }
 
@@ -182,6 +188,7 @@ class StrokeStore {
     /** Ends an erase gesture without another hit, so one drag is exactly one undo step. */
     fun commitErase() {
         redoStack.clear()
+        onHistoryChanged?.invoke()
         persist()
     }
 
@@ -203,7 +210,7 @@ class StrokeStore {
         if (removed.isEmpty()) return false
         entries.removeAll { entry -> entry.seed in seeds }
         entries.addAll(fragments)
-        record(Step.Replaced(removed.map { it.second }, fragments))
+        record(HistoryStep.Replaced(removed.map { it.second }, fragments))
         redoStack.clear()
         publish()
         onPageChanged?.invoke()
@@ -220,19 +227,20 @@ class StrokeStore {
         onRewrite?.invoke(entries.toList())
     }
 
-    private fun record(step: Step) {
+    private fun record(step: HistoryStep) {
         undoStack.addLast(step)
         if (undoStack.size > MAX_STEPS) undoStack.removeFirst()
+        onHistoryChanged?.invoke()
     }
 
     /** Folds an erase call into the open step, so a drag that erases repeatedly undoes as one action. */
     private fun mergeErase(removed: List<Pair<Int, SavedStroke>>) {
         val last = undoStack.lastOrNull()
-        if (last is Step.Removed) {
+        if (last is HistoryStep.Removed) {
             undoStack.removeLast()
-            undoStack.addLast(Step.Removed(last.removed + removed))
+            undoStack.addLast(HistoryStep.Removed(last.removed + removed))
         } else {
-            record(Step.Removed(removed))
+            record(HistoryStep.Removed(removed))
         }
     }
 
