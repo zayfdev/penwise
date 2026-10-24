@@ -193,6 +193,17 @@ const TOOLS: &str = r##"{
       }
     },
     {
+      "name": "penwise_page_text",
+      "description": "Handwriting on a page as text, read by a local vision model (cached until refresh).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "page": { "type": "string", "description": "Page id; defaults to the active page." },
+          "refresh": { "type": "boolean", "description": "Re-read the page instead of returning the cache." }
+        }
+      }
+    },
+    {
       "name": "penwise_create_notebook",
       "description": "Create an empty notebook to group pages.",
       "inputSchema": {
@@ -261,6 +272,24 @@ fn call_tool(
             Ok(text_content(&String::from_utf8_lossy(&reply)))
         }
         "penwise_list_pages" => get_text(endpoint, "/pages"),
+        "penwise_page_text" => {
+            let arguments = arguments(request);
+            let page = arguments
+                .get("page")
+                .and_then(serde_json::Value::as_str)
+                .map(|page| format!("&page={page}"))
+                .unwrap_or_default();
+            let refresh = if arguments
+                .get("refresh")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false)
+            {
+                "&refresh=true"
+            } else {
+                ""
+            };
+            get_text(endpoint, &format!("/text?x=1{page}{refresh}"))
+        }
         "penwise_create_page" => post_arguments(request, endpoint, "/pages"),
         "penwise_create_notebook" => post_arguments(request, endpoint, "/notebooks"),
         "penwise_switch_page" => {

@@ -8,10 +8,12 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-penwise-core = { path = "../penwise-core" }
+penwise-core = { path = "../penwise-core", features = ["raster"] }
 anyhow.workspace = true
 flate2.workspace = true
 thiserror.workspace = true
+serde_json.workspace = true
+tiny-skia.workspace = true
 
 [lints]
 workspace = true

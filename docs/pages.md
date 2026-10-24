@@ -143,6 +143,24 @@ Frames without a page are applied to the sender's selected page (back-compat wit
   the first page.
 - Chips show a background glyph (Blank ▢, Ruled ☰, Grid ▦, Infinite ∞) and the page title.
 
+## Handwriting → text
+
+The page PNG is read by a **local** vision model (Ollama) and the transcription cached beside the page:
+
+| Route | Purpose |
+|---|---|
+| `GET /text?page=<id>&refresh=1` | `{"page":…,"text":"…","cached":false}`; the second call is a cache hit |
+| `GET /page.png` | unchanged — agents can still look at the ink themselves |
+
+- Model: `PENWISE_OCR_MODEL` (default `qwen2.5vl:3b`), server: `PENWISE_OCR_URL` (default
+  `http://127.0.0.1:11434`). Nothing leaves the machine; when no model is running the route answers `503` and
+  the rest of the surface keeps working.
+- Only the **ink** is sent, cropped to the stroke bounds with a 48 px margin and capped at 1400 px per side: a
+  full A4 render is slower to read and no clearer, and the crop took a page from >120 s to ~29 s on CPU.
+- The result is cached in `pages/<id>.txt` and dropped when the page is deleted; `refresh` re-reads.
+- Quality note: a 3B model reads upright handwriting closely but not perfectly (it dropped a leading `0` and
+  merged one word in testing). Set `PENWISE_OCR_MODEL=qwen2.5vl:7b` for accuracy at roughly double the time.
+
 ## Pairing
 
 Copying the 43-character token by hand is the clumsy part of setting up a tablet, so the server also mints a

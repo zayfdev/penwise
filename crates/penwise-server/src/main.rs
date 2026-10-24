@@ -7,6 +7,7 @@ mod annotate;
 mod auth;
 mod http;
 mod library;
+mod ocr;
 mod pairing;
 mod render;
 mod urls;
@@ -52,13 +53,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/pages/{id}", patch(page_update).delete(page_remove))
         .route("/pages/{id}/select", post(page_select))
         .route("/notebooks", post(notebook_create))
-        .route("/pair", post(pair_exchange))
-        .route("/pair/code", get(pair_code).post(pair_refresh))
+        .route("/pair", post(pairing::exchange_route))
+        .route(
+            "/pair/code",
+            get(pairing::code_route).post(pairing::refresh_route),
+        )
         .route(
             "/notebooks/{id}",
             patch(notebook_update).delete(notebook_remove),
         )
         .route("/page", get(page_strokes))
+        .route("/text", get(ocr::page_text))
         .route("/page.png", get(page_png))
         .route("/health", get(health))
         .route("/annotate", post(annotate))
@@ -88,13 +93,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[allow(
+    missing_debug_implementations,
+    reason = "holding the token makes a derived Debug a leak risk; nothing logs AppState"
+)]
 #[derive(Clone)]
-struct AppState {
-    library: Arc<Library>,
-    web: Arc<PathBuf>,
-    token: Arc<String>,
-    pairing: Arc<pairing::Pairing>,
-    urls: Arc<Vec<String>>,
+pub struct AppState {
+    pub library: Arc<Library>,
+    pub web: Arc<PathBuf>,
+    pub token: Arc<String>,
+    pub pairing: Arc<pairing::Pairing>,
+    pub urls: Arc<Vec<String>>,
 }
 
 async fn upgrade(
@@ -139,7 +148,7 @@ async fn page_png(
 }
 
 /// The addressed page, or the active one; `Err` is the ready-to-return 404.
-async fn resolve_page(
+pub(crate) async fn resolve_page(
     app: &AppState,
     requested: Option<&str>,
 ) -> Result<library::PageMeta, Response> {
@@ -300,60 +309,6 @@ async fn notebook_remove(
     }
 }
 
-/// `POST /pair` — exchanges a short pairing code for the token and the reachable URLs.
-///
-/// The code is the credential, so this route takes no bearer token; it is single-use and rate limited.
-async fn pair_exchange(
-    State(app): State<AppState>,
-    axum::Json(body): axum::Json<serde_json::Value>,
-) -> Response {
-    let code = body
-        .get("code")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default();
-    if !app.pairing.exchange(code) {
-        return (axum::http::StatusCode::UNAUTHORIZED, "bad pairing code").into_response();
-    }
-    axum::Json(serde_json::json!({
-        "ok": true,
-        "token": *app.token,
-        "urls": *app.urls,
-    }))
-    .into_response()
-}
-
-/// `GET /pair/code` — the current code, for the viewer to display.
-async fn pair_code(
-    State(app): State<AppState>,
-    Query(auth_query): Query<AuthQuery>,
-    headers: axum::http::HeaderMap,
-) -> Response {
-    if !auth::authorized(&app.token, auth_query.token.as_deref(), &headers) {
-        return auth::deny();
-    }
-    axum::Json(serde_json::json!({
-        "code": app.pairing.current(),
-        "expires_in": app.pairing.remaining().as_secs(),
-    }))
-    .into_response()
-}
-
-/// `POST /pair/code` — mints a new code (invalidates the old one).
-async fn pair_refresh(
-    State(app): State<AppState>,
-    Query(auth_query): Query<AuthQuery>,
-    headers: axum::http::HeaderMap,
-) -> Response {
-    if !auth::authorized(&app.token, auth_query.token.as_deref(), &headers) {
-        return auth::deny();
-    }
-    axum::Json(serde_json::json!({
-        "code": app.pairing.refresh(),
-        "expires_in": app.pairing.remaining().as_secs(),
-    }))
-    .into_response()
-}
-
 /// `GET /page?page=<id>` — one page's strokes, for clients bootstrapping a specific page.
 async fn page_strokes(
     State(app): State<AppState>,
@@ -450,9 +405,9 @@ struct ImageQuery {
 }
 
 /// Both token-bearing routes take the token in the query; `ImageQuery` stays separate so `scale` parsing is unaffected.
-#[derive(serde::Deserialize)]
-struct AuthQuery {
-    token: Option<String>,
+#[derive(Debug, serde::Deserialize)]
+pub struct AuthQuery {
+    pub token: Option<String>,
 }
 
 async fn file(State(app): State<AppState>, uri: axum::http::Uri) -> Response {

@@ -25,6 +25,10 @@ use model::{
 };
 
 /// The library: index plus stroke lists, all shared behind one `Arc`.
+#[allow(
+    missing_debug_implementations,
+    reason = "holds live locks and stroke buffers; nothing needs to print a library"
+)]
 pub struct Library {
     meta: RwLock<Meta>,
     pages: RwLock<HashMap<String, Vec<StrokeMsg>>>,
@@ -355,6 +359,7 @@ impl Library {
         drop(meta);
         self.pages.write().await.remove(id);
         let _ = tokio::fs::remove_file(self.page_path(id)).await;
+        let _ = tokio::fs::remove_file(self.data_dir.join("pages").join(format!("{id}.txt"))).await;
         self.save_meta(&index).await;
         self.fan_out(None, meta_frame_of(&index));
         self.fan_out(None, active_frame(&index.active));
@@ -411,6 +416,30 @@ impl Library {
         self.save_meta(&index).await;
         self.fan_out(None, meta_frame_of(&index));
         Ok(index)
+    }
+
+    /// The recognised text for `page`, when it has been read before.
+    pub async fn text(&self, page: &str) -> Option<String> {
+        let path = self.data_dir.join("pages").join(format!("{page}.txt"));
+        match tokio::fs::read_to_string(path).await {
+            Ok(text) => Some(text),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => {
+                tracing::warn!(page, %error, "text cache read failed");
+                None
+            }
+        }
+    }
+
+    /// Stores the recognised text beside the page.
+    pub async fn put_text(&self, page: &str, text: &str) {
+        let path = self.data_dir.join("pages").join(format!("{page}.txt"));
+        if let Some(parent) = path.parent() {
+            let _ = tokio::fs::create_dir_all(parent).await;
+        }
+        if let Err(error) = tokio::fs::write(&path, text).await {
+            tracing::warn!(page, %error, "text cache write failed");
+        }
     }
 
     async fn has_page(&self, id: &str) -> bool {

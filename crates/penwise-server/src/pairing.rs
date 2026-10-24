@@ -4,6 +4,12 @@
 //! the exchange is rate limited: after [`MAX_FAILURES`] bad attempts the window locks for [`LOCKOUT`].
 
 use std::collections::VecDeque;
+
+use axum::extract::{Query, State};
+use axum::response::{IntoResponse, Response};
+
+use crate::AppState;
+use crate::auth;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -20,6 +26,10 @@ const ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 pub const CODE_LEN: usize = 6;
 
 /// The live pairing code and its attempt accounting.
+#[allow(
+    missing_debug_implementations,
+    reason = "a Debug impl would print the live pairing code"
+)]
 pub struct Pairing {
     code: Mutex<Code>,
     failures: Mutex<VecDeque<Instant>>,
@@ -155,6 +165,60 @@ impl Default for Pairing {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// `POST /pair` — exchanges a short pairing code for the token and the reachable URLs.
+///
+/// The code is the credential, so this route takes no bearer token; it is single-use and rate limited.
+pub async fn exchange_route(
+    State(app): State<AppState>,
+    axum::Json(body): axum::Json<serde_json::Value>,
+) -> Response {
+    let code = body
+        .get("code")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    if !app.pairing.exchange(code) {
+        return (axum::http::StatusCode::UNAUTHORIZED, "bad pairing code").into_response();
+    }
+    axum::Json(serde_json::json!({
+        "ok": true,
+        "token": *app.token,
+        "urls": *app.urls,
+    }))
+    .into_response()
+}
+
+/// `GET /pair/code` — the current code, for the viewer to display.
+pub async fn code_route(
+    State(app): State<AppState>,
+    Query(auth_query): Query<crate::AuthQuery>,
+    headers: axum::http::HeaderMap,
+) -> Response {
+    if !auth::authorized(&app.token, auth_query.token.as_deref(), &headers) {
+        return auth::deny();
+    }
+    axum::Json(serde_json::json!({
+        "code": app.pairing.current(),
+        "expires_in": app.pairing.remaining().as_secs(),
+    }))
+    .into_response()
+}
+
+/// `POST /pair/code` — mints a new code (invalidates the old one).
+pub async fn refresh_route(
+    State(app): State<AppState>,
+    Query(auth_query): Query<crate::AuthQuery>,
+    headers: axum::http::HeaderMap,
+) -> Response {
+    if !auth::authorized(&app.token, auth_query.token.as_deref(), &headers) {
+        return auth::deny();
+    }
+    axum::Json(serde_json::json!({
+        "code": app.pairing.refresh(),
+        "expires_in": app.pairing.remaining().as_secs(),
+    }))
+    .into_response()
 }
 
 /// Uppercases and drops spaces and dashes so `7k2m-9q` matches `7K2M9Q`.
