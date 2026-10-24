@@ -1,0 +1,13 @@
+[package]
+name = "penwise-core"
+description = "Pen stroke model, geometry, codec and rasterization shared by every Penwise surface."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true
