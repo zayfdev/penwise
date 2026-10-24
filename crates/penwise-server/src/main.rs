@@ -9,6 +9,7 @@ mod http;
 mod library;
 mod pairing;
 mod render;
+mod urls;
 mod ws;
 
 use std::net::SocketAddr;
@@ -44,7 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let token = auth::load_or_create(&data);
     let library = Library::load(data.clone()).await;
     let pairing = Arc::new(pairing::Pairing::new());
-    let urls = platform_urls(port);
+    let urls = urls::platform_urls(port);
     let router = Router::new()
         .route("/ws", get(upgrade))
         .route("/pages", get(pages_list).post(page_create))
@@ -74,7 +75,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!(%addr, "penwise-server listening");
-    for url in platform_urls(port) {
+    for url in urls::platform_urls(port) {
         tracing::info!("viewer: {url}/?token={token}");
     }
     tracing::info!("token: {token}  (also in {}/token)", data.display());
@@ -456,48 +457,4 @@ struct AuthQuery {
 
 async fn file(State(app): State<AppState>, uri: axum::http::Uri) -> Response {
     http::serve((*app.web).clone(), uri).await
-}
-
-/// Every URL this machine is reachable at, best first: LAN address, Tailscale name, loopback.
-///
-/// The tablet must not be handed `127.0.0.1`, so the LAN address is discovered rather than assumed.
-fn platform_urls(port: u16) -> Vec<String> {
-    let mut urls = Vec::new();
-    if let Some(lan) = lan_address() {
-        urls.push(format!("http://{lan}:{port}"));
-    }
-    if let Ok(output) = std::process::Command::new("tailscale")
-        .args(["status", "--json"])
-        .output()
-        && output.status.success()
-        && let Ok(json) = serde_json::from_slice::<serde_json::Value>(&output.stdout)
-        && let Some(name) = json
-            .get("Self")
-            .and_then(|s| s.get("DNSName"))
-            .and_then(|d| d.as_str())
-    {
-        let name = name.trim_end_matches('.');
-        urls.push(format!("http://{name}:{port}"));
-    }
-    urls.push(format!("http://127.0.0.1:{port}"));
-    urls
-}
-
-/// This host's primary IPv4 address, by asking the routing table which source an outside route would use.
-fn lan_address() -> Option<String> {
-    let output = std::process::Command::new("ip")
-        .args(["-4", "route", "get", "1.1.1.1"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    let mut words = text.split_whitespace();
-    while let Some(word) = words.next() {
-        if word == "src" {
-            return words.next().map(str::to_owned);
-        }
-    }
-    None
 }
