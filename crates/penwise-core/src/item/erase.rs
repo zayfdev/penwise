@@ -27,6 +27,11 @@ impl EraseItem {
     /// Returns `(page_path, page_radius)`.
     #[must_use]
     pub fn page_mask(&self, target_transform: &Affine) -> (Vec<[f32; 2]>, f32) {
-        todo!()
+        let path = self
+            .path
+            .iter()
+            .map(|&p| target_transform.apply(p))
+            .collect();
+        (path, self.radius * target_transform.width_scale())
     }
 }

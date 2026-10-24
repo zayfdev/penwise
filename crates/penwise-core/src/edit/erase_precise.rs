@@ -3,7 +3,14 @@
 //! Owner: slice b.
 
 use super::Edit;
-use crate::item::{IdSource, LayerSet, Scene};
+use super::erase_fill::fill_cut_edits;
+use super::erase_mask::{fully_masked, mask_for};
+use super::erase_split::{split_edits, uncovered_ranges};
+use super::erase_stroke::{eraser_bounds, path_touches};
+use crate::brush::BrushFamily;
+use crate::item::{
+    Affine, IdSource, Item, ItemGeometry, ItemId, ItemKind, LayerSet, Scene, StrokeItem,
+};
 
 /// Edits erasing exactly the area under the eraser capsule chain `(path, radius)` (page px) from live items on
 /// `layers`. Candidates: [`Scene::query`] on the path bounds inflated by `radius` (+ max half-width), processed
@@ -26,5 +33,71 @@ pub fn erase_precise(
     layers: LayerSet,
     ids: &mut dyn IdSource,
 ) -> Vec<Edit> {
-    todo!()
+    let Some(area) = eraser_bounds(path, radius) else {
+        return Vec::new();
+    };
+    let mut edits = Vec::new();
+    for id in scene.query(&area, layers) {
+        let Some(item) = scene.get(id) else {
+            continue;
+        };
+        match &item.kind {
+            ItemKind::Stroke(stroke) if matches!(stroke.params.family, BrushFamily::Outline(_)) => {
+                edits.extend(split_stroke(scene, item, stroke, path, radius, ids));
+            }
+            ItemKind::Stroke(_) | ItemKind::Shape(_) => {
+                edits.extend(mask_edit(scene, item, path, radius, ids));
+            }
+            ItemKind::Fill(_) => {
+                if let Some(ItemGeometry::Fill { polygons, .. }) = scene.geometry(id) {
+                    edits.extend(fill_cut_edits(item, polygons, path, radius));
+                }
+            }
+            ItemKind::Text(_) | ItemKind::Erase(_) => {}
+        }
+    }
+    edits
+}
+
+/// Outline stroke: `Delete` + piece `Add`s when the eraser covers some visible ink.
+fn split_stroke(
+    scene: &Scene,
+    item: &Item,
+    stroke: &StrokeItem,
+    path: &[[f32; 2]],
+    radius: f32,
+    ids: &mut dyn IdSource,
+) -> Vec<Edit> {
+    // Cheap exact prefilter on the cached visible centreline (outline strokes carry no masks): no capsule
+    // contact means no covered point.
+    if !path_touches(scene, item.id, path, radius) {
+        return Vec::new();
+    }
+    let visible = scene.visible_ranges(item.id);
+    match uncovered_ranges(stroke, &item.transform, &visible, path, radius) {
+        Some(kept) => split_edits(item, stroke, &kept, ids),
+        None => Vec::new(),
+    }
+}
+
+/// Stamp stroke or shape: one mask item, or `Delete` when the mask completes the erasure.
+fn mask_edit(
+    scene: &Scene,
+    item: &Item,
+    path: &[[f32; 2]],
+    radius: f32,
+    ids: &mut dyn IdSource,
+) -> Option<Edit> {
+    let target: ItemId = item.id;
+    let mask = mask_for(scene, target, path, radius)?;
+    if fully_masked(scene, target, &mask) {
+        return Some(Edit::Delete(target));
+    }
+    Some(Edit::Add(Item {
+        id: ids.next_id(),
+        layer: item.layer,
+        z: item.z,
+        transform: Affine::IDENTITY,
+        kind: ItemKind::Erase(mask),
+    }))
 }

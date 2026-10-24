@@ -8,16 +8,6 @@
 //! the edits ([`crate::item::Scene::apply`], or [`UndoStack::apply_local`] to record them as one undo step) and
 //! hands them to `penwise-proto`, which wraps each in an op envelope (op id, device id, HLC, seq). Edits carry
 //! **absolute** values only, never deltas, so per-field last-writer-wins converges.
-#![allow(
-    clippy::todo,
-    clippy::missing_panics_doc,
-    clippy::unused_self,
-    clippy::needless_pass_by_value,
-    unused_variables,
-    dead_code,
-    reason = "M2 contract stubs; slices remove this"
-)]
-
 pub mod erase_fill;
 pub mod erase_mask;
 pub mod erase_precise;
@@ -59,6 +49,9 @@ impl Edit {
     /// The item this edit targets.
     #[must_use]
     pub fn target(&self) -> ItemId {
-        todo!()
+        match self {
+            Self::Add(item) => item.id,
+            Self::Delete(id) | Self::Update { id, .. } => *id,
+        }
     }
 }

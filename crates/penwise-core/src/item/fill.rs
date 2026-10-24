@@ -20,21 +20,52 @@ impl Polygon {
     /// Bounds of the outer ring (holes lie inside it).
     #[must_use]
     pub fn bounds(&self) -> Bounds {
-        todo!()
+        let mut b = Bounds::EMPTY;
+        for p in &self.outer {
+            b.include_point(p[0], p[1]);
+        }
+        b
     }
 
     /// Filled area: `|shoelace(outer)| − Σ |shoelace(hole)|`, accumulated in `f64`.
     #[must_use]
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "one rounding of the f64 area to f32"
+    )]
     pub fn area(&self) -> f32 {
-        todo!()
+        let holes: f64 = self.holes.iter().map(|h| shoelace(h).abs()).sum();
+        ((shoelace(&self.outer).abs() - holes) * 0.5) as f32
     }
 
     /// Copy with every ring mapped through `transform` (orientation flips when `det < 0`; callers that need
     /// canonical orientation run `fill::clean::normalize` afterwards).
     #[must_use]
     pub fn mapped(&self, transform: &super::Affine) -> Polygon {
-        todo!()
+        let map = |ring: &[[f32; 2]]| -> Vec<[f32; 2]> {
+            ring.iter().map(|&p| transform.apply(p)).collect()
+        };
+        Polygon {
+            outer: map(&self.outer),
+            holes: self.holes.iter().map(|h| map(h)).collect(),
+        }
     }
+}
+
+/// Shoelace sum `Σ (x_i·y_{i+1} − x_{i+1}·y_i)` of an implicitly closed ring (twice the signed area), `f64`.
+fn shoelace(ring: &[[f32; 2]]) -> f64 {
+    let Some(&last) = ring.last() else {
+        return 0.0;
+    };
+    let mut prev = last;
+    let mut sum = 0.0;
+    for &p in ring {
+        let (x0, y0) = (f64::from(prev[0]), f64::from(prev[1]));
+        let (x1, y1) = (f64::from(p[0]), f64::from(p[1]));
+        sum += x0 * y1 - x1 * y0;
+        prev = p;
+    }
+    sum
 }
 
 /// A filled region. Rendered in [`crate::item::RenderBand::Fill`], under every stroke and shape.

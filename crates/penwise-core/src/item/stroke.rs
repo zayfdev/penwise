@@ -14,16 +14,28 @@
 //! so two devices splitting the same stroke concurrently intersect their results and erased ink never
 //! reappears. Pieces of one split share the same set, so intersecting with siblings is idempotent.
 
+mod ranges;
+mod render;
+
 use super::affine::Affine;
 use super::id::ItemId;
-use crate::brush::BrushParams;
-use crate::geometry::StrokeGeometry;
+use crate::brush::{BrushFamily, BrushParams};
+use crate::builder::StrokeBuilder;
+use crate::geometry::{Outline, StrokeGeometry, StrokeStyle};
 use crate::sample::Sample;
+
+use render::{centre_at, range_params};
 
 /// Origin samples kept on each side of a piece's visible range so smoothing and velocity dynamics are warm
 /// at the cut (editing-algorithms.md §1: ~66 ms at 482 Hz). Not a stored format: older pieces keep whatever
 /// window they were cut with.
 pub const CONTEXT_SAMPLES: u32 = 32;
+
+/// Largest origin sample index a [`SampleParam`] can address.
+const MAX_INDEX: u32 = u32::MAX >> SampleParam::FRAC_BITS;
+
+/// Mask of the fractional bits.
+const FRAC_MASK: u32 = (1 << SampleParam::FRAC_BITS) - 1;
 
 /// Fixed-point position along the origin's samples: `index << 12 | frac` (`frac` in 1/4096 of a segment).
 /// Integer so ranges compare, intersect and encode exactly; spans strokes up to 2²⁰ samples.
@@ -37,19 +49,24 @@ impl SampleParam {
     /// The param exactly at origin sample `index` (saturates at the largest representable index).
     #[must_use]
     pub fn at_index(index: u32) -> Self {
-        todo!()
+        let index = if index > MAX_INDEX { MAX_INDEX } else { index };
+        Self(index << Self::FRAC_BITS)
     }
 
     /// Origin sample index of the segment start.
     #[must_use]
     pub fn index(self) -> u32 {
-        todo!()
+        self.0 >> Self::FRAC_BITS
     }
 
     /// Fraction along the segment, `0.0..1.0` (`frac / 4096`).
     #[must_use]
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "frac < 4096 is exactly representable in f32"
+    )]
     pub fn frac(self) -> f32 {
-        todo!()
+        (self.0 & FRAC_MASK) as f32 / 4096.0
     }
 }
 
@@ -112,21 +129,37 @@ impl StrokeItem {
     /// Root of this stroke's family: `trim.origin`, or `id` (this item's own id) when untrimmed.
     #[must_use]
     pub fn origin(&self, id: ItemId) -> ItemId {
-        todo!()
+        self.trim.as_ref().map_or(id, |t| t.origin)
     }
 
     /// This item's own visible range in origin space: `trim.visible[own]`, or for an untrimmed stroke
     /// `[0, (n−1) << 12]` with both ends natural (`n` = sample count; a 1-sample stroke is `[0, 0]`).
     #[must_use]
     pub fn own_range(&self) -> SampleRange {
-        todo!()
+        if let Some(range) = self.trim.as_ref().and_then(|t| {
+            usize::try_from(t.own)
+                .ok()
+                .and_then(|own| t.visible.get(own))
+        }) {
+            return *range;
+        }
+        let last = u32::try_from(self.samples.len().saturating_sub(1)).unwrap_or(u32::MAX);
+        SampleRange {
+            start: SampleParam::at_index(0),
+            end: SampleParam::at_index(last),
+            start_cut: false,
+            end_cut: false,
+        }
     }
 
     /// Whole-origin visible set this member contributes to the family intersection: `trim.visible`, or
     /// `[own_range()]` for an untrimmed stroke (= "everything", since the origin spans all its samples).
     #[must_use]
     pub fn family_visible(&self) -> Vec<SampleRange> {
-        todo!()
+        match &self.trim {
+            Some(t) => t.visible.clone(),
+            None => vec![self.own_range()],
+        }
     }
 
     /// Visible centreline in page px over `visible` (origin-space ranges; normally
@@ -136,7 +169,29 @@ impl StrokeItem {
     /// (all channels lerped at `frac`) at both ends. Ranges outside the stored window are clipped; empty
     /// `visible` → empty centreline. Writes into `out` (cleared first) to reuse its buffers.
     pub fn centreline(&self, transform: &Affine, visible: &[SampleRange], out: &mut Centreline) {
-        todo!()
+        out.points.clear();
+        out.run_ends.clear();
+        if visible.is_empty() || self.samples.is_empty() {
+            return;
+        }
+        let samples = self.centre_samples(transform);
+        let mut params = Vec::new();
+        for range in visible {
+            let Some(clipped) = self.clip(range) else {
+                continue;
+            };
+            range_params(self.sample_offset(), samples.len(), &clipped, &mut params);
+            let before = out.points.len();
+            out.points.extend(
+                params
+                    .iter()
+                    .map(|&u| centre_at(&samples, self.sample_offset(), u)),
+            );
+            if out.points.len() > before {
+                out.run_ends
+                    .push(u32::try_from(out.points.len()).unwrap_or(u32::MAX));
+            }
+        }
     }
 
     /// Render geometry over `visible`.
@@ -151,7 +206,129 @@ impl StrokeItem {
     /// - Empty `visible` → empty geometry with the brush style.
     #[must_use]
     pub fn build_geometry(&self, transform: &Affine, visible: &[SampleRange]) -> StrokeGeometry {
-        todo!()
+        let params = render::scaled_params(&self.params, transform);
+        let style = StrokeStyle {
+            color: params.color,
+            opacity: params.opacity,
+            blend: params.blend,
+        };
+        if visible.is_empty() {
+            return render::empty_geometry(&params, style);
+        }
+        let kind = match params.family {
+            BrushFamily::Stamp(_) => return self.build_whole(&params, transform),
+            BrushFamily::Outline(kind) => kind,
+        };
+        if self.trim.is_none() && visible.len() == 1 && visible[0] == self.own_range() {
+            return self.build_whole(&params, transform);
+        }
+        let ink = render::ink_points(self, transform, &params);
+        let mut outline = Outline::default();
+        let mut params_buf = Vec::new();
+        let mut points = Vec::new();
+        for range in visible {
+            let Some(clipped) = self.clip(range) else {
+                continue;
+            };
+            range_params(self.sample_offset(), ink.len(), &clipped, &mut params_buf);
+            points.clear();
+            points.extend(
+                params_buf
+                    .iter()
+                    .map(|&u| render::ink_at(&ink, self.sample_offset(), u)),
+            );
+            let piece = render::range_outline(&params, kind, &points, &clipped);
+            render::append_outline(&mut outline, &piece);
+        }
+        StrokeGeometry::Outline { style, outline }
+    }
+
+    /// `StrokeBuilder::build` over the samples mapped through `transform`.
+    fn build_whole(&self, params: &BrushParams, transform: &Affine) -> StrokeGeometry {
+        let mapped: Vec<Sample> = self
+            .samples
+            .iter()
+            .map(|s| {
+                let [x, y] = transform.apply([s.x, s.y]);
+                Sample { x, y, ..*s }
+            })
+            .collect();
+        StrokeBuilder::build(params, self.seed, &mapped)
+    }
+
+    /// Origin index of `samples[0]`.
+    pub(crate) fn sample_offset(&self) -> u32 {
+        self.trim.as_ref().map_or(0, |t| t.sample_offset)
+    }
+
+    /// Origin index of the last stored sample (`sample_offset` for an empty stroke).
+    pub(crate) fn last_index(&self) -> u32 {
+        let n = u32::try_from(self.samples.len()).unwrap_or(u32::MAX);
+        self.sample_offset().saturating_add(n.saturating_sub(1))
+    }
+
+    /// True when the last stored sample is the origin's last sample (its natural pen-up point), so the
+    /// builder's raw-position `last` rule applies to it.
+    pub(crate) fn ends_at_origin_end(&self) -> bool {
+        match &self.trim {
+            None => true,
+            Some(t) => t
+                .visible
+                .last()
+                .is_some_and(|r| !r.end_cut && r.end == SampleParam::at_index(self.last_index())),
+        }
+    }
+
+    /// `range` clipped to the stored window (`None` when disjoint). A clipped end becomes a cut end.
+    pub(crate) fn clip(&self, range: &SampleRange) -> Option<SampleRange> {
+        if self.samples.is_empty() {
+            return None;
+        }
+        let lo = SampleParam::at_index(self.sample_offset());
+        let hi = SampleParam::at_index(self.last_index());
+        let (start, start_cut) = if range.start < lo {
+            (lo, true)
+        } else {
+            (range.start, range.start_cut)
+        };
+        let (end, end_cut) = if range.end > hi {
+            (hi, true)
+        } else {
+            (range.end, range.end_cut)
+        };
+        (start <= end).then_some(SampleRange {
+            start,
+            end,
+            start_cut,
+            end_cut,
+        })
+    }
+
+    /// Params of the centreline points of `range` (clipped with [`StrokeItem::clip`]): its start, every stored
+    /// sample strictly inside, and its end. Writes into `out` (cleared first).
+    pub(crate) fn range_params(&self, range: &SampleRange, out: &mut Vec<SampleParam>) {
+        range_params(self.sample_offset(), self.samples.len(), range, out);
+    }
+
+    /// Centre point at `u` interpolated from `points` (output of [`StrokeItem::centre_samples`]).
+    pub(crate) fn centre_at(&self, points: &[CentrePoint], u: SampleParam) -> CentrePoint {
+        centre_at(points, self.sample_offset(), u)
+    }
+
+    /// One page-space centre point per stored sample (smoothing, dynamics and transform applied).
+    pub(crate) fn centre_samples(&self, transform: &Affine) -> Vec<CentrePoint> {
+        let params = render::scaled_params(&self.params, transform);
+        let offset = self.sample_offset();
+        render::ink_points(self, transform, &params)
+            .iter()
+            .zip(offset..)
+            .map(|(p, index)| CentrePoint {
+                x: p.x,
+                y: p.y,
+                half_width: render::half_width(&params, p.size_pressure),
+                param: SampleParam::at_index(index),
+            })
+            .collect()
     }
 }
 
@@ -161,5 +338,8 @@ impl StrokeItem {
 /// is a cut in the operand that bounds it there (equal bounds: cut wins).
 #[must_use]
 pub fn intersect_ranges(a: &[SampleRange], b: &[SampleRange]) -> Vec<SampleRange> {
-    todo!()
+    ranges::intersect(a, b)
 }
+
+#[cfg(test)]
+mod tests;

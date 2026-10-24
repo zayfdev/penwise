@@ -7,16 +7,6 @@
 //! Every item kind lives in its own **local frame** mapped to page px by [`Item::transform`] (a 2×3 affine).
 //! New items are created with [`Affine::IDENTITY`] and page-px data, so local = page until a transform edit.
 //! Data is the source of truth; geometry ([`ItemGeometry`]) is always re-derived (PLAN "Data model").
-#![allow(
-    clippy::todo,
-    clippy::missing_panics_doc,
-    clippy::unused_self,
-    clippy::needless_pass_by_value,
-    unused_variables,
-    dead_code,
-    reason = "M2 contract stubs; slices remove this"
-)]
-
 mod affine;
 mod erase;
 mod fill;
@@ -96,13 +86,26 @@ impl ItemKindTag {
     /// Byte tag: `Stroke = 0, Erase = 1, Shape = 2, Fill = 3, Text = 4`.
     #[must_use]
     pub fn code(self) -> u8 {
-        todo!()
+        match self {
+            Self::Stroke => 0,
+            Self::Erase => 1,
+            Self::Shape => 2,
+            Self::Fill => 3,
+            Self::Text => 4,
+        }
     }
 
     /// Inverse of [`ItemKindTag::code`]; `None` for unknown bytes.
     #[must_use]
     pub fn from_code(code: u8) -> Option<Self> {
-        todo!()
+        match code {
+            0 => Some(Self::Stroke),
+            1 => Some(Self::Erase),
+            2 => Some(Self::Shape),
+            3 => Some(Self::Fill),
+            4 => Some(Self::Text),
+            _ => None,
+        }
     }
 }
 
@@ -110,7 +113,13 @@ impl ItemKind {
     /// The kind's tag.
     #[must_use]
     pub fn tag(&self) -> ItemKindTag {
-        todo!()
+        match self {
+            Self::Stroke(_) => ItemKindTag::Stroke,
+            Self::Erase(_) => ItemKindTag::Erase,
+            Self::Shape(_) => ItemKindTag::Shape,
+            Self::Fill(_) => ItemKindTag::Fill,
+            Self::Text(_) => ItemKindTag::Text,
+        }
     }
 }
 
@@ -130,6 +139,108 @@ impl Item {
     /// [`crate::edit::EditError::InvalidValue`] naming the first offending field (fields checked in the
     /// order above).
     pub fn validate(&self) -> Result<(), crate::edit::EditError> {
-        todo!()
+        let transform_ok = if matches!(self.kind, ItemKind::Erase(_)) {
+            self.transform == Affine::IDENTITY
+        } else {
+            self.transform.is_finite()
+        };
+        check(transform_ok, "transform")?;
+        match &self.kind {
+            ItemKind::Stroke(s) => validate_stroke(s),
+            ItemKind::Erase(e) => {
+                check(!e.path.is_empty() && all_finite(&e.path), "path")?;
+                check(e.radius.is_finite() && e.radius > 0.0, "radius")
+            }
+            ItemKind::Shape(s) => validate_shape(s),
+            ItemKind::Fill(f) => {
+                let ring_ok = |r: &Vec<[f32; 2]>| r.len() >= 3 && all_finite(r);
+                let polygons_ok = !f.polygons.is_empty()
+                    && f.polygons
+                        .iter()
+                        .all(|p| ring_ok(&p.outer) && p.holes.iter().all(ring_ok));
+                check(polygons_ok, "polygons")?;
+                check(paint_ok(f.paint), "paint")
+            }
+            ItemKind::Text(t) => {
+                check(t.font_size.is_finite() && t.font_size > 0.0, "font_size")?;
+                check(size_ok(t.size), "text_box")?;
+                check(paint_ok(t.paint), "paint")
+            }
+        }
     }
 }
+
+fn check(ok: bool, field: &'static str) -> Result<(), crate::edit::EditError> {
+    if ok {
+        Ok(())
+    } else {
+        Err(crate::edit::EditError::InvalidValue { field })
+    }
+}
+
+fn all_finite(points: &[[f32; 2]]) -> bool {
+    points.iter().all(|p| p[0].is_finite() && p[1].is_finite())
+}
+
+fn size_ok(size: [f32; 2]) -> bool {
+    size.iter().all(|v| v.is_finite() && *v >= 0.0)
+}
+
+fn paint_ok(paint: Paint) -> bool {
+    (0.0..=1.0).contains(&paint.opacity)
+}
+
+fn brush_ok(brush: &crate::brush::BrushParams) -> bool {
+    [brush.size_min, brush.size_max, brush.opacity]
+        .iter()
+        .all(|v| v.is_finite())
+}
+
+fn validate_stroke(s: &StrokeItem) -> Result<(), crate::edit::EditError> {
+    check(brush_ok(&s.params), "brush")?;
+    let on_grid = |x: &crate::sample::Sample| {
+        let q = x.quantize();
+        q.x.to_bits() == x.x.to_bits()
+            && q.y.to_bits() == x.y.to_bits()
+            && q.pressure.to_bits() == x.pressure.to_bits()
+            && q.tilt.to_bits() == x.tilt.to_bits()
+            && q.azimuth.to_bits() == x.azimuth.to_bits()
+            && q.t_us == x.t_us
+    };
+    check(
+        !s.samples.is_empty() && s.samples.iter().all(on_grid),
+        "samples",
+    )?;
+    let Some(trim) = &s.trim else { return Ok(()) };
+    let outline = matches!(s.params.family, crate::brush::BrushFamily::Outline(_));
+    let ranges = &trim.visible;
+    let ordered =
+        ranges.iter().all(|r| r.start <= r.end) && ranges.windows(2).all(|w| w[0].end < w[1].start);
+    let own_ok = usize::try_from(trim.own)
+        .ok()
+        .and_then(|i| ranges.get(i))
+        .is_some_and(|own| {
+            // Stored window in param space: [offset << 12, (offset + n − 1) << 12] (n ≥ 1 checked above).
+            let n = u64::try_from(s.samples.len()).unwrap_or(u64::from(u32::MAX));
+            let first = u64::from(trim.sample_offset) << SampleParam::FRAC_BITS;
+            let last =
+                (u64::from(trim.sample_offset) + n - 1).saturating_mul(1 << SampleParam::FRAC_BITS);
+            u64::from(own.start.0) >= first && u64::from(own.end.0) <= last
+        });
+    check(outline && ordered && own_ok, "trim")
+}
+
+fn validate_shape(s: &ShapeItem) -> Result<(), crate::edit::EditError> {
+    let outline = matches!(s.brush.family, crate::brush::BrushFamily::Outline(_));
+    check(outline && brush_ok(&s.brush), "brush")?;
+    check(size_ok(s.size), "shape_size")?;
+    let kind_ok = match &s.kind {
+        ShapeKind::RoundedRect { radius } => radius.is_finite() && *radius >= 0.0,
+        ShapeKind::Polygon { points } => points.len() >= 3 && all_finite(points),
+        ShapeKind::Rect | ShapeKind::Ellipse | ShapeKind::Line | ShapeKind::Arrow { .. } => true,
+    };
+    check(kind_ok, "shape_kind")
+}
+
+#[cfg(test)]
+mod tests;

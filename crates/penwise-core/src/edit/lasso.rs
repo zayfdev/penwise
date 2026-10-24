@@ -2,7 +2,10 @@
 //!
 //! Owner: slice a.
 
-use crate::item::{ItemId, LayerSet, Scene};
+use super::hit::{in_masks, page_masks, runs};
+use super::proximity::{arc_length, resample, ring_contains};
+use crate::bounds::Bounds;
+use crate::item::{ItemGeometry, ItemId, LayerSet, Scene};
 
 /// Lasso tuning (constants re-tuned at the M4 feel check).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -45,5 +48,112 @@ pub fn lasso(
     layers: LayerSet,
     params: &LassoParams,
 ) -> Vec<ItemId> {
-    todo!()
+    if polygon.len() < 3 {
+        return Vec::new();
+    }
+    let area = polygon.iter().fold(Bounds::EMPTY, |mut b, p| {
+        b.include_point(p[0], p[1]);
+        b
+    });
+    let mut points = Vec::new();
+    let mut scratch = Vec::new();
+    scene
+        .query(&area, layers)
+        .into_iter()
+        .filter(|&id| {
+            points.clear();
+            let length = item_samples(scene, id, params.step, &mut points, &mut scratch);
+            selected(polygon, &points, length, params)
+        })
+        .collect()
+}
+
+/// Writes the unmasked sample points of a live item into `out`; returns the item's total arc length.
+fn item_samples(
+    scene: &Scene,
+    id: ItemId,
+    step: f32,
+    out: &mut Vec<[f32; 2]>,
+    scratch: &mut Vec<[f32; 2]>,
+) -> f32 {
+    let mut length = 0.0f32;
+    match scene.geometry(id) {
+        Some(ItemGeometry::Stroke { centreline, .. }) => {
+            for (start, end) in runs(&centreline.run_ends, centreline.points.len()) {
+                scratch.clear();
+                scratch.extend(centreline.points[start..end].iter().map(|c| [c.x, c.y]));
+                length += arc_length(scratch, false);
+                resample(scratch, false, step, out);
+            }
+            drop_masked(scene, id, out);
+        }
+        Some(ItemGeometry::Shape(shape)) => {
+            let path = &shape.path;
+            for (start, end) in runs(&path.run_ends, path.points.len()) {
+                length += push_ring_or_line(&path.points[start..end], path.closed, step, out);
+            }
+            drop_masked(scene, id, out);
+        }
+        Some(ItemGeometry::Fill { polygons, .. }) => {
+            for poly in polygons {
+                length += push_ring_or_line(&poly.outer, true, step, out);
+            }
+        }
+        Some(ItemGeometry::Text { corners, .. }) => {
+            length = arc_length(corners, true);
+            out.extend_from_slice(corners);
+            let mid = |i: usize| f32::midpoint(corners[0][i], corners[2][i]);
+            out.push([mid(0), mid(1)]);
+        }
+        Some(ItemGeometry::Erase { .. }) | None => {}
+    }
+    length
+}
+
+fn drop_masked(scene: &Scene, id: ItemId, out: &mut Vec<[f32; 2]>) {
+    let masks = page_masks(scene, id);
+    if !masks.is_empty() {
+        out.retain(|&p| !in_masks(&masks, p));
+    }
+}
+
+/// Resampled points of `run` plus the vertices `resample` did not already emit (it emits the first vertex,
+/// and the last one of open runs). Returns the run's arc length.
+fn push_ring_or_line(run: &[[f32; 2]], closed: bool, step: f32, out: &mut Vec<[f32; 2]>) -> f32 {
+    resample(run, closed, step, out);
+    let interior_end = if closed {
+        run.len()
+    } else {
+        run.len().saturating_sub(1)
+    };
+    if interior_end > 1 {
+        out.extend_from_slice(&run[1..interior_end]);
+    }
+    arc_length(run, closed)
+}
+
+/// The selection rule of [`lasso`] step 3.
+fn selected(polygon: &[[f32; 2]], points: &[[f32; 2]], length: f32, params: &LassoParams) -> bool {
+    if points.is_empty() {
+        return false;
+    }
+    if length < params.tiny_length {
+        let (sx, sy) = points.iter().fold((0.0f64, 0.0f64), |(sx, sy), p| {
+            (sx + f64::from(p[0]), sy + f64::from(p[1]))
+        });
+        let n = f64::from(u32::try_from(points.len()).unwrap_or(u32::MAX));
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "mean of f32 points, one rounding"
+        )]
+        let centroid = [(sx / n) as f32, (sy / n) as f32];
+        return ring_contains(polygon, centroid);
+    }
+    let inside = points
+        .iter()
+        .filter(|&&p| ring_contains(polygon, p))
+        .count();
+    let inside = f64::from(u32::try_from(inside).unwrap_or(u32::MAX));
+    let total = f64::from(u32::try_from(points.len()).unwrap_or(u32::MAX));
+    inside >= f64::from(params.threshold) * total
 }

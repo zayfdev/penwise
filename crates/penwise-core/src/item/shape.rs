@@ -40,13 +40,20 @@ impl ArrowHead {
     /// Frozen byte tag: `End = 0, Both = 1`.
     #[must_use]
     pub fn code(self) -> u8 {
-        todo!()
+        match self {
+            Self::End => 0,
+            Self::Both => 1,
+        }
     }
 
     /// Inverse of [`ArrowHead::code`].
     #[must_use]
     pub fn from_code(code: u8) -> Option<Self> {
-        todo!()
+        match code {
+            0 => Some(Self::End),
+            1 => Some(Self::Both),
+            _ => None,
+        }
     }
 }
 
@@ -54,13 +61,20 @@ impl ShapeKind {
     /// Frozen byte tag: `Rect = 0, RoundedRect = 1, Ellipse = 2, Line = 3, Arrow = 4, Polygon = 5`.
     #[must_use]
     pub fn code(&self) -> u8 {
-        todo!()
+        match self {
+            Self::Rect => 0,
+            Self::RoundedRect { .. } => 1,
+            Self::Ellipse => 2,
+            Self::Line => 3,
+            Self::Arrow { .. } => 4,
+            Self::Polygon { .. } => 5,
+        }
     }
 
     /// True for `Line` and `Arrow` (2 endpoint handles instead of the 8 + rotate box handles; no fill).
     #[must_use]
     pub fn is_linear(&self) -> bool {
-        todo!()
+        matches!(self, Self::Line | Self::Arrow { .. })
     }
 }
 

@@ -17,27 +17,36 @@
 //! ```
 //! Mask bits beyond the known fields are `InvalidValue` (a newer writer must bump the version).
 
-#![allow(
-    clippy::todo,
-    clippy::missing_panics_doc,
-    clippy::needless_pass_by_value,
-    unused_variables,
-    dead_code,
-    reason = "M2 contract stubs; slice e removes this"
-)]
-
 use super::error::CodecError;
-use super::varint::Reader;
-use crate::edit::Edit;
+use super::item::fields::{
+    read_affine, read_flag, read_id, read_layer, read_opt_color, read_paint, read_pair,
+    read_polygons, read_shape_kind, read_str, read_z, write_affine, write_flag, write_id,
+    write_opt_color, write_paint, write_polygons, write_shape_kind, write_str, write_z,
+};
+use super::item::{decode_item_body, encode_item_body};
+use super::params_fields::{invalid, write_f32s};
+use super::stroke::{decode_params, encode_params};
+use super::varint::{Reader, write_uv32};
+use super::{finish_decode, read_header, write_header, write_trailer};
+use crate::edit::{Edit, ItemPatch};
 
 /// Edit blob magic.
 pub const EDIT_MAGIC: [u8; 4] = *b"PWED";
 /// Current edit blob layout version.
 pub const EDIT_VERSION: u16 = 1;
 
+const TAG_ADD: u8 = 0;
+const TAG_DELETE: u8 = 1;
+const TAG_UPDATE: u8 = 2;
+/// Number of known fields: mask bits `0..FIELD_COUNT` (bit = `Field::code`).
+const FIELD_COUNT: u32 = 13;
+
 /// Appends the v1 blob for `edit`.
 pub fn encode_edit(edit: &Edit, out: &mut Vec<u8>) {
-    todo!()
+    let start = out.len();
+    write_header(out, EDIT_MAGIC, EDIT_VERSION);
+    encode_edit_body(edit, out);
+    write_trailer(out, start);
 }
 
 /// Decodes exactly one v1 edit blob. Patches are decoded as given (field applicability is the scene's check,
@@ -46,12 +55,29 @@ pub fn encode_edit(edit: &Edit, out: &mut Vec<u8>) {
 /// # Errors
 /// As [`super::item::decode_item`]; plus `InvalidValue` for an unknown edit tag or unknown mask bits.
 pub fn decode_edit(bytes: &[u8]) -> Result<Edit, CodecError> {
-    todo!()
+    let mut r = Reader::new(bytes);
+    read_header(&mut r, EDIT_MAGIC, EDIT_VERSION)?;
+    let body = decode_edit_body(&mut r).map(|edit| (edit, r.position()));
+    finish_decode(bytes, body)
 }
 
 /// Appends the edit body only (no header/trailer).
 pub fn encode_edit_body(edit: &Edit, out: &mut Vec<u8>) {
-    todo!()
+    match edit {
+        Edit::Add(item) => {
+            out.push(TAG_ADD);
+            encode_item_body(item, out);
+        }
+        Edit::Delete(id) => {
+            out.push(TAG_DELETE);
+            write_id(out, *id);
+        }
+        Edit::Update { id, patch } => {
+            out.push(TAG_UPDATE);
+            write_id(out, *id);
+            encode_patch(patch, out);
+        }
+    }
 }
 
 /// Reads an edit body written by [`encode_edit_body`].
@@ -59,5 +85,106 @@ pub fn encode_edit_body(edit: &Edit, out: &mut Vec<u8>) {
 /// # Errors
 /// As [`decode_edit`] minus header/trailer errors.
 pub fn decode_edit_body(reader: &mut Reader<'_>) -> Result<Edit, CodecError> {
-    todo!()
+    let r = reader;
+    match r.u8()? {
+        TAG_ADD => Ok(Edit::Add(decode_item_body(r)?)),
+        TAG_DELETE => Ok(Edit::Delete(read_id(r)?)),
+        TAG_UPDATE => {
+            let id = read_id(r)?;
+            let patch = decode_patch(r)?;
+            Ok(Edit::Update { id, patch })
+        }
+        _ => Err(invalid("edit tag")),
+    }
+}
+
+/// Field mask: bit `i` set ⇔ the field with code `i` is present (codes in `Field` order).
+fn field_mask(p: &ItemPatch) -> u32 {
+    let present = [
+        p.deleted.is_some(),
+        p.layer.is_some(),
+        p.z.is_some(),
+        p.transform.is_some(),
+        p.brush.is_some(),
+        p.shape_fill.is_some(),
+        p.paint.is_some(),
+        p.polygons.is_some(),
+        p.shape_kind.is_some(),
+        p.shape_size.is_some(),
+        p.text.is_some(),
+        p.text_box.is_some(),
+        p.font_size.is_some(),
+    ];
+    (0_u32..).zip(present).fold(
+        0,
+        |mask, (bit, on)| if on { mask | (1 << bit) } else { mask },
+    )
+}
+
+/// Mask, then each present value in field-code order.
+fn encode_patch(p: &ItemPatch, out: &mut Vec<u8>) {
+    write_uv32(out, field_mask(p));
+    if let Some(v) = p.deleted {
+        write_flag(out, v);
+    }
+    if let Some(v) = p.layer {
+        out.push(v.code());
+    }
+    if let Some(v) = p.z {
+        write_z(out, v);
+    }
+    if let Some(v) = &p.transform {
+        write_affine(out, v);
+    }
+    if let Some(v) = &p.brush {
+        encode_params(v, out);
+    }
+    if let Some(v) = p.shape_fill {
+        write_opt_color(out, v);
+    }
+    if let Some(v) = p.paint {
+        write_paint(out, v);
+    }
+    if let Some(v) = &p.polygons {
+        write_polygons(out, v);
+    }
+    if let Some(v) = &p.shape_kind {
+        write_shape_kind(out, v);
+    }
+    if let Some(v) = &p.shape_size {
+        write_f32s(out, v);
+    }
+    if let Some(v) = &p.text {
+        write_str(out, v);
+    }
+    if let Some(v) = &p.text_box {
+        write_f32s(out, v);
+    }
+    if let Some(v) = p.font_size {
+        write_f32s(out, &[v]);
+    }
+}
+
+fn decode_patch(r: &mut Reader<'_>) -> Result<ItemPatch, CodecError> {
+    let mask = r.uv32()?;
+    if mask >> FIELD_COUNT != 0 {
+        return Err(invalid("field mask"));
+    }
+    let has = |bit: u32| mask & (1 << bit) != 0;
+    // Struct fields are evaluated in source order, which is field-code order.
+    Ok(ItemPatch {
+        deleted: has(0).then(|| read_flag(r, "deleted")).transpose()?,
+        layer: has(1).then(|| read_layer(r)).transpose()?,
+        z: has(2).then(|| read_z(r)).transpose()?,
+        transform: has(3).then(|| read_affine(r)).transpose()?,
+        brush: has(4).then(|| decode_params(r)).transpose()?,
+        shape_fill: has(5).then(|| read_opt_color(r)).transpose()?,
+        paint: has(6).then(|| read_paint(r)).transpose()?,
+        polygons: has(7).then(|| read_polygons(r)).transpose()?,
+        shape_kind: has(8).then(|| read_shape_kind(r)).transpose()?,
+        shape_size: has(9).then(|| read_pair(r, "shape.size")).transpose()?,
+        text: has(10).then(|| read_str(r)).transpose()?,
+        text_box: has(11).then(|| read_pair(r, "text.size")).transpose()?,
+        font_size: has(12).then(|| r.f32_le("text.font_size")).transpose()?,
+    })
 }

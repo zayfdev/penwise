@@ -18,13 +18,22 @@ impl Layer {
     /// Frozen byte tag: `Ink = 0, Agent = 1, Text = 2`.
     #[must_use]
     pub fn code(self) -> u8 {
-        todo!()
+        match self {
+            Self::Ink => 0,
+            Self::Agent => 1,
+            Self::Text => 2,
+        }
     }
 
     /// Inverse of [`Layer::code`]; `None` for unknown bytes.
     #[must_use]
     pub fn from_code(code: u8) -> Option<Self> {
-        todo!()
+        match code {
+            0 => Some(Self::Ink),
+            1 => Some(Self::Agent),
+            2 => Some(Self::Text),
+            _ => None,
+        }
     }
 }
 
@@ -45,18 +54,22 @@ impl LayerSet {
     /// `self` plus `layer`.
     #[must_use]
     pub fn with(self, layer: Layer) -> Self {
-        todo!()
+        Self {
+            bits: self.bits | (1 << layer.code()),
+        }
     }
 
     /// `self` minus `layer`.
     #[must_use]
     pub fn without(self, layer: Layer) -> Self {
-        todo!()
+        Self {
+            bits: self.bits & !(1 << layer.code()),
+        }
     }
 
     /// True when `layer` is in the set.
     #[must_use]
     pub fn contains(self, layer: Layer) -> bool {
-        todo!()
+        self.bits & (1 << layer.code()) != 0
     }
 }

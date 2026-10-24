@@ -22,7 +22,17 @@ impl RTreeObject for IndexEntry {
     type Envelope = AABB<[f32; 2]>;
 
     fn envelope(&self) -> Self::Envelope {
-        todo!()
+        AABB::from_corners(self.min, self.max)
+    }
+}
+
+impl IndexEntry {
+    fn new(id: ItemId, b: &Bounds) -> Self {
+        Self {
+            min: [b.min_x, b.min_y],
+            max: [b.max_x, b.max_y],
+            id,
+        }
     }
 }
 
@@ -34,23 +44,43 @@ pub(crate) struct SpatialIndex {
 
 impl SpatialIndex {
     /// Bulk-loads `entries` (`RTree::bulk_load`); empty bounds are skipped.
-    pub(crate) fn bulk(entries: Vec<(ItemId, Bounds)>) -> Self {
-        todo!()
+    pub(crate) fn bulk(entries: &[(ItemId, Bounds)]) -> Self {
+        let entries = entries
+            .iter()
+            .filter(|(_, b)| !b.is_empty())
+            .map(|(id, b)| IndexEntry::new(*id, b))
+            .collect();
+        Self {
+            tree: RTree::bulk_load(entries),
+        }
     }
 
     /// Inserts `id` with `bounds` (no-op for empty bounds).
     pub(crate) fn insert(&mut self, id: ItemId, bounds: &Bounds) {
-        todo!()
+        if !bounds.is_empty() {
+            self.tree.insert(IndexEntry::new(id, bounds));
+        }
     }
 
-    /// Removes the entry `(id, bounds)` (exact match of the bounds it was inserted with).
+    /// Removes the entry `(id, bounds)` (exact match of the bounds it was inserted with; empty bounds were
+    /// never inserted, so they are a no-op).
     pub(crate) fn remove(&mut self, id: ItemId, bounds: &Bounds) {
-        todo!()
+        if !bounds.is_empty() {
+            self.tree.remove(&IndexEntry::new(id, bounds));
+        }
     }
 
     /// Ids whose envelope intersects `area` (`locate_in_envelope_intersecting`), **unsorted**, appended to
     /// `out`.
     pub(crate) fn query(&self, area: &Bounds, out: &mut Vec<ItemId>) {
-        todo!()
+        if area.is_empty() {
+            return;
+        }
+        let envelope = AABB::from_corners([area.min_x, area.min_y], [area.max_x, area.max_y]);
+        out.extend(
+            self.tree
+                .locate_in_envelope_intersecting(envelope)
+                .map(|e| e.id),
+        );
     }
 }
