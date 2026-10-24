@@ -135,3 +135,18 @@ Frames without a page are applied to the sender's selected page (back-compat wit
 - Each page persists to `pages/<page id>.json` under app files; the old `penwise-strokes.pwst` migrates to
   the first page.
 - Chips show a background glyph (Blank ▢, Ruled ☰, Grid ▦, Infinite ∞) and the page title.
+
+## Precise erase
+
+The eraser has two modes, toggled from the toolbar while the eraser is selected:
+
+| Mode | Behaviour | Mirrors as |
+|---|---|---|
+| whole stroke (default off) | any touched stroke disappears | `op remove` |
+| **Precise** (default on) | strokes are cut at the sweep; each piece survives with the same brush, colour and size | `op replace` (old seeds out, fragments in) |
+
+The cut itself runs in Rust (`crates/penwise-ffi/src/erase.rs`): for one stroke it returns the sample runs whose
+centreline stays at least the eraser radius away from the sweep, and the app slices its own arrays. One drag, one
+undo step, one op.
+
+Not built yet: fill bucket, lasso/selection, moving or reshaping items after they are drawn.

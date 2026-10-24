@@ -16,6 +16,9 @@ interface BrushSource {
     /** Eraser contact radius in view px. */
     val eraserRadiusPx: Float get() = 16f
 
+    /** True when the eraser cuts strokes at the sweep instead of removing them whole. */
+    val preciseErase: Boolean get() = false
+
     /** Shape tool: drag to create instead of drawing freehand; null = freehand. */
     val shapeMode: ShapeMode? get() = null
 }

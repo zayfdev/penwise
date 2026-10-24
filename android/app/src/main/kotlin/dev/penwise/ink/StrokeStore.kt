@@ -23,6 +23,12 @@ class StrokeStore {
         data class Removed(
             val removed: List<Pair<Int, SavedStroke>>,
         ) : Step
+
+        /** A precise erase: strokes swapped for the fragments they left behind. */
+        data class Replaced(
+            val removed: List<SavedStroke>,
+            val added: List<SavedStroke>,
+        ) : Step
     }
 
     private val undoStack = ArrayDeque<Step>()
@@ -91,6 +97,12 @@ class StrokeStore {
                 }
                 onOp?.invoke(PageOp.Add(step.removed.map { it.second }))
             }
+
+            is Step.Replaced -> {
+                entries.removeAll { entry -> step.added.any { it.seed == entry.seed } }
+                entries.addAll(step.removed)
+                onOp?.invoke(PageOp.Replace(step.added.map { it.seed }, step.removed))
+            }
         }
         redoStack.addLast(step)
         publish()
@@ -109,6 +121,12 @@ class StrokeStore {
             is Step.Removed -> {
                 entries.removeAll { entry -> step.removed.any { it.second === entry } }
                 onOp?.invoke(PageOp.Remove(step.removed.map { it.second.seed }))
+            }
+
+            is Step.Replaced -> {
+                entries.removeAll { entry -> step.removed.any { it.seed == entry.seed } }
+                entries.addAll(step.added)
+                onOp?.invoke(PageOp.Replace(step.removed.map { it.seed }, step.added))
             }
         }
         undoStack.addLast(step)
@@ -167,17 +185,31 @@ class StrokeStore {
         persist()
     }
 
-    /** Replaces strokes by seed: what a precise erase produces. */
+    /**
+     * Replaces strokes by seed with the fragments a precise erase cut out of them; one undo step for the whole
+     * swap. Fragments keep the page order at the end of the list, which matches how they are painted (on top).
+     */
     fun replace(
         seeds: List<Long>,
         fragments: List<SavedStroke>,
-    ) {
-        entries.removeAll { entry -> seeds.any { it == entry.seed } }
+    ): Boolean {
+        val removed =
+            entries.mapIndexedNotNull { index, entry ->
+                index.takeIf { entry.seed in seeds }?.let {
+                    it to
+                        entry
+                }
+            }
+        if (removed.isEmpty()) return false
+        entries.removeAll { entry -> entry.seed in seeds }
         entries.addAll(fragments)
+        record(Step.Replaced(removed.map { it.second }, fragments))
+        redoStack.clear()
         publish()
         onPageChanged?.invoke()
         onOp?.invoke(PageOp.Replace(seeds, fragments))
         persist()
+        return true
     }
 
     /** A copy of the stored strokes, for resending the page. */

@@ -281,7 +281,22 @@ internal class StylusStrokeController(
     }
 
     private fun erase(persist: Boolean) {
-        store.eraseUnder(erasePoints, eraseCount, brushes.eraserRadiusPx, persist)
+        if (brushes.preciseErase) {
+            preciseErase()
+        } else {
+            store.eraseUnder(erasePoints, eraseCount, brushes.eraserRadiusPx, persist)
+        }
+    }
+
+    /** Cuts every stroke the sweep touches, swapping it for its fragments in one undo step. */
+    private fun preciseErase() {
+        if (eraseCount == 0) return
+        for (stroke in store.snapshot()) {
+            if (!EraseHit.hits(stroke, erasePoints, eraseCount, brushes.eraserRadiusPx)) continue
+            val pieces = PreciseErase.fragments(stroke, erasePoints, eraseCount, brushes.eraserRadiusPx)
+            pieces?.forEach { it.rebuild() }
+            store.replace(listOf(stroke.seed), pieces.orEmpty())
+        }
     }
 
     private fun isStylus(

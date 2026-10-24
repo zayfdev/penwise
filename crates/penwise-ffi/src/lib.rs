@@ -7,12 +7,13 @@
 //! `strokeFree`. Handles are not thread-safe: Kotlin must not use one handle from two threads at once.
 #![allow(unsafe_code)] // JNI entry points need `#[unsafe(no_mangle)]` and the boxed-handle round trip.
 
+mod erase;
 mod stroke;
 
 use jni::EnvUnowned;
 use jni::errors::ThrowRuntimeExAndDefault;
 use jni::objects::{JByteArray, JFloatArray, JIntArray, JObject};
-use jni::sys::{jfloat, jint, jlong};
+use jni::sys::{jfloat, jint, jintArray, jlong};
 use penwise_core::Preset;
 use penwise_core::stamp::texture;
 
@@ -36,6 +37,45 @@ fn new_float_array<'local>(
     let array = env.new_float_array(data.len())?;
     array.set_region(env, 0, data)?;
     Ok(array)
+}
+
+/// Precise erase: `[run_count, start0, end0, start1, end1, …]` of sample indices that survive the sweep.
+///
+/// `samples` is interleaved x, y, pressure, tilt, azimuth; `path` is interleaved x, y. The caller slices the
+/// stroke's arrays with the runs, so one stroke at a time is all a drag needs.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_penwise_core_Native_preciseErase<'local>(
+    mut env: EnvUnowned<'local>,
+    _this: JObject<'local>,
+    samples: JFloatArray<'local>,
+    count: jint,
+    path: JFloatArray<'local>,
+    path_count: jint,
+    radius: jfloat,
+) -> jintArray {
+    env.with_env(|env| -> Result<jintArray, FfiError> {
+        let mut samples_buf = vec![0.0; samples.len(env)?];
+        if !samples_buf.is_empty() {
+            samples.get_region(env, 0, &mut samples_buf)?;
+        }
+        let mut path_buf = vec![0.0; path.len(env)?];
+        if !path_buf.is_empty() {
+            path.get_region(env, 0, &mut path_buf)?;
+        }
+        let count = usize::try_from(count.max(0)).unwrap_or(0);
+        let path_count = usize::try_from(path_count.max(0)).unwrap_or(0);
+        let runs = erase::surviving_runs(&samples_buf, count, &path_buf, path_count, radius);
+        let mut flat: Vec<jint> = Vec::with_capacity(1 + runs.len() * 2);
+        flat.push(jint::try_from(runs.len()).unwrap_or(0));
+        for (start, end) in runs {
+            flat.push(jint::try_from(start).unwrap_or(0));
+            flat.push(jint::try_from(end).unwrap_or(0));
+        }
+        let array = env.new_int_array(flat.len())?;
+        array.set_region(env, 0, &flat)?;
+        Ok(array.into_raw())
+    })
+    .resolve::<ThrowRuntimeExAndDefault>()
 }
 
 #[unsafe(no_mangle)]

@@ -49,6 +49,13 @@ fun Toolbar(
             ColorRow(state)
             SizeControl(state)
             ToolChip(stringResource(R.string.tool_eraser), selected = state.eraserMode, onClick = state::toggleEraser)
+            if (state.eraserMode) {
+                ToolChip(
+                    stringResource(R.string.tool_precise),
+                    selected = state.preciseErase,
+                    onClick = state::togglePreciseErase,
+                )
+            }
             ShapeChips(state)
             ToolChip(stringResource(R.string.tool_undo), selected = false, onClick = onUndo)
             ToolChip(stringResource(R.string.tool_redo), selected = false, onClick = onRedo)

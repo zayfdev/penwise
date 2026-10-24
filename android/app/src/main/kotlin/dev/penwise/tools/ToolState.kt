@@ -55,6 +55,14 @@ class ToolState : BrushSource {
             return ERASER_MIN_PX + t * (ERASER_MAX_PX - ERASER_MIN_PX)
         }
 
+    /** Precise erase cuts strokes at the sweep; off, the eraser removes whole strokes. */
+    override var preciseErase by mutableStateOf(true)
+        private set
+
+    fun togglePreciseErase() {
+        preciseErase = !preciseErase
+    }
+
     fun toggleEraser() {
         eraserMode = !eraserMode
         if (eraserMode) shapeMode = null

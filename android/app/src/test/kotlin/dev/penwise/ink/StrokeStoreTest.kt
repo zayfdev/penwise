@@ -86,4 +86,29 @@ class StrokeStoreTest {
         assertFalse(store.eraseUnder(floatArrayOf(900f, 900f), 1, radius = 10f))
         assertFalse(store.canUndo() && store.snapshot().isEmpty())
     }
+
+    @Test
+    fun a_precise_erase_undoes_as_one_step() {
+        val store = StrokeStore()
+        val original = stroke(1)
+        store.add(original)
+        val left = stroke(2, x = 10f)
+        val right = stroke(3, x = 80f)
+        assertTrue(store.replace(listOf(1L), listOf(left, right)))
+        assertEquals(listOf(2L, 3L), store.snapshot().map { it.seed })
+        store.undo()
+        assertEquals("one undo restores the whole stroke", listOf(1L), store.snapshot().map { it.seed })
+        store.redo()
+        assertEquals(listOf(2L, 3L), store.snapshot().map { it.seed })
+    }
+
+    @Test
+    fun replacing_an_unknown_seed_changes_nothing() {
+        val store = StrokeStore()
+        store.add(stroke(1))
+        assertTrue(!store.replace(listOf(99L), listOf(stroke(2))))
+        assertEquals(listOf(1L), store.snapshot().map { it.seed })
+        store.undo()
+        assertTrue("only the add was recorded, so one undo empties the page", store.snapshot().isEmpty())
+    }
 }

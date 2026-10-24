@@ -19,6 +19,19 @@ internal object Native {
 
     external fun strokeFree(handle: Long)
 
+    /**
+     * Which sample runs of one stroke survive an eraser sweep: `[runCount, start0, end0, start1, end1, …]`.
+     *
+     * `samples` is interleaved x, y, pressure, tilt, azimuth; `path` is interleaved x, y (page px).
+     */
+    external fun preciseErase(
+        samples: FloatArray,
+        count: Int,
+        path: FloatArray,
+        pathCount: Int,
+        radius: Float,
+    ): IntArray
+
     /** `[isStamps, opacity, multiply]`, booleans as 0/1. */
     external fun strokeStyle(handle: Long): FloatArray
 
