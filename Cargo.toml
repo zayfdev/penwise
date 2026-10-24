@@ -10,6 +10,12 @@ license = "MIT OR Apache-2.0"
 publish = false
 
 [workspace.dependencies]
+# Pure-Rust musl port; the only transcendental math allowed in penwise-core (determinism).
+libm = "0.2.16"
+thiserror = "2"
+# Server-only raster; enabled through penwise-core's `raster` feature, never on wasm.
+tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd", "png-format"] }
+wasm-bindgen-test = "0.3.79"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
