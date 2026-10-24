@@ -1,0 +1,12 @@
+# Overrides on top of detekt's default config (buildUponDefaultConfig = true).
+# Limits mirror the hard limits in AGENTS.md.
+complexity:
+  LongMethod:
+    allowedLines: 80
+  LongParameterList:
+    allowedFunctionParameters: 7
+    allowedConstructorParameters: 7
+
+naming:
+  FunctionNaming:
+    ignoreAnnotated: ['Composable']

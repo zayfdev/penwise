@@ -38,3 +38,15 @@ fixtures:
 # Rewrite geometry (and raster) goldens natively; then `just wasm-test` proves them cross-target.
 bless:
     PENWISE_BLESS=1 cargo test -p penwise-core --features raster
+
+# Android (android/): the SDK comes from ANDROID_HOME, defaulting to ~/Android/Sdk.
+export ANDROID_HOME := env_var_or_default("ANDROID_HOME", home_directory() / "Android/Sdk")
+
+android:
+    cd android && ./gradlew :app:assembleDebug
+
+android-check:
+    cd android && ./gradlew :app:lintDebug ktlintCheck detekt :app:testDebugUnitTest
+
+install:
+    cd android && ./gradlew :app:installDebug

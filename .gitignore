@@ -4,3 +4,6 @@
 .gradle/
 local.properties
 *.apk
+.kotlin/
+*.aab
+captures/

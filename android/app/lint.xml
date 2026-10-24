@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!-- targetSdk 36 < compileSdk 37 is deliberate: targetSdk 37 turns on Local Network Protection, which blocks the
+         LAN sync connection until the app adopts ACCESS_LOCAL_NETWORK or the discovery picker. -->
+    <issue id="OldTargetApi" severity="ignore" />
+    <!-- The checks below depend on the date and on what Maven publishes, not on our code. With warningsAsErrors they
+         would break an unchanged build whenever a new version ships. Versions are bumped deliberately instead. -->
+    <issue id="GradleDependency" severity="ignore" />
+    <issue id="NewerVersionAvailable" severity="ignore" />
+    <issue id="AndroidGradlePluginVersion" severity="ignore" />
+    <!-- arm64-v8a only: the target device is a Galaxy Tab S9 (EMR pen tablet). x86_64 is added if an emulator or
+         ChromeOS target is ever needed. -->
+    <issue id="ChromeOsAbiSupport" severity="ignore" />
+</lint>
