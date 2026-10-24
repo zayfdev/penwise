@@ -200,10 +200,10 @@ fn call_tool(
             Ok(serde_json::json!({ "content": [{ "type": "text", "text": text }] }))
         }
         "penwise_annotate" => {
-            let body = request
-                .pointer("/params/arguments")
-                .map(serde_json::Value::to_string)
-                .unwrap_or_else(|| "{\"strokes\":[]}".to_owned());
+            let body = request.pointer("/params/arguments").map_or_else(
+                || "{\"strokes\":[]}".to_owned(),
+                serde_json::Value::to_string,
+            );
             let reply = endpoint
                 .post("/annotate", &body)
                 .map_err(|failure| error(-32603, &failure))?;
