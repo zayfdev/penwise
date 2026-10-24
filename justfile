@@ -23,3 +23,5 @@ sizes:
 
 deny:
     cargo deny check licenses bans sources
+record:
+    scripts/record-pen.sh
