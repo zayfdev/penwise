@@ -32,11 +32,13 @@ internal class StylusStrokeController(
     private var startNanos = 0L
     private var strokeId = 0L
 
+    private var shapeStart: FloatArray? = null
+    private var shapeTemp: InkStroke? = null
     private var erasing = false
     private var erasePoints = FloatArray(INITIAL_ERASE_POINTS * 2)
     private var eraseCount = 0
 
-    val isDrawing: Boolean get() = stroke != null
+    val isDrawing: Boolean get() = stroke != null || shapeStart != null
 
     /** Returns true when the event belongs to an active or starting pen gesture. */
     fun onTouchEvent(event: MotionEvent): Boolean {
@@ -55,6 +57,9 @@ internal class StylusStrokeController(
         penId = NO_POINTER
         erasing = false
         eraseCount = 0
+        shapeStart = null
+        shapeTemp?.close()
+        shapeTemp = null
     }
 
     private fun maybeBegin(event: MotionEvent) {
@@ -70,6 +75,11 @@ internal class StylusStrokeController(
             return
         }
         val brush = brushes.current()
+        if (brushes.shapeMode != null) {
+            shapeStart = floatArrayOf(event.getX(index), event.getY(index))
+            publishShapePreview(event.getX(index), event.getY(index))
+            return
+        }
         activeBrush = brush
         activeSeed = Random.nextLong()
         stroke = InkStroke(brush.presetIndex, activeSeed, brush.argb, brush.sizeScale)
@@ -80,6 +90,12 @@ internal class StylusStrokeController(
     }
 
     private fun move(event: MotionEvent) {
+        val start = shapeStart
+        if (start != null) {
+            val index = event.findPointerIndex(penId)
+            if (index >= 0) publishShapePreview(event.getX(index), event.getY(index))
+            return
+        }
         if (erasing) {
             val index = event.findPointerIndex(penId)
             if (index >= 0) {
@@ -96,6 +112,34 @@ internal class StylusStrokeController(
         val index = event.actionIndex
         if (event.getPointerId(index) != penId) return
         val canceled = event.flags and MotionEvent.FLAG_CANCELED != 0
+        val start = shapeStart
+        if (start != null) {
+            shapeStart = null
+            val temp = shapeTemp
+            shapeTemp = null
+            if (canceled || temp == null) {
+                temp?.close()
+                sink.cancelStroke()
+            } else {
+                val brush = brushes.current()
+                val built =
+                    ShapeSamples.build(
+                        brushes.shapeMode ?: ShapeMode.Line,
+                        start[0],
+                        start[1],
+                        event.getX(index),
+                        event.getY(index),
+                    )
+                temp.close()
+                if (built == null) {
+                    sink.cancelStroke()
+                } else {
+                    commitShape(brush, built)
+                }
+            }
+            penId = NO_POINTER
+            return
+        }
         if (erasing) {
             if (canceled) {
                 release()
@@ -153,6 +197,40 @@ internal class StylusStrokeController(
         sink.commitStroke()
     }
 
+    /** Rebuilds the preview stroke for the current drag box (a fresh stroke, since a builder cannot shrink). */
+    private fun publishShapePreview(
+        x: Float,
+        y: Float,
+    ) {
+        val start = shapeStart ?: return
+        val mode = brushes.shapeMode ?: return
+        val built = ShapeSamples.build(mode, start[0], start[1], x, y) ?: return
+        shapeTemp?.close()
+        val brush = brushes.current()
+        val preview = InkStroke(brush.presetIndex, PREVIEW_SEED, brush.argb, brush.sizeScale)
+        preview.push(built.first, built.second, built.second.size)
+        shapeTemp = preview
+        live.reset()
+        live.publish(LiveFrame(++strokeId, preview.snapshot()))
+        sink.requestFrontFrame()
+    }
+
+    private fun commitShape(
+        brush: BrushSpec,
+        built: Pair<FloatArray, IntArray>,
+    ) {
+        val (samples, times) = built
+        val seed = Random.nextLong()
+        val shape = InkStroke(brush.presetIndex, seed, brush.argb, brush.sizeScale)
+        shape.push(samples, times, times.size)
+        val saved = SavedStroke(brush.presetIndex, brush.argb, brush.sizeScale, seed, samples, times, times.size)
+        val geometry = shape.finish()
+        shape.close()
+        saved.attachGeometry(geometry)
+        store.add(saved)
+        sink.commitStroke()
+    }
+
     private fun cancel() {
         if (stroke != null) {
             release()
@@ -201,5 +279,8 @@ internal class StylusStrokeController(
         const val NO_POINTER = -1
         const val SAMPLE_STRIDE = 5
         const val INITIAL_ERASE_POINTS = 64
+
+        /** Preview strokes are thrown away, so their seed only has to be stable within one redraw. */
+        const val PREVIEW_SEED = 1L
     }
 }

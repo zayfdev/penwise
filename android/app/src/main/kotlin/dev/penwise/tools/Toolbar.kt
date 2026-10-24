@@ -17,6 +17,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import dev.penwise.R
 import dev.penwise.core.InkPresets
+import dev.penwise.ink.ShapeMode
 
 private const val PANEL_COLOR = 0xF2FFFFFF
 private const val PANEL_RADIUS_DP = 14
@@ -46,6 +47,7 @@ fun Toolbar(
             ColorRow(state)
             SizeControl(state)
             ToolChip(stringResource(R.string.tool_eraser), selected = state.eraserMode, onClick = state::toggleEraser)
+            ShapeChips(state)
             ToolChip(stringResource(R.string.tool_undo), selected = false, onClick = onUndo)
             ToolChip(stringResource(R.string.tool_clear_page), selected = false, onClick = onClear)
         }
@@ -61,6 +63,24 @@ private fun BrushRow(state: ToolState) {
         InkPresets.names.forEachIndexed { index, name ->
             ToolChip(name, selected = index == state.presetIndex, onClick = { state.selectPreset(index) })
         }
+    }
+}
+
+@Composable
+private fun ShapeChips(state: ToolState) {
+    val labels =
+        listOf(
+            ShapeMode.Line to R.string.shape_line,
+            ShapeMode.Rect to R.string.shape_rect,
+            ShapeMode.Ellipse to R.string.shape_ellipse,
+            ShapeMode.Arrow to R.string.shape_arrow,
+        )
+    labels.forEach { (mode, label) ->
+        ToolChip(
+            stringResource(label),
+            selected = state.shapeMode == mode,
+            onClick = { state.toggleShape(mode) },
+        )
     }
 }
 

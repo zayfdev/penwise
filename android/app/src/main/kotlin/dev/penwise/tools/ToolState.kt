@@ -8,6 +8,7 @@ import androidx.compose.runtime.setValue
 import dev.penwise.core.InkPresets
 import dev.penwise.ink.BrushSource
 import dev.penwise.ink.BrushSpec
+import dev.penwise.ink.ShapeMode
 
 /** Selected brush, color and size; observed by the toolbar, read by the canvas at pen-down. */
 class ToolState : BrushSource {
@@ -56,6 +57,16 @@ class ToolState : BrushSource {
 
     fun toggleEraser() {
         eraserMode = !eraserMode
+        if (eraserMode) shapeMode = null
+    }
+
+    /** Selected shape tool, or null for freehand. Turning on a shape leaves the eraser. */
+    override var shapeMode by mutableStateOf<ShapeMode?>(null)
+        private set
+
+    fun toggleShape(mode: ShapeMode) {
+        shapeMode = if (shapeMode == mode) null else mode
+        if (shapeMode != null) eraserMode = false
     }
 
     companion object {

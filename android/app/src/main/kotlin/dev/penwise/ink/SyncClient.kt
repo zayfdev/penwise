@@ -1,10 +1,6 @@
 package dev.penwise.ink
 
 import android.util.Log
-import java.util.concurrent.Executors
-import java.util.concurrent.ScheduledExecutorService
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -12,6 +8,10 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Pushes the page to the Penwise PC server (JSON over WebSocket) so the browser tab mirrors it.
@@ -20,16 +20,20 @@ import org.json.JSONObject
  * disconnected, the newest full page wins over stale increments, and it reconnects on its own. Never throws; a
  * broken link must not affect drawing.
  */
-class SyncClient(private val urls: List<String>) {
+class SyncClient(
+    private val urls: List<String>,
+) {
     private val client =
-        OkHttpClient.Builder()
+        OkHttpClient
+            .Builder()
             .pingInterval(PING_SECONDS, TimeUnit.SECONDS)
             .build()
     private val pending = ArrayDeque<String>()
     private val connecting = AtomicBoolean(false)
-    private val retry: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor { runnable ->
-        Thread(runnable, "penwise-sync").apply { isDaemon = true }
-    }
+    private val retry: ScheduledExecutorService =
+        Executors.newSingleThreadScheduledExecutor { runnable ->
+            Thread(runnable, "penwise-sync").apply { isDaemon = true }
+        }
 
     @Volatile
     private var socket: WebSocket? = null

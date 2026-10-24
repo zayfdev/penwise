@@ -15,4 +15,7 @@ interface BrushSource {
 
     /** Eraser contact radius in view px. */
     val eraserRadiusPx: Float get() = 16f
+
+    /** Shape tool: drag to create instead of drawing freehand; null = freehand. */
+    val shapeMode: ShapeMode? get() = null
 }
