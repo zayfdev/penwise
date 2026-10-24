@@ -19,7 +19,8 @@ use crate::dynamics::InkPoint;
 use crate::geometry::Dab;
 use spacing::{DabSite, SpacingRule, SpacingState};
 
-/// Safety cap on dabs (spray: particles) per stroke; emission stops silently beyond it.
+/// Safety cap on dabs (spray: particles) per stroke, and on dab sites (spacing crossings, including spray sites
+/// that emit no particles); emission stops silently beyond it, so the walk terminates for any params.
 pub const MAX_DABS_PER_STROKE: u32 = 200_000;
 
 /// Incremental stamp engine for one stroke.

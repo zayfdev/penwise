@@ -10,7 +10,7 @@ use core::f32::consts::{FRAC_PI_2, PI, TAU};
 use super::prng::{self, MAX_PARTICLES, channel};
 use super::spacing::DabSite;
 use crate::brush::{BrushParams, SprayDistribution};
-use crate::dynamics::InkPoint;
+use crate::dynamics::{InkPoint, TiltResponse};
 use crate::float::{clamp01, lerp, max, min};
 use crate::geometry::Dab;
 
@@ -68,7 +68,8 @@ pub(super) fn dab_alpha(params: &BrushParams, pressure: f32, spacing: f32) -> f3
 
 /// Builds the dab for `site` (non-spray brushes):
 /// 1. `D = diameter(..)`; size jitter `D·(1 − jitter.size·f2)`; `r = D/2`.
-/// 2. Tilt (`s = dynamics.tilt.side(tilt)`, skipped when `tilt.is_none()`): `radius_y = r·lerp(1, K, s)`,
+/// 2. Tilt (`s = dynamics.tilt.side(tilt)`, skipped when the response equals `TiltResponse::NONE` in every
+///    shading value, see [`tilt_is_neutral`]): `radius_y = r·lerp(1, K, s)`,
 ///    `radius_x = radius_y·lerp(1, A, s)`, `angle = α + π/2` where `α = atan2` of `Sample::lean_vector`
 ///    for the site azimuth, center `+= 0.5·radius_y·lean·s`, `hardness = lerp(h, side_hardness, s)`,
 ///    alpha `×= lerp(1, side_alpha, s)`, `grain_strength = lerp(g, 1, s)`.
@@ -111,7 +112,7 @@ pub(super) fn make_dab(params: &BrushParams, site: &DabSite, seed: u64) -> Dab {
 /// Tilt side shading (§3.8): elliptical, larger, softer, lighter dab shifted toward the lean.
 fn apply_tilt(params: &BrushParams, p: &InkPoint, dab: &mut Dab) {
     let tilt = &params.dynamics.tilt;
-    if tilt.is_none() {
+    if tilt_is_neutral(tilt) {
         return;
     }
     let s = tilt.side(p.tilt);
@@ -132,6 +133,15 @@ fn apply_tilt(params: &BrushParams, p: &InkPoint, dab: &mut Dab) {
     if params.stamp.grain.is_some() {
         dab.grain_strength = lerp(dab.grain_strength, 1.0, s);
     }
+}
+
+/// True when `tilt` matches [`TiltResponse::NONE`] in every value that shapes a dab. Unlike
+/// [`TiltResponse::is_none`] this includes `side_hardness`, so a response that only softens/hardens on the side
+/// still applies; `NONE`'s `side_hardness = 1` is a placeholder, not "keep the brush hardness", so a fully
+/// neutral response must skip the path entirely (no hardness lerp, no lean shift).
+#[allow(clippy::float_cmp, reason = "neutral values are exact constants")]
+fn tilt_is_neutral(tilt: &TiltResponse) -> bool {
+    tilt.is_none() && tilt.side_hardness == TiltResponse::NONE.side_hardness
 }
 
 /// Clamps a dab into its documented ranges.

@@ -95,45 +95,26 @@ pub(super) fn effective_angle(d: [f32; 2], nib: &NibParams) -> f32 {
     free + diff * f
 }
 
-/// Left/right ribbon points for a flat nib at `p` (§2.1): `u = (cos φ_eff, sin φ_eff)`, `u⊥ = per(u)`,
-/// `left = p + (W/2)·u + s·(t/2)·u⊥`, `right = p − (W/2)·u − s·(t/2)·u⊥`, `t = nib.thickness`. Returns
-/// `(left, right)`.
+/// Corners of the flat nib rectangle at `p` (§2.1): `p ± (W/2)·u ± (t/2)·u⊥`, `u = (cos φ, sin φ)`,
+/// `u⊥ = per(u)`, in the order `(+,+), (−,+), (−,−), (+,−)`.
 ///
-/// `s` picks the outward thickness corners so the swept width across `n = per(d)` is
-/// `W·|u·n| + t·|u⊥·n|` (= `W·|sin(θ − φ)| + t·|cos(θ − φ)|`): `s = −sign(d·u)·sign(d·u⊥)`, each sign +1
-/// at 0. (§2.1's `s = sign(d·u⊥)` takes the inner corners whenever `d·u > 0`, giving `W·|sin| − t·|cos|`.)
+/// The flat-nib sweep is the union of the convex hulls of consecutive rectangles (`sweep.rs`), so its width
+/// across the motion normal `n` is the rectangle's support `W·|u·n| + t·|u⊥·n|`
+/// (= `W·|sin(θ − φ)| + t·|cos(θ − φ)|`) whichever way the stroke crosses the nib.
 #[must_use]
-pub(super) fn flat_offsets(
-    p: [f32; 2],
-    d: [f32; 2],
-    width: f32,
-    phi_eff: f32,
-    nib: &NibParams,
-) -> ([f32; 2], [f32; 2]) {
-    let (sin, cos) = libm::sincosf(phi_eff);
-    let axis = [cos, sin];
-    let across = per(axis);
-    let sign = |x: f32| if x < 0.0 { -1.0 } else { 1.0 };
-    let side = -sign(dot(d, axis)) * sign(dot(d, across));
-    let hw = width * 0.5;
-    let ht = side * nib.thickness * 0.5;
-    let off = [hw * axis[0] + ht * across[0], hw * axis[1] + ht * across[1]];
-    (
-        [p[0] + off[0], p[1] + off[1]],
-        [p[0] - off[0], p[1] - off[1]],
-    )
-}
-
-/// Single-point flat-nib dot: the nib rectangle `p ± (W/2)·u ± (t/2)·u⊥` at the nib angle `φ` (4 points).
-pub(super) fn nib_rect(p: [f32; 2], width: f32, nib: &NibParams, out: &mut Vec<[f32; 2]>) {
-    let (sn, cs) = libm::sincosf(nib.angle);
+pub(super) fn nib_corners(p: [f32; 2], width: f32, thickness: f32, phi: f32) -> [[f32; 2]; 4] {
+    let (sn, cs) = libm::sincosf(phi);
     let u = [cs, sn];
     let up = per(u);
     let hw = width * 0.5;
-    let ht = nib.thickness * 0.5;
-    for (a, b) in [(hw, ht), (-hw, ht), (-hw, -ht), (hw, -ht)] {
-        out.push([p[0] + a * u[0] + b * up[0], p[1] + a * u[1] + b * up[1]]);
-    }
+    let ht = thickness * 0.5;
+    [(hw, ht), (-hw, ht), (-hw, -ht), (hw, -ht)]
+        .map(|(a, b)| [p[0] + a * u[0] + b * up[0], p[1] + a * u[1] + b * up[1]])
+}
+
+/// Single-point flat-nib dot: the nib rectangle at the nib angle `φ` (4 points, [`nib_corners`] order).
+pub(super) fn nib_rect(p: [f32; 2], width: f32, nib: &NibParams, out: &mut Vec<[f32; 2]>) {
+    out.extend_from_slice(&nib_corners(p, width, nib.thickness, nib.angle));
 }
 
 fn dot(a: [f32; 2], b: [f32; 2]) -> f32 {

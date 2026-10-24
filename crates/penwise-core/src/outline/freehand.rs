@@ -25,7 +25,9 @@
 //! min-length gate `min(size, 1 px)`, initial pressure averaged over `max(10 points, 2·size px of arc)`,
 //! numeric tapers only, `sqrt(dx² + dy²)` instead of `hypot`, `libm::sincosf` for rotations.
 //! Streaming also drops upstream's 2-point → 5-point interpolation (the point count is unknown while drawing)
-//! and measures the min-length gate as the straight distance from the first point.
+//! and measures the min-length gate as the straight distance from the first point. Ported from later upstream
+//! (`isVeryShort`): a round-tip stroke of 2+ points shorter than [`END_NOISE_THRESHOLD`] renders the single-point
+//! dot at its first point instead of a cap built from its last point.
 //! Slice-internal: every item is `pub(super)` and may be reshaped by slice b.
 
 use crate::brush::{BrushParams, CapStyle};

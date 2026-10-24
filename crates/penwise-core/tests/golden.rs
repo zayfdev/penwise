@@ -177,20 +177,16 @@ fn build_chunked(fixture: &str, strokes: &[Vec<Sample>], preset: Preset) -> Vec<
             let mut builder = StrokeBuilder::new(&params, stroke_seed(fixture, i));
             let mut rest = samples.as_slice();
             let mut stable_dabs = 0;
-            let mut polygon = Vec::new();
             while !rest.is_empty() {
                 let n = usize::try_from(rng.next_u64() % CHUNK_SIZES).unwrap();
                 let (head, tail) = rest.split_at(n.min(rest.len()));
                 builder.push(head);
-                match builder.geometry() {
-                    GeometryView::Outline { outline, .. } => outline.write_polygon(&mut polygon),
-                    GeometryView::Stamps { stable, .. } => {
-                        assert!(
-                            stable.len() >= stable_dabs,
-                            "{fixture} stroke {i}: stable dabs shrank"
-                        );
-                        stable_dabs = stable.len();
-                    }
+                if let GeometryView::Stamps { stable, .. } = builder.geometry() {
+                    assert!(
+                        stable.len() >= stable_dabs,
+                        "{fixture} stroke {i}: stable dabs shrank"
+                    );
+                    stable_dabs = stable.len();
                 }
                 rest = tail;
             }

@@ -3,15 +3,16 @@
 //! Owner: slice e.
 //!
 //! Each stroke accumulates its dabs into [`CoverageBuffer`] with the union rule `S ← S + a·(1 − S)`, then
-//! composites once at the stroke opacity cap, so overlapping dabs of one stroke never exceed it. Compositing is
-//! done here in plain `f32` on the premultiplied RGBA8 pixmap bytes (source-over / separable multiply), which
-//! keeps it independent of tiny-skia's SIMD pipelines.
+//! composites once at the stroke opacity cap (`composite`), so overlapping dabs of one stroke never exceed it.
+
+mod composite;
 
 use super::{RasterError, Viewport, stroke_alpha};
-use crate::brush::{BlendMode, GrainParams};
+use crate::brush::GrainParams;
 use crate::float::{clamp01, max, min};
 use crate::geometry::{Dab, StrokeStyle};
 use crate::stamp::texture::{grain_coverage, paper_height};
+use composite::composite;
 use tiny_skia::Pixmap;
 
 /// Largest coverage buffer, pixels (2²⁸).
@@ -83,20 +84,21 @@ pub fn dab_falloff(rr: f32, hardness: f32) -> f32 {
 }
 
 /// Minimum 1 px fade (§3.4): when `r·(1 − h) < 1`, re-solve keeping the optical radius
-/// `r_opt = r − (1 − h)·r/2`: `h' = (r_opt − 0.5)/(r_opt + 0.5)`, `r' = 1/(1 − h')`; otherwise returns
-/// `(r, h)` unchanged. Inputs are pixel radii.
+/// `r_opt = r − (1 − h)·r/2`: `h' = (r_opt − 0.5)/(r_opt + 0.5)`, `r' = 1/(1 − h')`, and report `faded = true`;
+/// otherwise returns `(r, h, false)` unchanged. Inputs are pixel radii.
 ///
 /// Sub-pixel dabs (`r_opt < 0.61`) would get `h' ≤ 0.1` (≤ 0 vanishes entirely), so `h'` is floored at 0.1.
+/// The flag is explicit because `h'` may equal `h` bit for bit (e.g. `h = 0.1` at the floor) while `r` changed.
 /// Non-positive or non-finite radii are returned unchanged.
 #[must_use]
-pub fn min_fade(radius: f32, hardness: f32) -> (f32, f32) {
+pub fn min_fade(radius: f32, hardness: f32) -> (f32, f32, bool) {
     let needs_fade = radius > 0.0 && radius.is_finite() && radius * (1.0 - hardness) < 1.0;
     if !needs_fade {
-        return (radius, hardness);
+        return (radius, hardness, false);
     }
     let r_opt = radius - (1.0 - hardness) * radius / 2.0;
     let h = max((r_opt - 0.5) / (r_opt + 0.5), MIN_FADE_HARDNESS);
-    (1.0 / (1.0 - h), h)
+    (1.0 / (1.0 - h), h, true)
 }
 
 /// Renders one stamp stroke: resets `scratch` to the stroke's pixel bbox (clipped to the pixmap), then for each
@@ -160,12 +162,13 @@ impl PixelDab {
         let [cx, cy] = viewport.map(dab.x, dab.y);
         let (rx, ry) = (dab.radius_x * viewport.scale, dab.radius_y * viewport.scale);
         let h = max(clamp01(dab.hardness), MIN_HARDNESS);
-        // Fade along the minor axis; the major axis keeps its optical radius `r·(1 + h)/2` at the new hardness.
-        let (r_minor, faded_h) = min_fade(min(rx, ry), h);
-        let faded = faded_h.to_bits() != h.to_bits();
+        // Fade along the minor axis; the major axis keeps its optical radius `r·(1 + h)/2` at the new hardness but
+        // never ends up shorter than the faded minor axis (the 0.1 hardness floor breaks optical-radius parity, so
+        // a circular sub-pixel dab would otherwise turn into an ellipse).
+        let (r_minor, faded_h, faded) = min_fade(min(rx, ry), h);
         let keep = |r: f32| {
             if faded {
-                r * (1.0 + h) / (1.0 + faded_h)
+                max(r * (1.0 + h) / (1.0 + faded_h), r_minor)
             } else {
                 r
             }
@@ -260,56 +263,6 @@ fn accumulate(buf: &mut CoverageBuffer, pd: &PixelDab, grain: Option<&GrainParam
             }
         }
     }
-}
-
-/// Composites `color` at `alpha · S` over the buffer's rect of `pixmap` (premultiplied RGBA8 bytes).
-fn composite(pixmap: &mut Pixmap, buf: &CoverageBuffer, style: &StrokeStyle, alpha: f32) {
-    let stride = pixmap.width() as usize;
-    let (ox, oy) = (
-        buf.origin_x.unsigned_abs() as usize,
-        buf.origin_y.unsigned_abs() as usize,
-    );
-    let width = buf.width as usize;
-    let c = style.color;
-    let straight = [c.r, c.g, c.b].map(|v| f32::from(v) / 255.0);
-    let multiply = style.blend == BlendMode::Multiply;
-    let data = pixmap.data_mut();
-    for (i, &s) in buf.data.iter().enumerate() {
-        if s <= 0.0 {
-            continue;
-        }
-        let (row, col) = (i / width, i % width);
-        let at = ((oy + row) * stride + ox + col) * 4;
-        let Some(px) = data.get_mut(at..at + 4) else {
-            continue;
-        };
-        let sa = alpha * clamp01(s);
-        let d = [px[0], px[1], px[2], px[3]].map(|v| f32::from(v) / 255.0);
-        let out_a = sa + d[3] * (1.0 - sa);
-        let out: [f32; 3] = std::array::from_fn(|k| {
-            let sc = straight[k] * sa;
-            if multiply {
-                sc * (1.0 - d[3]) + d[k] * (1.0 - sa) + sc * d[k]
-            } else {
-                sc + d[k] * (1.0 - sa)
-            }
-        });
-        let a8 = to_u8(out_a);
-        for (dst, v) in px.iter_mut().zip(out) {
-            *dst = to_u8(v).min(a8);
-        }
-        px[3] = a8;
-    }
-}
-
-/// `round(clamp01(v)·255)`.
-#[allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "value is clamped to [0, 255] before the cast"
-)]
-fn to_u8(v: f32) -> u8 {
-    (clamp01(v) * 255.0 + 0.5).floor() as u8
 }
 
 #[cfg(test)]

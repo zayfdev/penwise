@@ -6,6 +6,7 @@
 
 use core::f32::consts::{PI, TAU};
 
+use super::MAX_DABS_PER_STROKE;
 use crate::dynamics::InkPoint;
 use crate::float::{lerp, max, min};
 
@@ -87,6 +88,11 @@ impl DabSite {
 /// along the segment proportionally to its parameter. For each integer crossing of the phase, calls
 /// `emit(site)`; stops early when `emit` returns `false`. Updates `state` (phase, next index). A zero-length,
 /// zero-time segment emits nothing.
+///
+/// Termination: every crossing consumes one site index, and no site with index `≥ MAX_DABS_PER_STROKE` is
+/// ever created, so a walk makes at most `MAX_DABS_PER_STROKE` crossings per stroke even when `u` stalls in
+/// f32 (huge rates) or `emit` produces nothing (zero-particle spray). The index is absolute, so batch, chunked
+/// and tentative walks stop at the same site.
 pub(super) fn walk_segment(
     state: &mut SpacingState,
     a: &InkPoint,
@@ -107,6 +113,9 @@ pub(super) fn walk_segment(
         let rate = len / rule.step(d) + temporal;
         let advances = rate.is_finite() && rate > 0.0;
         if !advances {
+            return;
+        }
+        if state.next_index >= u64::from(MAX_DABS_PER_STROKE) {
             return;
         }
         let need = 1.0 - state.phase;

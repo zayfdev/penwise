@@ -13,8 +13,9 @@ use super::freehand::{
     StrokePoint, arc_f32, flat_cap, per, rot_around, round_end_cap, round_start_cap,
 };
 use super::nib::{
-    DirectionSmoother, effective_angle, flat_offsets, fountain_scale, nib_rect, nib_width,
+    DirectionSmoother, effective_angle, fountain_scale, nib_corners, nib_rect, nib_width,
 };
+use super::sweep::{self, NibQuad};
 use crate::brush::{CapStyle, NibParams};
 use crate::float::{lerp, max};
 
@@ -25,7 +26,7 @@ pub(super) enum Tip {
     Round,
     /// Round offsets scaled by the elliptic nib support (§2.2).
     Fountain(NibParams),
-    /// Ribbon offset along the nib axis, no corner fans (§2.1: calligraphy, highlighter).
+    /// Swept nib rectangle, union of per-segment hulls (§2.1: calligraphy, highlighter; `sweep.rs`).
     Flat(NibParams),
 }
 
@@ -71,8 +72,6 @@ pub(super) struct Ends {
     pub radius: f32,
     /// First emitted `(left, right)` offset points.
     pub first_sides: Option<([f32; 2], [f32; 2])>,
-    /// Last emitted `(left, right)` offset points.
-    pub last_sides: Option<([f32; 2], [f32; 2])>,
 }
 
 impl Shape {
@@ -87,13 +86,16 @@ impl Shape {
         }
     }
 
-    /// Start and end caps (§1.3 "Caps"): a tapered start gets none, a tapered end the bare end point; flat
-    /// nibs always get flat caps across their ribbon ends.
+    /// Start and end caps (§1.3 "Caps"): a tapered start gets none, a tapered end the bare end point. Flat
+    /// nibs get no cap points, tapered or not: their sweep already contains the (tapered) nib rectangle at
+    /// both ends, which is the flat cap.
     pub(super) fn caps(&self, e: &Ends, start: &mut Vec<[f32; 2]>, end: &mut Vec<[f32; 2]>) {
+        if matches!(self.tip, Tip::Flat(_)) {
+            return;
+        }
         let opts = &self.opts;
-        let flat_tip = matches!(self.tip, Tip::Flat(_));
         if let Some((left0, right0)) = e.first_sides.filter(|_| opts.taper_start <= 0.0) {
-            if flat_tip || opts.cap_start == CapStyle::Flat {
+            if opts.cap_start == CapStyle::Flat {
                 flat_cap(e.first, half_diff(left0, right0), start);
             } else {
                 round_start_cap(e.first, right0, start);
@@ -102,9 +104,6 @@ impl Shape {
         let last = e.last.point;
         if opts.taper_end > 0.0 {
             end.push(last);
-        } else if flat_tip {
-            let (left, right) = e.last_sides.unwrap_or((last, last));
-            flat_cap(last, half_diff(right, left), end);
         } else if opts.cap_end == CapStyle::Flat {
             flat_cap(last, scale(per(e.last.vector), e.radius), end);
         } else {
@@ -120,6 +119,8 @@ pub(super) struct Walker {
     prev_was_corner: bool,
     prev_left: [f32; 2],
     prev_right: [f32; 2],
+    /// Flat tips: nib rectangle at the previous walked point.
+    prev_nib: Option<NibQuad>,
     dir: DirectionSmoother,
     /// Radius of the last walked point (after taper): the end cap radius.
     pub radius: f32,
@@ -133,6 +134,7 @@ impl Walker {
             prev_was_corner: false,
             prev_left: [0.0, 0.0],
             prev_right: [0.0, 0.0],
+            prev_nib: None,
             dir: DirectionSmoother::new(),
             radius: MIN_RADIUS,
         }
@@ -157,7 +159,7 @@ impl Walker {
             Tip::Flat(nib) => {
                 let w = nib_width(shape.size_min, shape.size_max, s.pressure);
                 let d = self.dir.update(forward, s.point.distance, w * 0.5);
-                self.flat_step(shape, s, w, d, &nib, out);
+                self.flat_step(&shape.opts, s, w, d, &nib, out);
             }
         }
     }
@@ -228,43 +230,31 @@ impl Walker {
         }
     }
 
-    /// Flat-nib ribbon point: width `w` (untapered), smoothed forward direction `d`. Both sides are emitted
-    /// together (decimated on either side moving more than `minDist`) so the ribbon edges stay paired.
+    /// Flat-nib point: nib width `w` (untapered), smoothed forward direction `d`. Every point is walked (no
+    /// end-noise skip, no `minDist` decimation: the sweep is exact, so neither is needed) and appends the hull
+    /// of the segment from the previous point's nib rectangle (`sweep.rs`). Width and thickness taper together
+    /// and are floored at `2·MIN_RADIUS`.
     fn flat_step(
         &mut self,
-        shape: &Shape,
+        opts: &FreehandOptions,
         s: &Step,
         w: f32,
         d: [f32; 2],
         nib: &NibParams,
         out: &mut Sides<'_>,
     ) {
-        let is_last = s.next_vector.is_none();
-        if !is_last && s.remaining < END_NOISE_THRESHOLD {
-            return;
+        let taper = opts.taper(arc_f32(s.point.running_length), s.remaining);
+        let floor = 2.0 * MIN_RADIUS;
+        let corners = nib_corners(
+            s.point.point,
+            max(floor, w * taper),
+            max(floor, nib.thickness * taper),
+            effective_angle(d, nib),
+        );
+        if let Some(prev) = &self.prev_nib {
+            sweep::push_segment(prev, &corners, out);
         }
-        let arc = arc_f32(s.point.running_length);
-        let taper = shape.opts.taper(arc, s.remaining);
-        let w = max(2.0 * MIN_RADIUS, w * taper);
-        self.radius = w * 0.5;
-        let tapered = NibParams {
-            thickness: nib.thickness * taper,
-            ..*nib
-        };
-        let phi = effective_angle(d, nib);
-        let (tl, tr) = flat_offsets(s.point.point, d, w, phi, &tapered);
-        let min_dist = shape.opts.min_dist_sq();
-        if is_last
-            || s.index <= 1
-            || dist_sq(self.prev_left, tl) > min_dist
-            || dist_sq(self.prev_right, tr) > min_dist
-        {
-            out.left.push(tl);
-            out.right.push(tr);
-            self.prev_left = tl;
-            self.prev_right = tr;
-        }
-        self.prev_vector = s.point.vector;
+        self.prev_nib = Some(corners);
     }
 }
 

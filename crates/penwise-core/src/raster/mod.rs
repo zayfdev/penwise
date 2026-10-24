@@ -9,6 +9,7 @@
 
 pub mod outline;
 pub mod png;
+pub mod sheet;
 pub mod stamps;
 
 /// Re-export so callers use the exact `tiny-skia` version core was built against.

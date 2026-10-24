@@ -134,10 +134,12 @@ width(θ) = W·|sin(θ − φ)| + t·|cos(θ − φ)|       θ = atan2(d.y, d.x)
 
 Correct geometry offsets **along the nib axis**, not the normal (this is what makes real calligraphy edges):
 ```
-s = sign(d · u⊥)  (+1 if 0)
+s = −sign(d · u)·sign(d · u⊥)  (each sign +1 if 0)
 left_i  = P_i + (W/2)·u + s·(t/2)·u⊥
 right_i = P_i − (W/2)·u − s·(t/2)·u⊥
 ```
+The sign picks the outer corner pair of the nib rectangle for the current direction, so the ribbon width is exactly
+`width(θ)` above (`s = sign(d·u⊥)` alone takes the inner corners whenever `d·u > 0`, giving `W·|sin| − t·|cos|`).
 When the stroke direction crosses φ the ribbon twists to width `t`; nonzero fill renders the twist correctly.
 Pressure modulates `W` only: `W = W_max·(w0 + (1−w0)·c(p))`. Caps: flat (the nib end is the cap). Corner fans of
 §1.3 step 5 are **disabled** for nib brushes (the ribbon already covers the turn). Exact alternative if twist
@@ -225,6 +227,15 @@ re-solving `(r, h)` keeping optical radius `r − (1−h)r/2`:
 Elliptical dabs: rotate pixel offset by −angle, `rr = (x'² + (aspect·y')²)/r²` (MyPaint `calculate_rr`).
 Pixel coverage = `opa · alpha_dab · grain(x,y)`.
 
+Penwise deviations (`raster/stamps.rs`):
+- **Re-solved hardness floor** `MIN_FADE_HARDNESS = 0.1`: sub-pixel dabs (`r_opt < 0.61 px`) would get `h' ≤ 0.1`
+  (`h' ≤ 0` vanishes entirely), so `h' = max(h', 0.1)` keeps them visible. `min_fade` returns an explicit "faded"
+  flag because `h'` can equal `h` bit for bit at the floor while `r` changed. Input hardness is also floored at
+  `1e-3` (the profile is 0 everywhere at `h = 0`).
+- **Elliptical dabs** apply the min fade to the **minor** axis only. The major axis is rescaled to keep its own
+  optical radius at the new hardness, `r_major' = r_major·(1 + h)/(1 + h')`, and is never shorter than the faded minor
+  axis (the 0.1 floor breaks optical-radius parity, so a circular sub-pixel dab would otherwise become an ellipse).
+
 ### 3.5 Opacity vs flow (stroke-level cap)
 Krita "Wash" / Procreate default: flow = per-dab transparency, opacity = cap for the whole stroke. Implement with a
 per-stroke coverage buffer `S` (single channel, stroke bbox):
@@ -289,7 +300,7 @@ x̂     = x̂_prev + α(fc)·(x − x̂_prev)
 ```
 No transcendental functions → bit-identical everywhere. Starting values in px and px/s (tune on fixtures; tuning
 procedure from the paper: β = 0, lower `min_cutoff` until slow-stroke jitter is gone, then raise β until fast
-strokes have no visible lag): `min_cutoff = 4 Hz` (τ ≈ 40 ms at rest), `β = 0.01 s/px` (1000 px/s → fc ≈ 14 Hz,
+strokes have no visible lag): `min_cutoff = 4 Hz` (τ ≈ 40 ms at rest), `β = 0.01 /px` (Hz per px/s; 1000 px/s → fc ≈ 14 Hz,
 τ ≈ 11 ms), `d_cutoff = 1 Hz`. Digitizer resolution is ~9 counts/px, so jitter is small; err on light smoothing.
 Pressure: separate One Euro with `min_cutoff = 8 Hz, β = 0` (EMA) to kill 1-LSB flicker on wide brushes.
 Last sample on pen-up: emit the raw point (perfect-freehand's `last` behaviour) so strokes end where the pen left.
@@ -336,7 +347,7 @@ of the last segment (re-emit dabs of the last segment on `finish()`). Carry `φ`
 
 Pressure curve `c(p)` for all presets unless noted: `x = clamp((p − 0.02)/(0.90 − 0.02), 0, 1)` (floor ~80 kills
 the near-zero contact samples; saturates at ~3700 since hard strokes hit 4095), then `c = x^γ`, default γ = 0.75
-(maps small writing p≈0.32 → 0.43, normal p≈0.49 → 0.60, p95 0.80 → 0.88: keeps resolution in the 500–2500 band).
+(maps small writing p≈0.32 → 0.446, normal p≈0.49 → 0.625, p95 0.80 → 0.914: keeps resolution in the 500–2500 band).
 Store curves as monotone cubic (Fritsch–Carlson) control points for user editing; the default is sampled from
 the formula above. Start-of-stroke floor: outline radius never < `Dmin/2` (thinning formula), stamp size `≥ Dmin`.
 Sizes are diameters in px at 340 dpi (13.39 px/mm). "pf" = perfect-freehand params (§1.3 mapping

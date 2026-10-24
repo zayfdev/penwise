@@ -91,9 +91,17 @@ pub fn grain_coverage(height: f32, level: f32, softness: f32, strength: f32) -> 
     )
 }
 
+/// Largest tile edge [`bake_tile`] accepts, px (64 MiB of output); one full paper period
+/// (`PAPER_PERIOD · PAPER_CELL_PX · scale` px) fits up to `scale = 16`.
+pub const MAX_TILE_SIZE: u32 = 8192;
+
 /// Bakes one `size × size` tile of [`paper_height`] at `scale` sampled at pixel centers `(x + 0.5, y + 0.5)`,
-/// row-major, `round(h·255)` per byte. Clears `out` first, then writes exactly `size²` bytes.
-#[allow(clippy::cast_precision_loss, reason = "pixel indices far below 2^24")]
+/// row-major, `round(h·255)` per byte. Clears `out` first, then writes exactly `size²` bytes; leaves `out` empty
+/// when `size > MAX_TILE_SIZE` or the buffer cannot be allocated (never panics or aborts on hostile sizes).
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "pixel indices ≤ 8192, exact in f32"
+)]
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
@@ -101,8 +109,14 @@ pub fn grain_coverage(height: f32, level: f32, softness: f32, strength: f32) -> 
 )]
 pub fn bake_tile(scale: f32, size: u32, out: &mut Vec<u8>) {
     out.clear();
-    if let Ok(n) = usize::try_from(u64::from(size) * u64::from(size)) {
-        out.reserve(n);
+    if size > MAX_TILE_SIZE {
+        return;
+    }
+    let Ok(n) = usize::try_from(u64::from(size) * u64::from(size)) else {
+        return;
+    };
+    if out.try_reserve_exact(n).is_err() {
+        return;
     }
     for py in 0..size {
         let y = py as f32 + 0.5;

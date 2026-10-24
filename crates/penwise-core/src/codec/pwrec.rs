@@ -212,7 +212,8 @@ fn write_run(channels: Channels, stroke: &RecordedStroke, out: &mut Vec<u8>) {
 /// `BadMagic`, `UnsupportedVersion`, `UnexpectedEof`, `VarintOverflow` (> 5 bytes for 32-bit fields, > 10 for
 /// `t0_us`), `ChecksumMismatch`, `TrailingBytes`, `InvalidValue` (unknown channel bits, empty channel
 /// mask, source, kind, non-zero reserved byte, invalid UTF-8, stroke with `n == 0`, sample 0 `t ≠ 0`,
-/// negative `t`, any `den == 0`), `OutOfRange` (delta accumulation overflowing `i32`).
+/// negative `t`, any `den == 0`). Frame deltas accumulate with wrapping `i32` arithmetic, mirroring the
+/// encoder, so every `i32` value round-trips.
 pub fn decode_pwrec(bytes: &[u8]) -> Result<Recording, CodecError> {
     let mut r = Reader::new(bytes);
     read_header(&mut r, PWREC_MAGIC, PWREC_VERSION)?;

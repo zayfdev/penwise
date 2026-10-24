@@ -1,4 +1,4 @@
-use super::{CoverageBuffer, dab_falloff, min_fade, render_stamps};
+use super::{CoverageBuffer, MIN_FADE_HARDNESS, dab_falloff, min_fade, render_stamps};
 use crate::brush::{BlendMode, Color, GrainParams};
 use crate::geometry::{Dab, StrokeStyle};
 use crate::raster::{RasterError, Viewport};
@@ -74,8 +74,9 @@ fn falloff_profile() {
 
 #[test]
 fn min_fade_keeps_soft_dabs_and_optical_radius() {
-    assert_eq!(min_fade(20.0, 0.5), (20.0, 0.5));
-    let (r, h) = min_fade(10.0, 1.0);
+    assert_eq!(min_fade(20.0, 0.5), (20.0, 0.5, false));
+    let (r, h, faded) = min_fade(10.0, 1.0);
+    assert!(faded);
     assert!((r - 10.5).abs() < 1e-5);
     assert!((h - 9.5 / 10.5).abs() < 1e-6);
     assert!((r * (1.0 - h) - 1.0).abs() < 1e-5, "fade is exactly 1 px");
@@ -83,11 +84,29 @@ fn min_fade_keeps_soft_dabs_and_optical_radius() {
         (r * (1.0 + h) / 2.0 - 10.0).abs() < 1e-4,
         "optical radius kept"
     );
-    let (r, h) = min_fade(0.3, 1.0);
+    let (r, h, faded) = min_fade(0.3, 1.0);
     assert!(
-        h > 0.0 && r > 0.3 && r.is_finite(),
+        faded && h > 0.0 && r > 0.3 && r.is_finite(),
         "sub-pixel dabs stay visible: {r} {h}"
     );
+}
+
+#[test]
+fn min_fade_reports_fade_when_hardness_sits_on_the_floor() {
+    // The re-solved hardness equals the input bit for bit, yet the radius changed: the flag must say so.
+    let (r, h, faded) = min_fade(0.5, MIN_FADE_HARDNESS);
+    assert!(faded);
+    assert_eq!(h.to_bits(), MIN_FADE_HARDNESS.to_bits());
+    assert!(r > 0.5, "radius grew to the 1 px fade: {r}");
+}
+
+#[test]
+fn sub_pixel_dab_at_the_fade_floor_stays_round() {
+    let d = dab(32.5, 32.5, 0.5, 1.0, MIN_FADE_HARDNESS);
+    let pm = render_on_white(&[d], &black(1.0), None);
+    let (right, below) = (red(&pm, 33, 32), red(&pm, 32, 33));
+    assert_eq!(right, below, "circular dab renders symmetric");
+    assert!(right < 255, "neighbours get ink from the faded rim");
 }
 
 #[test]

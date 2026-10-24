@@ -5,7 +5,10 @@
 
 use core::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI};
 
-use super::{AxisRange, DigitizerRanges, PxScale, RawSample, Sample};
+use super::{
+    ANGLE_STEP, AZIMUTH_GRID_HALF, AxisRange, DigitizerRanges, GridSample, POSITION_LIMIT_PX,
+    PxScale, RawSample, Sample, TILT_GRID_MAX,
+};
 
 const R: DigitizerRanges = DigitizerRanges::SM_X710;
 
@@ -116,4 +119,99 @@ fn mapped_samples_survive_quantize() {
     let s: Sample = R.map(&raw(14752, 23603, 4095, -63, 63)).quantize();
     assert!(s.x.is_finite() && s.y.is_finite());
     assert_eq!(s, s.quantize());
+}
+
+fn cell(x: i32, y: i32, pressure: u16, tilt: u16, azimuth: i16) -> GridSample {
+    GridSample {
+        x,
+        y,
+        pressure,
+        tilt,
+        azimuth,
+        t_us: 17,
+    }
+}
+
+fn upright(x: f32, y: f32, pressure: f32, tilt: f32, azimuth: f32) -> Sample {
+    Sample {
+        x,
+        y,
+        pressure,
+        tilt,
+        azimuth,
+        t_us: 17,
+    }
+}
+
+#[test]
+fn every_grid_value_round_trips_through_sample() {
+    let lim = 1_i32 << 24;
+    let mut positions: Vec<i32> = (-lim..=lim).step_by(65_537).collect();
+    positions.extend([-lim, -lim + 1, -1, 0, 1, lim - 1, lim]);
+    for &p in &positions {
+        let g = cell(p, -p, 0, 0, 0);
+        assert_eq!(g.to_sample().to_grid(), g, "position {p}");
+    }
+    for pressure in 0..=4096 {
+        let g = cell(0, 0, pressure, 0, 0);
+        assert_eq!(g.to_sample().to_grid(), g, "pressure {pressure}");
+    }
+    for tilt in 0..=TILT_GRID_MAX {
+        let g = cell(0, 0, 0, tilt, 0);
+        assert_eq!(g.to_sample().to_grid(), g, "tilt {tilt}");
+    }
+    for azimuth in (1 - AZIMUTH_GRID_HALF)..=AZIMUTH_GRID_HALF {
+        let g = cell(0, 0, 0, 0, azimuth);
+        assert_eq!(g.to_sample().to_grid(), g, "azimuth {azimuth}");
+    }
+}
+
+#[test]
+fn nan_components_map_to_zero() {
+    let nan = f32::NAN;
+    assert_eq!(
+        upright(nan, nan, nan, nan, nan).to_grid(),
+        cell(0, 0, 0, 0, 0)
+    );
+}
+
+#[test]
+fn negative_zero_quantizes_to_positive_zero() {
+    let q = upright(-0.0, -0.0, -0.0, -0.0, -0.0).quantize();
+    for v in [q.x, q.y, q.pressure, q.tilt, q.azimuth] {
+        assert_eq!(v.to_bits(), 0.0_f32.to_bits());
+    }
+}
+
+#[test]
+fn out_of_range_values_clamp_to_the_grid_edges() {
+    let big = 2.0 * POSITION_LIMIT_PX;
+    let g = upright(big, -big, 1.5, 2.0, 0.0).to_grid();
+    assert_eq!(g, cell(1 << 24, -(1 << 24), 4096, TILT_GRID_MAX, 0));
+    let g = upright(f32::INFINITY, f32::NEG_INFINITY, -1.0, -0.5, 0.0).to_grid();
+    assert_eq!(g, cell(1 << 24, -(1 << 24), 0, 0, 0));
+}
+
+#[test]
+fn azimuth_wraps_into_half_open_pi_interval() {
+    let half = AZIMUTH_GRID_HALF;
+    let cases = [
+        (PI, half),
+        (-PI, half),
+        (3.0 * PI, half),
+        (-3.0 * PI, half),
+        (PI + ANGLE_STEP, 1 - half),
+        (-PI + ANGLE_STEP, 1 - half),
+        (2.0 * PI, 0),
+        (-FRAC_PI_2, -half / 2),
+        (FRAC_PI_2 + 2.0 * PI, half / 2),
+    ];
+    for (azimuth, want) in cases {
+        let g = upright(0.0, 0.0, 0.0, 0.0, azimuth).to_grid();
+        assert_eq!(g.azimuth, want, "azimuth {azimuth}");
+    }
+    // Wrapped values stay on the grid: re-quantizing π and −π gives the same, inclusive π.
+    let pi = upright(0.0, 0.0, 0.0, 0.0, -PI).quantize();
+    assert_eq!(pi.azimuth, PI);
+    assert_eq!(pi, pi.quantize());
 }

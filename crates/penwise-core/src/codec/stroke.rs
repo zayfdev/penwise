@@ -65,7 +65,7 @@ pub fn encode_stroke(record: &StrokeRecord, out: &mut Vec<u8>) {
 /// # Errors
 /// `BadMagic`, `UnsupportedVersion`, `UnexpectedEof`, `VarintOverflow`, `ChecksumMismatch` (verified before
 /// field validation), `TrailingBytes`, `InvalidValue` (unknown enum codes, non-finite floats), `OutOfRange`
-/// (grid values outside the [`GridSample`] ranges after delta accumulation, or delta accumulation overflow).
+/// (grid values outside the [`GridSample`] ranges after delta accumulation; sums are `i64`, `t_us` wraps).
 pub fn decode_stroke(bytes: &[u8]) -> Result<StrokeRecord, CodecError> {
     let mut r = Reader::new(bytes);
     read_header(&mut r, STROKE_MAGIC, STROKE_VERSION)?;

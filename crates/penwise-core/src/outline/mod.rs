@@ -5,8 +5,11 @@
 //! Kind → algorithm:
 //! - `Ballpoint`, `Fineliner`, `Marker`: perfect-freehand (`freehand.rs`) with the §1.4 penwise deviations.
 //! - `Fountain`: perfect-freehand centerline, radius scaled by the elliptic nib support (`nib.rs`, §2.2).
-//! - `Calligraphy`, `Highlighter`: flat nib ribbon offset along the nib axis (`nib.rs`, §2.1), corner fans off,
-//!   always flat caps (the nib end is the cap).
+//! - `Calligraphy`, `Highlighter`: flat nib (`nib.rs`, §2.1) swept as the union of per-segment convex hulls of
+//!   the nib rectangle (`sweep.rs`), so crossing the nib axis never twists or cancels the fill; always flat ends
+//!   (the nib rectangle at each end is the cap, also when tapered).
+//! - Strokes of 2+ points shorter than `END_NOISE_THRESHOLD` (3 px) with round tips render the round dot at the
+//!   first point (upstream `isVeryShort`); flat nibs sweep them like any stroke.
 //!
 //! Marker/highlighter need no separate module: flat opacity is a style property (one nonzero polygon never
 //! double-covers), the round marker is perfect-freehand, and the highlighter is a flat nib.
@@ -18,6 +21,7 @@
 
 mod freehand;
 mod nib;
+mod sweep;
 mod walker;
 mod window;
 
@@ -126,7 +130,8 @@ impl OutlineEngine {
     /// Commits `last` (if any) and returns the final single-contour polygon
     /// `left ++ end_cap ++ reverse(right) ++ start_cap` with `contour_ends = [points.len()]`.
     /// Edge cases: no points at all → empty `Outline` (no points, no contours); exactly one centerline point →
-    /// a dot (13-point round fan for round brushes, the nib rectangle for flat nibs).
+    /// a dot (13-point round fan for round brushes, the nib rectangle for flat nibs); a round-tip stroke shorter
+    /// than 3 px → the round dot at its first point.
     #[must_use]
     pub fn finish(mut self, last: Option<&InkPoint>) -> Outline {
         if let Some(ink) = last {
@@ -217,12 +222,15 @@ impl OutlineEngine {
         if let Some(t) = tail {
             window.add(n - 1, t);
         }
-        if n == 1 {
-            let pressure = window.pressure(0, &last);
-            self.shape.dot(last.point, pressure, &mut self.start_cap);
+        let total = last.running_length;
+        let very_short =
+            !matches!(self.shape.tip, Tip::Flat(_)) && total < f64::from(END_NOISE_THRESHOLD);
+        if n == 1 || very_short {
+            let first = self.point_at(0, tail).unwrap_or(last);
+            let pressure = window.pressure(0, &first);
+            self.shape.dot(first.point, pressure, &mut self.start_cap);
             return;
         }
-        let total = last.running_length;
         let mut walker = self.walker;
         for i in self.next_stable..n {
             if let Some(step) = self.step_at(i, n, tail, total, &window) {
@@ -239,11 +247,6 @@ impl OutlineEngine {
             radius: walker.radius,
             first_sides: first_pair(&self.left, &self.right)
                 .or_else(|| first_pair(&self.tentative_left, &self.tentative_right)),
-            last_sides: self
-                .tentative_left
-                .last()
-                .copied()
-                .zip(self.tentative_right.last().copied()),
         };
         self.shape
             .caps(&ends, &mut self.start_cap, &mut self.end_cap);

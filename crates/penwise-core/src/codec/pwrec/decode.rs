@@ -89,9 +89,7 @@ fn read_run(channels: Channels, r: &mut Reader<'_>) -> Result<RecordedStroke, Co
         let mut cur = prev;
         for (slot, value) in cur.iter_mut().enumerate() {
             if has_channel(channels, slot) {
-                *value = value.checked_add(r.sv32()?).ok_or(CodecError::OutOfRange {
-                    field: "frame delta",
-                })?;
+                *value = value.wrapping_add(r.sv32()?);
             }
         }
         let t = cur[T_SLOT];

@@ -285,7 +285,7 @@ Layout v1. All multi-byte fixed fields are LE. `uv` = LEB128 unsigned varint, `s
 ```
 magic        4  b"PWRC"
 version      u16  = 1
-channels     u16  bitmask: 0 x, 1 y, 2 pressure, 3 tilt_x, 4 tilt_y, 5 distance(hover), 6 t_us  (v1 writes 0x5F|0x40)
+channels     u16  bitmask: 0 x, 1 y, 2 pressure, 3 tilt_x, 4 tilt_y, 5 distance(hover), 6 t_us  (v1 writes 0x5F)
 source       u8   0 = getevent raw device units, 1 = Android MotionEvent (app debug recorder, M3)
 reserved     u8   = 0
 device       uv len + UTF-8   e.g. "SM-X710/sec_e-pen"
@@ -294,7 +294,7 @@ px mapping   uv x_num, uv x_den, uv y_num, uv y_den     # px = (raw - min) * num
 rate_hint    uv   nominal Hz (482)                      # informational only
 strokes      uv   count
   per stroke:
-    kind     u8   0 = contact (BTN_TOUCH down run), 1 = hover run
+    kind     u8   0 = contact (BTN_TOUCH down run), 1 = hover run (reserved: hover runs are out of v1)
     t0_us    uv   start time, µs since recording start
     n        uv   sample count (≥1)
     sample 0: sv per channel (absolute; t channel = 0)
@@ -302,11 +302,15 @@ strokes      uv   count
 trailer      u64  FNV-1a 64 of every preceding byte
 ```
 
+- Hover is out of v1: `RunKind::Hover` (code 1) and the distance channel (bit 5) are reserved in the format so a later
+  recorder can add them, but `penwise-fixtures` only emits contact runs with mask `0x5F`, so every committed fixture
+  holds contact runs only.
 - The ranges, mapping and channel mask in the header make the file self-describing. The 482 Hz rate, the
   portrait-native axes and the pressure ceiling are data, not code constants. The MotionEvent recorder (M3) uses
   `source = 1` with its own quantization (for example x/y in 1/16 px and pressure ×4095) declared in the same fields.
 - Decoding is strict: wrong magic, an unknown version, varint overflow (>5 bytes for 32-bit), trailing garbage or a
-  checksum mismatch each return a typed error, never a panic. Values are `i32` internally. Only `version` decides the
+  checksum mismatch each return a typed error, never a panic. Values are `i32` internally; deltas are wrapping `i32`
+  on both sides, so every `i32` value round-trips. Only `version` decides the
   layout, so a v2 can add channels behind the mask.
 - Plain deltas are good enough: t deltas of about 2074 µs fit 2 bytes, and x/y/p deltas usually fit 1–2 bytes.
   Delta-of-delta saves about 1 B/sample but costs clarity, so skip it.

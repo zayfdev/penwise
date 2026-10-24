@@ -7,6 +7,11 @@
 //! advanced one quantized sample at a time; feeding the same samples in any `push` chunking yields the same
 //! outputs.
 
+mod speed;
+
+pub use speed::SPEED_WINDOW_US;
+use speed::SpeedEstimator;
+
 use crate::sample::Sample;
 
 /// One Euro parameters for one signal.
@@ -14,14 +19,14 @@ use crate::sample::Sample;
 pub struct OneEuroParams {
     /// Cutoff at rest, Hz (`> 0`).
     pub min_cutoff_hz: f32,
-    /// Speed coefficient, s/px for positions (cutoff rises by `beta · speed`). 0 = plain EMA.
+    /// Speed coefficient, 1/px for positions (Hz per px/s: cutoff rises by `beta · speed`). 0 = plain EMA.
     pub beta: f32,
     /// Cutoff of the derivative filter, Hz (`> 0`).
     pub d_cutoff_hz: f32,
 }
 
 impl OneEuroParams {
-    /// Position default: `min_cutoff 4 Hz, β 0.01 s/px, d_cutoff 1 Hz`.
+    /// Position default: `min_cutoff 4 Hz, β 0.01 /px, d_cutoff 1 Hz`.
     pub const POSITION: Self = Self {
         min_cutoff_hz: 4.0,
         beta: 0.01,
@@ -169,76 +174,6 @@ impl OneEuroScalar {
         let fv = prev_v + a * (v - prev_v);
         self.prev = Some((fv, d, t_us, dt));
         fv
-    }
-}
-
-/// Time window of the pen-speed estimate, µs (ink-rendering.md §4.2).
-pub const SPEED_WINDOW_US: u32 = 10_000;
-
-/// Samples kept for the speed window (covers 10 ms up to 1.5 kHz; faster input shortens the window).
-const SPEED_HISTORY: usize = 16;
-
-/// Pen speed from quantized sample positions, independent of the One Euro filter (whose derivative
-/// `(x − x̂_prev)/Δt` mixes filtered and raw positions and overestimates speed rate-dependently).
-///
-/// `speed = Σ|p_k − p_{k−1}| / (t_newest − t_oldest)` over the newest samples whose timestamp lies within
-/// [`SPEED_WINDOW_US`] of the newest one. The window always spans at least the last segment, and extends back
-/// further while the elapsed time is still 0 (repeated timestamps). Timestamps are made monotone
-/// (`t = max(t, t_prev)`); elapsed time is at least [`MIN_DT_S`]. Only `+ − × ÷ sqrt`, so bit-identical.
-#[derive(Debug, Clone, PartialEq)]
-struct SpeedEstimator {
-    /// Ring buffer of `(x, y, monotone t_us)`; `head` is the next write slot.
-    ring: [(f32, f32, u32); SPEED_HISTORY],
-    len: usize,
-    head: usize,
-}
-
-impl SpeedEstimator {
-    const fn new() -> Self {
-        Self {
-            ring: [(0.0, 0.0, 0); SPEED_HISTORY],
-            len: 0,
-            head: 0,
-        }
-    }
-
-    /// `k`-th newest stored sample (`k = 0` is the newest); `k < len`.
-    fn back(&self, k: usize) -> (f32, f32, u32) {
-        self.ring[(self.head + SPEED_HISTORY - 1 - k) % SPEED_HISTORY]
-    }
-
-    /// Records one quantized sample and returns the windowed speed, px/s (0 for the first sample).
-    #[allow(
-        clippy::cast_possible_truncation,
-        reason = "elapsed seconds fit f32; computed in f64 for an exact µs → s product"
-    )]
-    fn push(&mut self, x: f32, y: f32, t_us: u32) -> f32 {
-        let t = if self.len == 0 {
-            t_us
-        } else {
-            u32::max(t_us, self.back(0).2)
-        };
-        self.ring[self.head] = (x, y, t);
-        self.head = (self.head + 1) % SPEED_HISTORY;
-        self.len = usize::min(self.len + 1, SPEED_HISTORY);
-        if self.len < 2 {
-            return 0.0;
-        }
-        let mut arc = 0.0_f32;
-        let mut elapsed_us = 0_u32;
-        let mut newer = (x, y);
-        for k in 1..self.len {
-            let (px, py, pt) = self.back(k);
-            let age = t - pt;
-            if k > 1 && age > SPEED_WINDOW_US && elapsed_us > 0 {
-                break;
-            }
-            let (dx, dy) = (newer.0 - px, newer.1 - py);
-            arc += (dx * dx + dy * dy).sqrt();
-            elapsed_us = age;
-            newer = (px, py);
-        }
-        arc / crate::float::max((f64::from(elapsed_us) * 1e-6) as f32, MIN_DT_S)
     }
 }
 

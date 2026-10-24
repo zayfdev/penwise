@@ -2,9 +2,9 @@
 //! with `tests/goldens/raster_*.png` under `PixelTolerance::GOLDEN` (max channel delta ≤ 2, < 0.1 % of pixels
 //! differing). Pixels are platform-rasterized, so these goldens are native/server-only (feature `raster`).
 //!
-//! Bless (write/overwrite the goldens): `PENWISE_BLESS=1 cargo test -p penwise-core --features raster --test
-//! raster_golden`. A missing golden is blessed automatically. On mismatch, `actual` and `diff` PNGs are written
-//! to `target/penwise-golden/`.
+//! Bless (write/overwrite the goldens): `just bless` (`PENWISE_BLESS=1 cargo test -p penwise-core --features
+//! raster`); `PENWISE_BLESS` counts when set to anything but empty or `0`. A missing golden fails with that hint.
+//! On mismatch, `actual` and `diff` PNGs are written to `target/penwise-golden/`.
 //!
 //! Owner: slice e.
 #![allow(
@@ -15,10 +15,12 @@
 )]
 
 use penwise_core::brush::{BlendMode, Color};
+use penwise_core::codec::decode_pwrec;
 use penwise_core::geometry::{Dab, Outline, StrokeGeometry, StrokeStyle};
 use penwise_core::raster::png::{
     PixelTolerance, compare_pixels, decode_png, diff_image, encode_png,
 };
+use penwise_core::raster::sheet::{SheetOptions, contact_strokes, render_brush_sheet};
 use penwise_core::raster::stamps::CoverageBuffer;
 use penwise_core::raster::tiny_skia::{Color as SkColor, Pixmap};
 use penwise_core::raster::{Viewport, render_strokes};
@@ -83,16 +85,25 @@ fn artifacts_dir() -> PathBuf {
         .join("penwise-golden")
 }
 
-/// Compares `actual` with `tests/goldens/<name>.png`; blesses when missing or `PENWISE_BLESS=1`.
+/// `PENWISE_BLESS` set to anything but empty or `0` (same rule as `tests/golden.rs`).
+fn blessing() -> bool {
+    std::env::var_os("PENWISE_BLESS").is_some_and(|v| !v.is_empty() && v != "0")
+}
+
+/// Compares `actual` with `tests/goldens/<name>.png`; rewrites it when [`blessing`]. A missing golden fails.
 fn check_golden(name: &str, actual: &Pixmap) {
     let path = goldens_dir().join(format!("{name}.png"));
-    let bless = std::env::var("PENWISE_BLESS").is_ok_and(|v| v == "1");
-    if bless || !path.exists() {
+    if blessing() {
         std::fs::create_dir_all(goldens_dir()).unwrap();
         std::fs::write(&path, encode_png(actual).unwrap()).unwrap();
         eprintln!("blessed {}", path.display());
         return;
     }
+    assert!(
+        path.exists(),
+        "missing golden {}; run `just bless` (PENWISE_BLESS=1) to create it",
+        path.display()
+    );
     let expected = decode_png(&std::fs::read(&path).unwrap()).unwrap();
     // Round-trip through PNG so both sides are compared exactly as stored.
     let actual = decode_png(&encode_png(actual).unwrap()).unwrap();
@@ -235,4 +246,24 @@ fn raster_highlighter_over_ink() {
         build(Preset::Highlighter, 4, &straight(60.0)),
     ];
     check_golden("raster_highlighter_over_ink", &render(&strokes));
+}
+
+/// Real pen recording (five right→left strokes, pressure rising toward the left end), compiled in.
+const PRESSURE_RAMP: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../fixtures/pwrec/04-pressure-ramp.pwrec"
+));
+
+#[test]
+fn raster_brush_sheet() {
+    // Every preset in `Preset::ALL` order, 4 cells per row, ≤ 1200 px wide.
+    let strokes = contact_strokes(&decode_pwrec(PRESSURE_RAMP).unwrap()).unwrap();
+    let options = SheetOptions {
+        columns: 4,
+        max_width_px: 1200,
+        ..SheetOptions::DEFAULT
+    };
+    let sheet = render_brush_sheet(&strokes, &options).unwrap();
+    assert!(sheet.width() <= 1600 && sheet.height() <= 1600);
+    check_golden("raster_brush_sheet", &sheet);
 }

@@ -78,14 +78,16 @@ fn effective_angle_takes_the_short_arc() {
 }
 
 #[test]
-fn flat_offsets_are_symmetric_and_span_the_nib() {
-    let n = nib(0.698_131_7, 1.0, 1.5, 1.0);
+fn nib_corners_are_symmetric_and_span_the_nib() {
     let p = [10.0, 20.0];
-    let (l, r) = flat_offsets(p, [1.0, 0.0], 22.0, n.angle, &n);
-    assert!((l[0] + r[0] - 2.0 * p[0]).abs() < 1e-4 && (l[1] + r[1] - 2.0 * p[1]).abs() < 1e-4);
-    let span = dist(l, r);
-    let expected = (22.0_f32 * 22.0 + 1.5 * 1.5).sqrt();
-    assert!((span - expected).abs() < 1e-3, "span {span}");
+    let c = nib_corners(p, 22.0, 1.5, 0.698_131_7);
+    for (a, b) in [(c[0], c[2]), (c[1], c[3])] {
+        assert!((a[0] + b[0] - 2.0 * p[0]).abs() < 1e-4 && (a[1] + b[1] - 2.0 * p[1]).abs() < 1e-4);
+        let span = dist(a, b);
+        let expected = (22.0_f32 * 22.0 + 1.5 * 1.5).sqrt();
+        assert!((span - expected).abs() < 1e-3, "span {span}");
+    }
+    assert!((dist(c[0], c[1]) - 22.0).abs() < 1e-3 && (dist(c[0], c[3]) - 1.5).abs() < 1e-4);
 }
 
 #[test]
@@ -127,25 +129,34 @@ fn direction_smoother_keeps_direction_on_exact_cancellation() {
     // w = 0.5 exactly cancels (1,0) against (−1,0): keep the previous direction.
     let ln2 = core::f32::consts::LN_2;
     let kept = s.update([-1.0, 0.0], ln2, 1.0);
-    assert!(kept[0].is_finite() && kept[1].is_finite());
-    let len = (kept[0] * kept[0] + kept[1] * kept[1]).sqrt();
-    assert!((len - 1.0).abs() < 1e-5);
+    assert!(
+        (kept[0] - 1.0).abs() < 1e-6 && kept[1].abs() < 1e-6,
+        "direction not kept: {kept:?}"
+    );
 }
 
 #[test]
-fn flat_offsets_sweep_the_outer_nib_corners() {
+fn nib_corners_support_is_the_swept_width() {
     let n = nib(0.698_131_7, 1.0, 1.5, 1.0);
     for k in 0..24_u8 {
         let theta = f32::from(k) * 0.27 + 0.01;
-        let d = unit(theta);
-        let (left, right) = flat_offsets([0.0, 0.0], d, 22.0, n.angle, &n);
-        let normal = per(d);
-        let across = ((left[0] - right[0]) * normal[0] + (left[1] - right[1]) * normal[1]).abs();
+        let normal = per(unit(theta));
+        let along_normal = nib_corners([0.0, 0.0], 22.0, n.thickness, n.angle)
+            .map(|c| c[0] * normal[0] + c[1] * normal[1]);
+        let hi = along_normal
+            .iter()
+            .copied()
+            .fold(f32::NEG_INFINITY, crate::float::max);
+        let lo = along_normal
+            .iter()
+            .copied()
+            .fold(f32::INFINITY, crate::float::min);
         let rel = theta - n.angle;
         let swept = 22.0 * libm::sinf(rel).abs() + 1.5 * libm::cosf(rel).abs();
         assert!(
-            (across - swept).abs() < 1e-3,
-            "θ {theta}: {across} vs {swept}"
+            (hi - lo - swept).abs() < 1e-3,
+            "θ {theta}: {} vs {swept}",
+            hi - lo
         );
     }
 }

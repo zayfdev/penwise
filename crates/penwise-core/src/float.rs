@@ -57,3 +57,6 @@ pub fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
 pub fn canon(x: f32) -> Option<f32> {
     if x.is_finite() { Some(x + 0.0) } else { None }
 }
+
+#[cfg(test)]
+mod tests;

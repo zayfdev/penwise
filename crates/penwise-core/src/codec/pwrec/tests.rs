@@ -277,18 +277,13 @@ fn invalid_fields_with_valid_checksum() {
 }
 
 #[test]
-fn delta_overflow_is_out_of_range() {
+fn extreme_values_round_trip_through_wrapping_deltas() {
     let mut rec = golden_recording();
     rec.strokes[0].frames = vec![
-        frame(i32::MAX, 0, 0, (0, 0), 0),
-        frame(i32::MIN, 0, 0, (0, 0), 1),
+        frame(i32::MAX, i32::MIN, 0, (0, 0), 0),
+        frame(i32::MIN, i32::MAX, 0, (0, 0), 1),
     ];
-    assert_eq!(
-        decode_pwrec(&encode(&rec)),
-        Err(CodecError::OutOfRange {
-            field: "frame delta"
-        })
-    );
+    assert_eq!(decode_pwrec(&encode(&rec)), Ok(rec));
 }
 
 #[test]

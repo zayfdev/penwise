@@ -369,3 +369,129 @@ fn soft_first_contact_is_lifted_by_the_pressure_window() {
         "start width {near_start}"
     );
 }
+
+/// Nonzero winding number of `pt` against the closed contours of `o`.
+fn winding(o: &Outline, pt: [f32; 2]) -> i32 {
+    let (x, y) = (f64::from(pt[0]), f64::from(pt[1]));
+    let mut w = 0;
+    let mut start = 0;
+    for &end in &o.contour_ends {
+        let end = usize::try_from(end).unwrap();
+        let contour = &o.points[start..end];
+        start = end;
+        for (i, a) in contour.iter().enumerate() {
+            let b = contour[(i + 1) % contour.len()];
+            let (ax, ay) = (f64::from(a[0]), f64::from(a[1]));
+            let (bx, by) = (f64::from(b[0]), f64::from(b[1]));
+            let side = (bx - ax) * (y - ay) - (by - ay) * (x - ax);
+            if ay <= y && by > y && side > 0.0 {
+                w += 1;
+            } else if ay > y && by <= y && side < 0.0 {
+                w -= 1;
+            }
+        }
+    }
+    w
+}
+
+/// Full circle of radius `r` around `c`, ~2 px steps, pressure ramping 0.2 → 1.
+fn circle(c: [f32; 2], r: f32) -> Vec<InkPoint> {
+    let n = 160_u16;
+    (0..=n)
+        .map(|i| {
+            let t = f32::from(i) / f32::from(n);
+            let (s, co) = libm::sincosf(t * 2.0 * core::f32::consts::PI);
+            ink(c[0] + r * co, c[1] + r * s, 0.2 + 0.8 * t)
+        })
+        .collect()
+}
+
+/// S-curve: two opposite half circles of radius 30, so the direction sweeps through every angle twice.
+fn s_curve() -> Vec<InkPoint> {
+    let mut out = Vec::new();
+    for i in 0..=90_u16 {
+        let a = f32::from(i) / 90.0 * core::f32::consts::PI;
+        let (s, c) = libm::sincosf(a);
+        out.push(ink(100.0 - 30.0 * c, 100.0 - 30.0 * s, 0.7));
+    }
+    for i in 1..=90_u16 {
+        let a = f32::from(i) / 90.0 * core::f32::consts::PI;
+        let (s, c) = libm::sincosf(a);
+        out.push(ink(160.0 - 30.0 * c, 100.0 + 30.0 * s, 0.7));
+    }
+    out
+}
+
+fn assert_centerline_covered(o: &Outline, pts: &[InkPoint], what: &str) {
+    for pair in pts.windows(2) {
+        for k in 0..4_u8 {
+            let t = f32::from(k) / 4.0;
+            let p = [
+                pair[0].x + (pair[1].x - pair[0].x) * t,
+                pair[0].y + (pair[1].y - pair[0].y) * t,
+            ];
+            assert!(winding(o, p) != 0, "{what}: hole at {p:?}");
+        }
+    }
+}
+
+#[test]
+fn flat_nib_sweep_has_no_holes_where_the_stroke_crosses_the_nib() {
+    for preset in [Preset::Calligraphy, Preset::Highlighter] {
+        for params in [preset.params(), smooth_free(preset.params())] {
+            for (name, pts) in [
+                ("circle", circle([100.0, 100.0], 40.0)),
+                ("small circle", circle([50.0, 50.0], 6.0)),
+                ("s-curve", s_curve()),
+            ] {
+                let o = build(&params, &pts);
+                assert_closed_finite(&o);
+                assert_centerline_covered(&o, &pts, &format!("{preset:?} {name}"));
+                for chunk in [1, 7] {
+                    assert_eq!(
+                        bits(&run(&params, &pts, chunk)),
+                        bits(&o),
+                        "{preset:?} {name}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn tapered_flat_nib_keeps_flat_ends() {
+    let mut params = smooth_free(Preset::Calligraphy.params());
+    params.outline.taper_start = 20.0;
+    params.outline.taper_end = 20.0;
+    let pts = line([0.0, 50.0], 0.0, 101, 1.0, 1.0);
+    let o = build(&params, &pts);
+    assert_closed_finite(&o);
+    assert_centerline_covered(&o, &pts[1..100], "tapered calligraphy");
+    let xs = o.points.iter().map(|p| p[0]);
+    let lo = xs.clone().fold(f32::INFINITY, min);
+    let hi = xs.fold(f32::NEG_INFINITY, max);
+    // Both ends are swept nib rectangles (flat caps), reaching the end points: no round bulge before x = 0 and
+    // no single-point end short of x = 100.
+    assert!(lo > -0.05 && lo < 0.05, "start {lo}");
+    assert!(hi > 99.98, "end {hi}");
+    let mid = width_at(&o, [1.0, 0.0], [0.0, 1.0], 50.0, 2.0);
+    let near_start = width_at(&o, [1.0, 0.0], [0.0, 1.0], 2.0, 0.6);
+    let near_end = width_at(&o, [1.0, 0.0], [0.0, 1.0], 98.0, 0.6);
+    assert!(
+        near_start < mid * 0.5 && near_end < mid * 0.5,
+        "start {near_start} mid {mid} end {near_end}"
+    );
+}
+
+#[test]
+fn a_very_short_round_stroke_is_a_dot_at_its_first_point() {
+    let params = smooth_free(Preset::Ballpoint.params());
+    let o = build(&params, &line([10.0, 10.0], 0.3, 3, 1.2, 0.5));
+    assert_closed_finite(&o);
+    assert_eq!(o.points.len(), 13);
+    let d: Vec<f32> = o.points.iter().map(|p| dist(*p, [10.0, 10.0])).collect();
+    let spread =
+        d.iter().copied().fold(f32::NEG_INFINITY, max) - d.iter().copied().fold(f32::INFINITY, min);
+    assert!(spread < 1e-3 && d[0] > 0.0, "{d:?}");
+}

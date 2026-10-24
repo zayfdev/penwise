@@ -123,6 +123,38 @@ fn extremes_round_trip() {
 }
 
 #[test]
+fn encode_samples_round_trips_through_decode_samples() {
+    let sentinel = grid(1, 2, 3, 4, 5, 6);
+    for seed in 0..8 {
+        let n = usize::try_from(seed * 5 % 23).unwrap();
+        let samples = random_grid_samples(seed, n);
+        let cells: Vec<GridSample> = samples.iter().map(|s| s.to_grid()).collect();
+        let mut out = Vec::new();
+        encode_samples(&cells, &mut out);
+        // decode_samples appends, so samples already in `out` are preserved.
+        let mut decoded = vec![sentinel];
+        let mut r = Reader::new(&out);
+        decode_samples(&mut r, &mut decoded).unwrap();
+        assert_eq!(r.remaining(), 0, "seed {seed}");
+        assert_eq!(decoded.len(), n + 1);
+        assert_eq!(decoded[0], sentinel);
+        assert_eq!(decoded[1..], samples[..], "seed {seed}");
+    }
+}
+
+#[test]
+fn encode_samples_matches_the_stroke_blob_section() {
+    let samples = random_grid_samples(3, 12);
+    let cells: Vec<GridSample> = samples.iter().map(|s| s.to_grid()).collect();
+    let mut section = Vec::new();
+    encode_samples(&cells, &mut section);
+    let blob = encode(&record(Preset::Fineliner.params(), samples));
+    // Blob = header + params + seed + sample section + 8-byte trailer.
+    let body = &blob[..blob.len() - 8];
+    assert!(body.ends_with(&section));
+}
+
+#[test]
 fn t_us_wraps_across_u32_max() {
     let ts = [
         u32::MAX - 2_073,

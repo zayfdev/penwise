@@ -1,15 +1,15 @@
-//! The 13 built-in presets, from the ink-rendering.md §5 preset table. Data, frozen by the geometry goldens:
-//! changing a value moves pixels and requires re-blessing.
+//! The 13 built-in presets, from the ink-rendering.md §5 preset table (stamp presets retuned at Gate C for
+//! visibility at normal writing pressure `c(p) ≈ 0.6`). Data, frozen by the geometry goldens: changing a value
+//! moves pixels and requires re-blessing.
 //!
 //! Owner: contract.
 
-use super::params::{
-    BrushParams, CapStyle, GrainParams, NibParams, OutlineParams, SprayDistribution, SprayParams,
-    StampParams,
-};
-use super::{BlendMode, BrushFamily, Color, OutlineKind, StampKind};
-use crate::dynamics::{DEG, Dynamics, PressureCurve, TiltResponse, VelocityResponse};
-use crate::smoothing::SmoothingParams;
+mod helpers;
+
+use super::params::{BrushParams, GrainParams, NibParams, SprayDistribution, SprayParams};
+use super::{BlendMode, Color, OutlineKind, StampKind};
+use crate::dynamics::{DEG, PressureCurve};
+use helpers::{dabs, flat_nib, outline, stamp, tilt, velocity};
 
 /// Built-in brush presets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -27,112 +27,6 @@ pub enum Preset {
     Soft,
     Solid,
     Shading,
-}
-
-const fn curve(gamma: f32) -> PressureCurve {
-    PressureCurve {
-        floor: 0.02,
-        saturation: 0.90,
-        gamma,
-    }
-}
-
-const fn velocity(size: f32, opacity: f32) -> VelocityResponse {
-    VelocityResponse {
-        size,
-        opacity,
-        ..VelocityResponse::NONE
-    }
-}
-
-const fn tilt(max_aspect: f32, max_radius_scale: f32, side_hardness: f32) -> TiltResponse {
-    TiltResponse {
-        max_aspect,
-        max_radius_scale,
-        side_hardness,
-        side_alpha: 0.5,
-        ..TiltResponse::NONE
-    }
-}
-
-/// Round-capped outline brush with the given sizes, curve and tapers; ink color, opaque, normal blend.
-const fn outline(
-    kind: OutlineKind,
-    size: [f32; 2],
-    gamma: f32,
-    k_v: f32,
-    taper_end: f32,
-) -> BrushParams {
-    BrushParams {
-        family: BrushFamily::Outline(kind),
-        color: Color::INK,
-        opacity: 1.0,
-        blend: BlendMode::Normal,
-        size_min: size[0],
-        size_max: size[1],
-        size_gamma: 1.0,
-        dynamics: Dynamics {
-            pressure: curve(gamma),
-            velocity: velocity(k_v, 0.0),
-            tilt: TiltResponse::NONE,
-        },
-        smoothing: SmoothingParams::DEFAULT,
-        outline: OutlineParams {
-            taper_end,
-            ..OutlineParams::ROUND
-        },
-        stamp: StampParams::NONE,
-    }
-}
-
-/// Stamp brush with sizes, size gamma and stamp params; ink color, opaque cap, default curve, no velocity/tilt.
-const fn stamp(
-    kind: StampKind,
-    size: [f32; 2],
-    size_gamma: f32,
-    stamp: StampParams,
-) -> BrushParams {
-    BrushParams {
-        family: BrushFamily::Stamp(kind),
-        color: Color::INK,
-        opacity: 1.0,
-        blend: BlendMode::Normal,
-        size_min: size[0],
-        size_max: size[1],
-        size_gamma,
-        dynamics: Dynamics {
-            pressure: PressureCurve::DEFAULT,
-            velocity: VelocityResponse::NONE,
-            tilt: TiltResponse::NONE,
-        },
-        smoothing: SmoothingParams::DEFAULT,
-        outline: OutlineParams::ROUND,
-        stamp,
-    }
-}
-
-const fn flat_nib(angle_deg: f32, thickness: f32) -> OutlineParams {
-    OutlineParams {
-        cap_start: CapStyle::Flat,
-        cap_end: CapStyle::Flat,
-        nib: NibParams {
-            angle: angle_deg * DEG,
-            aspect: 1.0,
-            thickness,
-            fixation: 1.0,
-        },
-        ..OutlineParams::ROUND
-    }
-}
-
-const fn dabs(flow: f32, flow_pressure: f32, hardness: f32, spacing: f32) -> StampParams {
-    StampParams {
-        flow,
-        flow_pressure,
-        hardness,
-        spacing,
-        ..StampParams::NONE
-    }
 }
 
 impl Preset {
@@ -191,7 +85,7 @@ impl Preset {
                 StampKind::Soft,
                 [12.0, 48.0],
                 1.0,
-                dabs(0.15, 0.6, 0.25, 0.08),
+                dabs(0.6, 0.5, 0.45, 0.06),
             ),
             Self::Solid => stamp(
                 StampKind::Solid,
@@ -204,9 +98,9 @@ impl Preset {
     }
 }
 
-/// Pressure + mild direction: elliptic nib a 0.55 at φ 45°, end taper 6 px.
+/// Pressure-driven width 1.5–10 (linear curve, `k_v` 0.15): elliptic nib a 0.55 at φ 45°, end taper 6 px.
 const fn fountain() -> BrushParams {
-    let mut p = outline(OutlineKind::Fountain, [2.5, 9.0], 0.8, 0.25, 6.0);
+    let mut p = outline(OutlineKind::Fountain, [1.5, 10.0], 1.0, 0.15, 6.0);
     p.outline.nib = NibParams {
         angle: 45.0 * DEG,
         aspect: 0.55,
@@ -241,13 +135,14 @@ const fn highlighter() -> BrushParams {
     p
 }
 
-/// Graphite 3–6 px, grain 0.7 (w 0.15, scale 1), tilt side shading A 4 K 3, `k_v` 0.15 on alpha.
+/// Graphite 3–6 px, flow 1 (`k_flow` 0.4), grain 0.7 (w 0.15, scale 1), tilt side shading A 4 K 3,
+/// `k_v` 0.1 on alpha.
 const fn pencil() -> BrushParams {
     let mut p = stamp(
         StampKind::Pencil,
         [3.0, 6.0],
         0.5,
-        dabs(0.35, 0.85, 0.6, 0.10),
+        dabs(1.0, 0.4, 0.8, 0.08),
     );
     p.stamp.grain = Some(GrainParams {
         scale: 1.0,
@@ -255,73 +150,77 @@ const fn pencil() -> BrushParams {
         softness: 0.15,
     });
     p.color = Color::GRAPHITE;
-    p.opacity = 0.9;
+    p.opacity = 0.95;
     p.dynamics.tilt = tilt(4.0, 3.0, 0.3);
-    p.dynamics.velocity = velocity(0.0, 0.15);
+    p.dynamics.velocity = velocity(0.0, 0.1);
     p
 }
 
-/// Waxy 8–14 px, coarse grain (scale 3, strength 0.9, w 0.05), scatter 0.05, tilt K 1.5.
+/// Waxy 8–14 px, fine dense tooth (scale 1, strength 0.85, w 0.25), scatter 0.03, tilt K 1.5.
 const fn crayon() -> BrushParams {
     let mut p = stamp(
         StampKind::Crayon,
         [8.0, 14.0],
         0.7,
-        dabs(0.6, 0.5, 0.8, 0.08),
+        dabs(0.8, 0.3, 0.9, 0.06),
     );
     p.stamp.grain = Some(GrainParams {
-        scale: 3.0,
-        strength: 0.9,
-        softness: 0.05,
+        scale: 1.0,
+        strength: 0.85,
+        softness: 0.25,
     });
-    p.stamp.scatter = 0.05;
+    p.stamp.scatter = 0.03;
     p.dynamics.tilt = tilt(1.0, 1.5, 0.8);
     p
 }
 
-/// Soft 30–90 px build-up, pressure → flow, 60 dabs/s while stationary.
+/// Soft 16–60 px build-up, flow 0.45 (`k_flow` 0.7), hardness 0.4, 60 dabs/s while stationary.
 const fn airbrush() -> BrushParams {
     let mut p = stamp(
         StampKind::Airbrush,
-        [30.0, 90.0],
-        0.3,
-        dabs(0.05, 1.0, 0.05, 0.05),
+        [16.0, 60.0],
+        0.7,
+        dabs(0.45, 0.7, 0.4, 0.05),
     );
     p.stamp.dabs_per_second = 60.0;
     p
 }
 
-/// Spray areas 40–80 px, up to 12 particles of 1–2.5 px, uniform disk.
+/// Spray areas 24–56 px, up to 36 opaque particles of 1–2.5 px, Gaussian disk.
 const fn spray() -> BrushParams {
     let mut p = stamp(
         StampKind::Spray,
-        [40.0, 80.0],
+        [24.0, 56.0],
         1.0,
-        dabs(0.6, 0.0, 1.0, 0.25),
+        dabs(1.0, 0.0, 1.0, 0.15),
     );
     p.stamp.spray = Some(SprayParams {
-        particles_max: 12,
+        particles_max: 36,
         particle_size_min: 1.0,
         particle_size_max: 2.5,
-        distribution: SprayDistribution::Uniform,
+        distribution: SprayDistribution::Gaussian,
     });
     p
 }
 
-/// Wide 40–160 px, very soft, 0.3 opacity cap, light grain, tilt K 2 A 1.5.
+/// Graphite side shading 16–56 px, soft (h 0.45), opacity 0.75, light grain; tilt from 20°: K 2.5 A 1.8,
+/// full alpha (wider and stronger when tilted).
 const fn shading() -> BrushParams {
     let mut p = stamp(
         StampKind::Shading,
-        [40.0, 160.0],
-        0.5,
-        dabs(0.06, 0.8, 0.1, 0.10),
+        [16.0, 56.0],
+        0.6,
+        dabs(0.7, 0.6, 0.45, 0.08),
     );
     p.stamp.grain = Some(GrainParams {
         scale: 1.0,
-        strength: 0.3,
-        softness: 0.15,
+        strength: 0.4,
+        softness: 0.3,
     });
-    p.opacity = 0.3;
-    p.dynamics.tilt = tilt(1.5, 2.0, 0.1);
+    p.color = Color::GRAPHITE;
+    p.opacity = 0.75;
+    p.dynamics.tilt = tilt(1.8, 2.5, 0.3);
+    p.dynamics.tilt.theta0 = 20.0 * DEG;
+    p.dynamics.tilt.side_alpha = 1.0;
     p
 }

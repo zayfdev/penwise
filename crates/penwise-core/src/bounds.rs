@@ -116,3 +116,6 @@ impl Bounds {
         x >= self.min_x && x <= self.max_x && y >= self.min_y && y <= self.max_y
     }
 }
+
+#[cfg(test)]
+mod tests;

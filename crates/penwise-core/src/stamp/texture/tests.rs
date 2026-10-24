@@ -120,6 +120,16 @@ fn bake_tile_matches_paper_height_and_is_deterministic() {
 }
 
 #[test]
+fn bake_tile_rejects_oversized_tiles_without_panicking() {
+    let mut out = vec![1u8; 4];
+    bake_tile(1.0, u32::MAX, &mut out);
+    assert!(out.is_empty());
+    out.push(9);
+    bake_tile(1.0, MAX_TILE_SIZE + 1, &mut out);
+    assert!(out.is_empty());
+}
+
+#[test]
 fn baked_period_tile_wraps_at_edges() {
     // At scale 1 the paper repeats every 512 px, so a 512 px tile wraps seamlessly: the pixel past the right
     // (bottom) edge equals the first column (row), and the seam step is no larger than interior steps.

@@ -352,6 +352,63 @@ fn dab_cap_stops_emission() {
 }
 
 #[test]
+fn zero_particle_spray_with_huge_rate_terminates_empty() {
+    let mut p = Preset::Spray.params();
+    let Some(mut spray) = p.stamp.spray else {
+        panic!("spray preset has spray params")
+    };
+    spray.particles_max = 0;
+    p.stamp.spray = Some(spray);
+    p.stamp.dabs_per_second = 1e9;
+    let points = [
+        pt(0.0, 0.0, 0),
+        pt(30.0, 0.0, 1_000_000),
+        pt(60.0, 0.0, 2_000_000),
+    ];
+    assert!(run(&p, 3, &points).is_empty());
+    assert!(streamed(&p, 3, &points, 1).is_empty());
+    // Zero-pressure samples burst no particles either, even with particles.
+    let mut p = Preset::Spray.params();
+    p.stamp.dabs_per_second = 1e9;
+    let mut dry = points;
+    for q in &mut dry {
+        q.pressure = 0.0;
+    }
+    assert!(run(&p, 3, &dry).is_empty());
+}
+
+#[test]
+fn huge_temporal_rate_stops_at_the_cap_identically_when_streamed() {
+    let mut p = plain(10.0, 0.1, 0.5);
+    p.stamp.dabs_per_second = 1e12;
+    let points = [pt(0.0, 0.0, 0), pt(5.0, 0.0, 10_000), pt(9.0, 0.0, 20_000)];
+    let batch = run(&p, 0, &points);
+    assert_eq!(batch.len(), MAX_DABS_PER_STROKE as usize);
+    assert_eq!(bits(&batch), bits(&streamed(&p, 0, &points, 1)));
+}
+
+#[test]
+fn side_hardness_alone_still_shades_tilted_dabs() {
+    let mut p = plain(10.0, 0.1, 0.5);
+    p.stamp.hardness = 0.8;
+    p.dynamics.tilt = TiltResponse {
+        side_hardness: 0.2,
+        ..TiltResponse::NONE
+    };
+    let mut tilted = pt(50.0, 50.0, 0);
+    tilted.tilt = 70.0 * crate::dynamics::DEG;
+    let dab =
+        |p: &BrushParams, q: &InkPoint| StampEngine::new(p, StampKind::Solid, 0).finish(Some(q))[0];
+    assert!((dab(&p, &tilted).hardness - 0.2).abs() < 1e-6);
+    assert!((dab(&p, &pt(50.0, 50.0, 0)).hardness - 0.8).abs() < 1e-6);
+    // A fully neutral response leaves tilted dabs untouched (no hardening, no lean shift).
+    p.dynamics.tilt = TiltResponse::NONE;
+    let d = dab(&p, &tilted);
+    assert!((d.hardness - 0.8).abs() < 1e-6);
+    assert_eq!((d.x, d.y), (50.0, 50.0));
+}
+
+#[test]
 fn spray_bursts_hard_particles_inside_the_area() {
     for distribution in [SprayDistribution::Uniform, SprayDistribution::Gaussian] {
         let mut p = Preset::Spray.params();
@@ -375,7 +432,10 @@ fn spray_bursts_hard_particles_inside_the_area() {
         let mut half = pt(0.0, 0.0, 0);
         half.pressure = 0.5;
         let e = StampEngine::new(&p, StampKind::Spray, 5);
-        assert_eq!(e.finish(Some(&half)).len(), 6);
+        assert_eq!(
+            e.finish(Some(&half)).len(),
+            (spray.particles_max / 2) as usize
+        );
     }
 }
 
