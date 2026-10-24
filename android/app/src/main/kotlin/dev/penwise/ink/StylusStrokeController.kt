@@ -217,6 +217,15 @@ internal class StylusStrokeController(
         shapeTemp = preview
         live.reset()
         live.publish(LiveFrame(++strokeId, preview.snapshot()))
+        liveOut?.shape(
+            brush.presetIndex,
+            brush.argb,
+            brush.sizeScale,
+            PREVIEW_SEED,
+            built.first,
+            built.second,
+            built.second.size,
+        )
         sink.requestFrontFrame()
     }
 
@@ -268,6 +277,7 @@ internal class StylusStrokeController(
         erasePoints[eraseCount * 2] = x
         erasePoints[eraseCount * 2 + 1] = y
         eraseCount++
+        liveOut?.erasing(x, y, brushes.eraserRadiusPx)
     }
 
     private fun erase(persist: Boolean) {

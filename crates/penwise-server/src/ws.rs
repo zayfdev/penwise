@@ -126,6 +126,13 @@ async fn on_text(library: &Library, session: u64, page: &mut String, text: &str)
             library.fan_out(None, live_end(session));
             reply
         }
+        Some("op") => {
+            let target = match frame_page(library, &frame, page).await {
+                Ok(target) => target,
+                Err(reply) => return Some(reply),
+            };
+            Some(apply_op(library, &target, &frame).await)
+        }
         Some("page") => {
             let target = match frame_page(library, &frame, page).await {
                 Ok(target) => target,
@@ -143,6 +150,52 @@ async fn on_text(library: &Library, session: u64, page: &mut String, text: &str)
             tracing::warn!(kind = ?other, "ignoring unknown frame");
             None
         }
+    }
+}
+
+/// Applies one `{"t":"op","op":{"k":…}}` frame; returns the reply for the client.
+async fn apply_op(library: &Library, page: &str, frame: &Value) -> String {
+    let Some(op) = frame.get("op") else {
+        return error_frame("missing op");
+    };
+    let seeds = || -> Vec<String> {
+        op.get("seeds")
+            .and_then(|value| serde_json::from_value::<Vec<String>>(value.clone()).ok())
+            .unwrap_or_default()
+    };
+    match op.get("k").and_then(Value::as_str) {
+        Some("remove") => {
+            let removed = library.remove_strokes(page, &seeds()).await;
+            json!({ "t": "ack", "removed": removed }).to_string()
+        }
+        Some("clear") => {
+            let removed = library.clear_page(page).await;
+            json!({ "t": "ack", "removed": removed }).to_string()
+        }
+        Some("replace") => {
+            let strokes = op
+                .get("strokes")
+                .and_then(|value| serde_json::from_value::<Vec<StrokeMsg>>(value.clone()).ok())
+                .unwrap_or_default();
+            let total = library.replace_strokes(page, &seeds(), strokes).await;
+            json!({ "t": "ack", "strokes": total }).to_string()
+        }
+        Some("add") => {
+            let Some(stroke) = op.get("stroke").cloned() else {
+                return error_frame("missing stroke");
+            };
+            match serde_json::from_value::<StrokeMsg>(stroke) {
+                Ok(stroke) => {
+                    if library.append(page, stroke).await {
+                        json!({ "t": "ack" }).to_string()
+                    } else {
+                        error_frame("malformed stroke")
+                    }
+                }
+                Err(error) => error_frame(&error.to_string()),
+            }
+        }
+        other => error_frame(&format!("unknown op {other:?}")),
     }
 }
 

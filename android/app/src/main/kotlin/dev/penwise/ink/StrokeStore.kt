@@ -38,6 +38,9 @@ class StrokeStore {
 
     var onRewrite: ((List<SavedStroke>) -> Unit)? = null
 
+    /** Fires for edits that the mirror can apply incrementally instead of resending the page. */
+    var onOp: ((PageOp) -> Unit)? = null
+
     /** Strokes loaded from disk, with geometry already rebuilt. Undo history is not restored. */
     fun restore(saved: List<SavedStroke>) {
         entries.clear()
@@ -78,6 +81,7 @@ class StrokeStore {
         when (step) {
             is Step.Added -> {
                 entries.removeAll { it === step.stroke }
+                onOp?.invoke(PageOp.Remove(listOf(step.stroke.seed)))
             }
 
             is Step.Removed -> {
@@ -85,6 +89,7 @@ class StrokeStore {
                 step.removed.sortedBy { it.first }.forEach { (index, stroke) ->
                     entries.add(index.coerceAtMost(entries.size), stroke)
                 }
+                onOp?.invoke(PageOp.Add(step.removed.map { it.second }))
             }
         }
         redoStack.addLast(step)
@@ -96,8 +101,15 @@ class StrokeStore {
     fun redo() {
         val step = redoStack.removeLastOrNull() ?: return
         when (step) {
-            is Step.Added -> entries.add(step.stroke)
-            is Step.Removed -> entries.removeAll { entry -> step.removed.any { it.second === entry } }
+            is Step.Added -> {
+                entries.add(step.stroke)
+                onOp?.invoke(PageOp.Add(listOf(step.stroke)))
+            }
+
+            is Step.Removed -> {
+                entries.removeAll { entry -> step.removed.any { it.second === entry } }
+                onOp?.invoke(PageOp.Remove(step.removed.map { it.second.seed }))
+            }
         }
         undoStack.addLast(step)
         publish()
@@ -113,6 +125,7 @@ class StrokeStore {
         redoStack.clear()
         publish()
         onPageChanged?.invoke()
+        onOp?.invoke(PageOp.Clear)
         persist()
     }
 
@@ -143,6 +156,7 @@ class StrokeStore {
         mergeErase(removed)
         publish()
         onPageChanged?.invoke()
+        onOp?.invoke(PageOp.Remove(removed.map { it.second.seed }))
         if (persist) persist()
         return true
     }
@@ -150,6 +164,19 @@ class StrokeStore {
     /** Ends an erase gesture without another hit, so one drag is exactly one undo step. */
     fun commitErase() {
         redoStack.clear()
+        persist()
+    }
+
+    /** Replaces strokes by seed: what a precise erase produces. */
+    fun replace(
+        seeds: List<Long>,
+        fragments: List<SavedStroke>,
+    ) {
+        entries.removeAll { entry -> seeds.any { it == entry.seed } }
+        entries.addAll(fragments)
+        publish()
+        onPageChanged?.invoke()
+        onOp?.invoke(PageOp.Replace(seeds, fragments))
         persist()
     }
 

@@ -24,4 +24,22 @@ interface LiveOut {
 
     /** The stroke was committed (the server ends the preview itself) or cancelled (it must be withdrawn). */
     fun end(cancelled: Boolean)
+
+    /** A shape drag's whole preview, replacing the previous frame (a drag can shrink). */
+    fun shape(
+        preset: Int,
+        argb: Int,
+        scale: Float,
+        seed: Long,
+        samples: FloatArray,
+        times: IntArray,
+        count: Int,
+    ) = Unit
+
+    /** Where the eraser is, so the mirror can show the sweep. */
+    fun erasing(
+        x: Float,
+        y: Float,
+        radius: Float,
+    ) = Unit
 }

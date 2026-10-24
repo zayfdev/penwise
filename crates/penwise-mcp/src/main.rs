@@ -113,102 +113,96 @@ fn initialize(request: &serde_json::Value) -> serde_json::Value {
 }
 
 fn tools_list() -> serde_json::Value {
-    serde_json::json!({
-        "tools": [
-            {
-                "name": "penwise_page_png",
-                "description": "Render the current Penwise page (the user's handwriting/drawing) as a PNG image.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "scale": {
-                            "type": "number",
-                            "description": "Pixels per page pixel, 0.05–4 (default 1; use 0.5 for a smaller image)."
-                        },
-                        "page": { "type": "string", "description": "Page id; defaults to the active page." }
-                    }
-                }
-            },
-            {
-                "name": "penwise_page_status",
-                "description": "Stroke and page counts for the active page.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "page": { "type": "string", "description": "Page id; defaults to the active page." }
-                    }
-                }
-            },
-            {
-                "name": "penwise_annotate",
-                "description": "Draw polylines on the user's page (marks appear as a separate agent layer and can be cleared).",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "page": { "type": "string", "description": "Page id; defaults to the active page." },
-                        "strokes": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "points": {
-                                        "type": "array",
-                                        "description": "Page-pixel points [[x, y], …]; two or more make a line.",
-                                        "items": { "type": "array", "items": { "type": "number" } }
-                                    },
-                                    "color": { "type": "string", "description": "#RRGGBB or #AARRGGBB (default red)" },
-                                    "width": { "type": "number", "description": "Stroke width in page px (default 3)" }
-                                },
-                                "required": ["points"]
-                            }
-                        }
-                    },
-                    "required": ["strokes"]
-                }
-            },
-            {
-                "name": "penwise_clear_agent_marks",
-                "description": "Remove every mark this or another agent drew on the page (the user's own ink is untouched).",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "page": { "type": "string", "description": "Page id; defaults to the active page." }
-                    }
-                }
-            },
-            {
-                "name": "penwise_list_pages",
-                "description": "List notebooks and their pages, with the active page id.",
-                "inputSchema": { "type": "object", "properties": {} }
-            },
-            {
-                "name": "penwise_create_page",
-                "description": "Create a page (defaults: next free title, A4 portrait, blank).",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "title": { "type": "string" },
-                        "background": { "type": "string", "enum": ["blank", "ruled", "grid", "dots"] },
-                        "kind": {
-                            "type": "object",
-                            "description": "{\"t\":\"fixed\",\"width\":W,\"height\":H} or {\"t\":\"infinite\"}"
-                        },
-                        "notebook": { "type": "string" }
-                    }
-                }
-            },
-            {
-                "name": "penwise_switch_page",
-                "description": "Make a page the active one (what other tools address by default).",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": { "page": { "type": "string" } },
-                    "required": ["page"]
-                }
-            }
-        ]
-    })
+    serde_json::from_str::<serde_json::Value>(TOOLS)
+        .unwrap_or_else(|_| serde_json::json!({ "tools": [] }))
 }
+
+/// Tool definitions, kept as JSON so the schemas read like the protocol docs.
+const TOOLS: &str = r##"{
+  "tools": [
+    {
+      "name": "penwise_page_png",
+      "description": "Render a Penwise page (the user's handwriting/drawing) as a PNG image.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "scale": { "type": "number", "description": "Pixels per page pixel, 0.05–4 (default 1; 0.5 for a smaller image)." },
+          "page": { "type": "string", "description": "Page id; defaults to the active page." }
+        }
+      }
+    },
+    {
+      "name": "penwise_page_status",
+      "description": "Stroke and page counts for the active page.",
+      "inputSchema": {
+        "type": "object",
+        "properties": { "page": { "type": "string", "description": "Page id; defaults to the active page." } }
+      }
+    },
+    {
+      "name": "penwise_annotate",
+      "description": "Draw polylines on the user's page (marks appear as a separate agent layer and can be cleared).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "page": { "type": "string", "description": "Page id; defaults to the active page." },
+          "strokes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "points": {
+                  "type": "array",
+                  "description": "Page-pixel points [[x, y], …]; two or more make a line.",
+                  "items": { "type": "array", "items": { "type": "number" } }
+                },
+                "color": { "type": "string", "description": "#RRGGBB or #AARRGGBB (default red)" },
+                "width": { "type": "number", "description": "Stroke width in page px (default 3)" }
+              },
+              "required": ["points"]
+            }
+          }
+        },
+        "required": ["strokes"]
+      }
+    },
+    {
+      "name": "penwise_clear_agent_marks",
+      "description": "Remove every mark this or another agent drew on the page (the user's own ink is untouched).",
+      "inputSchema": {
+        "type": "object",
+        "properties": { "page": { "type": "string", "description": "Page id; defaults to the active page." } }
+      }
+    },
+    {
+      "name": "penwise_list_pages",
+      "description": "List notebooks and their pages, with the active page id.",
+      "inputSchema": { "type": "object", "properties": {} }
+    },
+    {
+      "name": "penwise_create_page",
+      "description": "Create a page (defaults: next free title, A4 portrait, blank).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string" },
+          "background": { "type": "string", "enum": ["blank", "ruled", "grid", "dots"] },
+          "kind": { "type": "object", "description": "{\"t\":\"fixed\",\"width\":W,\"height\":H} or {\"t\":\"infinite\"}" },
+          "notebook": { "type": "string" }
+        }
+      }
+    },
+    {
+      "name": "penwise_switch_page",
+      "description": "Make a page the active one (what other tools address by default).",
+      "inputSchema": {
+        "type": "object",
+        "properties": { "page": { "type": "string" } },
+        "required": ["page"]
+      }
+    }
+  ]
+}"##;
 
 fn call_tool(
     request: &serde_json::Value,

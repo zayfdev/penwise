@@ -61,8 +61,8 @@ class PageViewModel(
         }
         store.onRewrite = { strokes ->
             viewModelScope.launch { file.rewrite(strokes) }
-            sync.sendPage(strokes)
         }
+        store.onOp = { op -> send(op) }
     }
 
     /** Streams the in-progress stroke to the PC mirror. */
@@ -84,7 +84,33 @@ class PageViewModel(
             override fun end(cancelled: Boolean) {
                 if (cancelled) sync.sendLiveCancel()
             }
+
+            override fun shape(
+                preset: Int,
+                argb: Int,
+                scale: Float,
+                seed: Long,
+                samples: FloatArray,
+                times: IntArray,
+                count: Int,
+            ) = sync.sendShapePreview(preset, argb, scale, seed, samples, times, count)
+
+            override fun erasing(
+                x: Float,
+                y: Float,
+                radius: Float,
+            ) = sync.sendErasePreview(x, y, radius)
         }
+
+    /** Sends one incremental edit instead of the whole page. */
+    private fun send(op: PageOp) {
+        when (op) {
+            is PageOp.Add -> op.strokes.forEach(sync::sendStroke)
+            is PageOp.Remove -> sync.sendRemove(op.seeds)
+            is PageOp.Replace -> sync.sendReplace(op.seeds, op.fragments)
+            is PageOp.Clear -> sync.sendClear()
+        }
+    }
 
     /** URL shown in the settings dialog. */
     val syncUrl: String get() = settings.displayedUrl()

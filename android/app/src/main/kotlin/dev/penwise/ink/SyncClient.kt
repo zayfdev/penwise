@@ -36,6 +36,7 @@ class SyncClient(
     @Volatile
     private var socket: WebSocket? = null
     private var liveId = 0
+    private var shapeId = 0
 
     /** Raw inbound text frames (page snapshots and broadcasts); the view model decides what to apply. */
     var onFrame: ((String) -> Unit)? = null
@@ -100,6 +101,47 @@ class SyncClient(
     /** Replaces the server's page; used on connect, undo, clear and erase. */
     fun sendPage(strokes: List<SavedStroke>) {
         enqueue(Wire.page(strokes, pageId))
+    }
+
+    /** Small edits: stroke removal, page clear, fragment replacement. */
+    fun sendRemove(seeds: List<Long>) {
+        if (seeds.isNotEmpty()) enqueue(Wire.removeOp(seeds, pageId))
+    }
+
+    /** Empties the page on the mirror. */
+    fun sendClear() {
+        enqueue(Wire.clearOp(pageId))
+    }
+
+    /** Swaps erased strokes for their fragments. */
+    fun sendReplace(
+        seeds: List<Long>,
+        strokes: List<SavedStroke>,
+    ) {
+        enqueue(Wire.replaceOp(seeds, strokes, pageId))
+    }
+
+    /** Whole-set shape preview; the id only groups frames of one drag. */
+    fun sendShapePreview(
+        preset: Int,
+        argb: Int,
+        scale: Float,
+        seed: Long,
+        samples: FloatArray,
+        times: IntArray,
+        count: Int,
+    ) {
+        shapeId++
+        enqueue(Wire.shapePreview(shapeId, preset, argb, scale, seed, samples, times, count, pageId))
+    }
+
+    /** Where the eraser is, so the mirror can show the sweep. */
+    fun sendErasePreview(
+        x: Float,
+        y: Float,
+        radius: Float,
+    ) {
+        enqueue(Wire.erasePreview(x, y, radius, pageId))
     }
 
     private fun enqueue(frame: String) {

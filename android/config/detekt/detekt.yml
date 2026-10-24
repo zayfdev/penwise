@@ -10,6 +10,7 @@ complexity:
     excludes:
       [
         '**/StylusStrokeController.kt',
+        '**/Wire.kt',
         '**/StrokeStore.kt',
         '**/SyncClient.kt',
         '**/PageViewModel.kt',

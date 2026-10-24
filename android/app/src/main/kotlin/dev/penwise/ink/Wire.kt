@@ -37,6 +37,83 @@ internal object Wire {
         page: String,
     ): String = scoped(JSONObject().put("t", "stroke").put("stroke", stroke(stroke)), page).toString()
 
+    /** `{"t":"op"}` carrying one small edit, so the mirror does not resend the page. */
+    fun removeOp(
+        seeds: List<Long>,
+        page: String,
+    ): String {
+        val array = JSONArray()
+        seeds.forEach { array.put(it.toString()) }
+        return scoped(
+            JSONObject().put("t", "op").put("op", JSONObject().put("k", "remove").put("seeds", array)),
+            page,
+        ).toString()
+    }
+
+    /** Clears the page's strokes. */
+    fun clearOp(page: String): String =
+        scoped(JSONObject().put("t", "op").put("op", JSONObject().put("k", "clear")), page).toString()
+
+    /** Replaces strokes with fragments (precise erase). */
+    fun replaceOp(
+        seeds: List<Long>,
+        strokes: List<SavedStroke>,
+        page: String,
+    ): String {
+        val seedArray = JSONArray()
+        seeds.forEach { seedArray.put(it.toString()) }
+        val strokeArray = JSONArray()
+        strokes.forEach { strokeArray.put(stroke(it)) }
+        val op = JSONObject().put("k", "replace").put("seeds", seedArray).put("strokes", strokeArray)
+        return scoped(JSONObject().put("t", "op").put("op", op), page).toString()
+    }
+
+    /** Whole-set shape preview: each frame replaces the previous one, because a drag can shrink. */
+    fun shapePreview(
+        id: Int,
+        preset: Int,
+        argb: Int,
+        scale: Float,
+        seed: Long,
+        samples: FloatArray,
+        times: IntArray,
+        count: Int,
+        page: String,
+    ): String {
+        val floats = JSONArray()
+        for (i in 0 until count * SAMPLE_STRIDE) floats.put(samples[i].toDouble())
+        return scoped(
+            JSONObject()
+                .put("t", "live")
+                .put("kind", "shape")
+                .put("id", id)
+                .put("preset", preset)
+                .put("argb", argb)
+                .put("scale", scale.toDouble())
+                .put("seed", seed.toString())
+                .put("samples", floats)
+                .put("times", times(times, count)),
+            page,
+        ).toString()
+    }
+
+    /** One erase-cursor position (radius in page px). */
+    fun erasePreview(
+        x: Float,
+        y: Float,
+        radius: Float,
+        page: String,
+    ): String =
+        scoped(
+            JSONObject()
+                .put("t", "live")
+                .put("kind", "erase")
+                .put("x", x.toDouble())
+                .put("y", y.toDouble())
+                .put("r", radius.toDouble()),
+            page,
+        ).toString()
+
     /** Asks the server to make `page` the active one (it replies with that page's snapshot). */
     fun select(page: String): String = JSONObject().put("t", "select").put("page", page).toString()
 

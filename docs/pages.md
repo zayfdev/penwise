@@ -85,6 +85,32 @@ Server → client:
 | `{"t":"live",…,"page":"pg_…"}` | in-progress stroke sample batch on that page |
 
 A session receives stroke/live/page frames only for its selected page; `meta` and `active` go to everyone.
+
+### Op frames
+
+Edits that are not a whole new stroke travel as ops, so the mirror applies them without a page resend:
+
+| Frame | Effect |
+|---|---|
+| `{"t":"op","page":…,"op":{"k":"add","stroke":{…}}}` | append one stroke |
+| `{"t":"op","page":…,"op":{"k":"remove","seeds":["…"]}}` | drop strokes by seed |
+| `{"t":"op","page":…,"op":{"k":"replace","seeds":[…],"strokes":[…]}}` | swap strokes for fragments (precise erase) |
+| `{"t":"op","page":…,"op":{"k":"clear"}}` | empty the page |
+
+The server replies `{"t":"ack",…}` to the sender and fans the op to the other sessions watching that page.
+
+### Live previews
+
+`{"t":"live",…}` frames are relayed, never stored:
+
+| `kind` | Fields | Meaning |
+|---|---|---|
+| absent | `id`, `preset`, `argb`, `scale`, `seed`, incremental `samples`/`times` | in-progress freehand stroke |
+| `shape` | `id`, `preset`, `argb`, `scale`, `seed`, whole `samples`/`times` | shape drag; each frame replaces the previous |
+| `erase` | `x`, `y`, `r` | eraser position, drawn as a fading mark |
+
+A frame naming a page the server does not know is refused (`{"t":"error"}`), so a stale client can never write to
+another page.
 Frames without a page are applied to the sender's selected page (back-compat with the current app build).
 
 ## MCP

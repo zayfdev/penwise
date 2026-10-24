@@ -28,6 +28,9 @@ let activePage = null;
 /** In-progress strokes from the tablet, keyed `${session}:${id}`; dropped when the stroke commits. */
 const live = new Map();
 const LIVE_REBUILD_MS = 50;
+/** Eraser positions relayed from the tablet, shown briefly so an erase sweep is visible live. */
+const eraseMarks = [];
+const ERASE_MARK_MS = 700;
 
 await init();
 resize();
@@ -255,9 +258,13 @@ class WebSocketClient {
       applyMeta(frame.meta);
     } else if (frame.t === "active" && frame.page) {
       const page = pageById(frame.page);
-      if (page) {
+      if (page && page.id !== activePage?.id) {
         activePage = page;
+        // The previous page's strokes are not this page's: drop them and ask for the new snapshot.
+        strokes = [];
         live.clear();
+        eraseMarks.length = 0;
+        client.send({ t: "select", page: page.id });
         renderSidebar();
         resize();
         render();
@@ -272,10 +279,21 @@ class WebSocketClient {
       resize();
       render();
       this.setState(`mirroring · ${strokes.length} strokes`, false);
+    } else if (frame.t === "op" && frame.op && frame.page === activePage?.id) {
+      applyOp(frame.op);
+      this.setState(`mirroring · ${strokes.length} strokes`, false);
+      render();
     } else if (frame.t === "stroke" && frame.stroke && frame.page === activePage?.id) {
       const rebuilt = rebuild(frame.stroke);
       if (rebuilt) strokes.push(rebuilt);
       this.setState(`mirroring · ${strokes.length} strokes`, false);
+      render();
+    } else if (frame.t === "live" && frame.page === activePage?.id && frame.kind === "erase") {
+      eraseMarks.push({ x: frame.x, y: frame.y, r: frame.r ?? 24, at: performance.now() });
+      while (eraseMarks.length > 64) eraseMarks.shift();
+      render();
+    } else if (frame.t === "live" && frame.page === activePage?.id && frame.kind === "shape") {
+      accumulateShape(frame);
       render();
     } else if (frame.t === "live" && Array.isArray(frame.samples) && frame.page === activePage?.id) {
       accumulateLive(frame);
@@ -289,10 +307,39 @@ class WebSocketClient {
   }
 }
 
+/** Applies an incremental edit frame without a page resend. */
+function applyOp(op) {
+  if (op.k === "remove" && Array.isArray(op.seeds)) {
+    const gone = new Set(op.seeds);
+    strokes = strokes.filter((stroke) => !gone.has(stroke.seed));
+  } else if (op.k === "clear") {
+    strokes = [];
+    live.clear();
+  } else if (op.k === "replace" && Array.isArray(op.strokes)) {
+    const gone = new Set(op.seeds ?? []);
+    strokes = strokes.filter((stroke) => !gone.has(stroke.seed));
+    for (const wire of op.strokes) {
+      const rebuilt = rebuild(wire);
+      if (rebuilt) strokes.push(rebuilt);
+    }
+  } else if (op.k === "add" && op.stroke) {
+    const rebuilt = rebuild(op.stroke);
+    if (rebuilt) strokes.push(rebuilt);
+  }
+}
+
+/** A shape drag replaces its whole preview each frame, so the entry is rebuilt, not appended to. */
+function accumulateShape(frame) {
+  const key = `${frame.session}:${frame.id}`;
+  const json = buildJson(frame.preset, frame.seed, frame.argb, frame.scale, frame.samples, frame.times);
+  if (!json) return;
+  live.set(key, { preset: frame.preset, argb: frame.argb, scale: frame.scale, seed: frame.seed, json });
+}
+
 /** Rebuilds one stroke's geometry through the wasm engine; malformed strokes are dropped. */
 function rebuild(wire) {
   const json = buildJson(wire.preset, wire.seed, wire.argb, wire.scale, wire.samples, wire.times);
-  return json ? { json, argb: wire.argb } : null;
+  return json ? { json, argb: wire.argb, seed: wire.seed } : null;
 }
 
 /** Runs a stroke through the engine; returns parsed geometry or null when it is not renderable. */
@@ -385,6 +432,24 @@ function render() {
   for (const entry of live.values()) {
     if (entry.json) drawStroke({ json: entry.json, argb: entry.argb });
   }
+  drawEraseMarks();
+}
+
+/** The eraser sweep, fading out so it reads as a gesture rather than ink. */
+function drawEraseMarks() {
+  const now = performance.now();
+  while (eraseMarks.length > 0 && now - eraseMarks[0].at > ERASE_MARK_MS) eraseMarks.shift();
+  for (const mark of eraseMarks) {
+    const age = (now - mark.at) / ERASE_MARK_MS;
+    ctx.beginPath();
+    ctx.arc(mark.x, mark.y, mark.r, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(80, 90, 110, ${0.18 * (1 - age)})`;
+    ctx.fill();
+    ctx.strokeStyle = `rgba(60, 70, 90, ${0.35 * (1 - age)})`;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+  if (eraseMarks.length > 0) requestAnimationFrame(render);
 }
 
 function drawStroke({ json, argb }) {
