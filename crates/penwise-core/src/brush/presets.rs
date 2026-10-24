@@ -4,12 +4,12 @@
 //!
 //! Owner: contract.
 
-mod helpers;
+mod builders;
 
 use super::params::{BrushParams, GrainParams, NibParams, SprayDistribution, SprayParams};
 use super::{BlendMode, Color, OutlineKind, StampKind};
 use crate::dynamics::{DEG, PressureCurve};
-use helpers::{dabs, flat_nib, outline, stamp, tilt, velocity};
+use builders::{dabs, flat_nib, outline, stamp, tilt, velocity};
 
 /// Built-in brush presets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

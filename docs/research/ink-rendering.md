@@ -138,6 +138,13 @@ the count of hulls covering a point and never cancels. A left/right ribbon throu
 crosses the nib axis its corners swap sides, the ribbon becomes a bow-tie, and opposite-winding lobes cancel into holes
 and spikes.
 
+Decimation: consecutive kept points `K → B` are swept as one hull when every skipped centre lies within
+`tol = min(0.25 px, 0.6·reach)` of the chord `K → B` (`reach = min(W, t)/2` at both ends), every skipped rectangle keeps
+its corner offsets within 0.5 px of `K`'s, and `|B − K|² ≤ minDist²`. The hull contains every interpolated rectangle and
+so a disc of radius `reach` around every chord point: the centreline stays covered, and straight runs with a constant nib
+are swept exactly. Decisions use only walked points (O(1) sleeve-fitting cone); the last point is never skipped;
+`smoothing = 0` keeps every point.
+
 The width across the motion normal `n` is the rectangle's support on `n`, whichever way the stroke crosses the nib:
 `W·|u·n| + t·|u⊥·n| = W·|sin(θ − φ)| + t·|cos(θ − φ)|`.
 

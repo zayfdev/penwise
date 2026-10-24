@@ -163,10 +163,13 @@ fn render_cells(
         render_strokes(&geometry, &viewport, &mut page, &mut scratch)?;
         let turned = pixels::rotate(&page, options.rotation)?;
         let pad = options.padding_px;
-        cells.push(match pixels::content_rect(&turned, WHITE, pad) {
-            Some(ink) => pixels::crop(&turned, ink)?,
-            None => pixels::filled(2 * pad.max(1), 2 * pad.max(1), WHITE)?,
-        });
+        let cell = if let Some(ink) = pixels::content_rect(&turned, WHITE, pad) {
+            pixels::crop(&turned, ink)?
+        } else {
+            let side = pad.max(1).saturating_mul(2);
+            pixels::filled(side, side, WHITE)?
+        };
+        cells.push(cell);
     }
     Ok(cells)
 }

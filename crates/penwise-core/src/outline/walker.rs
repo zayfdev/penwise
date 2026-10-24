@@ -15,9 +15,9 @@ use super::freehand::{
 use super::nib::{
     DirectionSmoother, effective_angle, fountain_scale, nib_corners, nib_rect, nib_width,
 };
-use super::sweep::{self, NibQuad};
+use super::sweep::{Nib, Sweep};
 use crate::brush::{CapStyle, NibParams};
-use crate::float::{lerp, max};
+use crate::float::{lerp, max, min};
 
 /// Offset model of an outline kind.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -119,8 +119,8 @@ pub(super) struct Walker {
     prev_was_corner: bool,
     prev_left: [f32; 2],
     prev_right: [f32; 2],
-    /// Flat tips: nib rectangle at the previous walked point.
-    prev_nib: Option<NibQuad>,
+    /// Flat tips: decimated nib-rectangle sweep.
+    sweep: Sweep,
     dir: DirectionSmoother,
     /// Radius of the last walked point (after taper): the end cap radius.
     pub radius: f32,
@@ -134,7 +134,7 @@ impl Walker {
             prev_was_corner: false,
             prev_left: [0.0, 0.0],
             prev_right: [0.0, 0.0],
-            prev_nib: None,
+            sweep: Sweep::new(),
             dir: DirectionSmoother::new(),
             radius: MIN_RADIUS,
         }
@@ -231,9 +231,9 @@ impl Walker {
     }
 
     /// Flat-nib point: nib width `w` (untapered), smoothed forward direction `d`. Every point is walked (no
-    /// end-noise skip, no `minDist` decimation: the sweep is exact, so neither is needed) and appends the hull
-    /// of the segment from the previous point's nib rectangle (`sweep.rs`). Width and thickness taper together
-    /// and are floored at `2·MIN_RADIUS`.
+    /// end-noise skip; the direction smoother sees every point) and its nib rectangle goes to the decimated
+    /// sweep (`sweep.rs`), which appends the hull from the previous kept rectangle. Width and thickness taper
+    /// together and are floored at `2·MIN_RADIUS`.
     fn flat_step(
         &mut self,
         opts: &FreehandOptions,
@@ -245,16 +245,16 @@ impl Walker {
     ) {
         let taper = opts.taper(arc_f32(s.point.running_length), s.remaining);
         let floor = 2.0 * MIN_RADIUS;
-        let corners = nib_corners(
-            s.point.point,
-            max(floor, w * taper),
-            max(floor, nib.thickness * taper),
-            effective_angle(d, nib),
-        );
-        if let Some(prev) = &self.prev_nib {
-            sweep::push_segment(prev, &corners, out);
-        }
-        self.prev_nib = Some(corners);
+        let width = max(floor, w * taper);
+        let thickness = max(floor, nib.thickness * taper);
+        let center = s.point.point;
+        let rect = Nib {
+            center,
+            quad: nib_corners(center, width, thickness, effective_angle(d, nib)),
+            reach: 0.5 * min(width, thickness),
+        };
+        let last = s.next_vector.is_none();
+        self.sweep.push(rect, last, opts.min_dist_sq(), out);
     }
 }
 

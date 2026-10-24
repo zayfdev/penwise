@@ -460,6 +460,33 @@ fn flat_nib_sweep_has_no_holes_where_the_stroke_crosses_the_nib() {
 }
 
 #[test]
+fn dense_flat_nib_line_is_decimated_without_holes() {
+    // 1000 samples 0.3 px apart (~482 Hz pen input): one hull per sample would be ~10 000 vertices.
+    let pts = line([20.0, 40.0], 0.3, 1000, 0.3, 0.7);
+    for preset in [Preset::Calligraphy, Preset::Highlighter] {
+        let params = preset.params();
+        let o = build(&params, &pts);
+        assert_closed_finite(&o);
+        assert_centerline_covered(&o, &pts, &format!("{preset:?} dense line"));
+        assert!(
+            o.points.len() < 1500,
+            "{preset:?}: {} vertices for a 300 px line",
+            o.points.len()
+        );
+        for chunk in [1, 7, 61] {
+            assert_eq!(
+                bits(&run(&params, &pts, chunk)),
+                bits(&o),
+                "{preset:?} chunk {chunk}"
+            );
+        }
+        // Without `minDist` (smoothing 0) every sample is swept.
+        let dense = build(&smooth_free(params), &pts);
+        assert!(dense.points.len() > 4 * o.points.len(), "{preset:?}");
+    }
+}
+
+#[test]
 fn tapered_flat_nib_keeps_flat_ends() {
     let mut params = smooth_free(Preset::Calligraphy.params());
     params.outline.taper_start = 20.0;
