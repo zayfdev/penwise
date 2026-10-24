@@ -86,6 +86,7 @@ impl Stroke {
 
 /// Builds a whole stroke in one call (finished strokes and live previews both use it).
 #[wasm_bindgen]
+#[must_use]
 pub fn geometry(
     preset: u32,
     seed: u64,
