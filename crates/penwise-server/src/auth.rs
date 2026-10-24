@@ -41,13 +41,17 @@ fn random_hex() -> String {
     if !filled {
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos() as u64)
+            .map(|d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX))
             .unwrap_or(0)
             ^ (u64::from(std::process::id()) << 32);
         bytes[..8].copy_from_slice(&seed.to_le_bytes());
         bytes[8..].copy_from_slice(&seed.rotate_left(17).to_le_bytes());
     }
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = std::fmt::Write::write_fmt(&mut out, format_args!("{byte:02x}"));
+    }
+    out
 }
 
 /// `true` when the request carries the expected token in the query or the `X-Penwise-Token` header.
