@@ -22,7 +22,7 @@ class PageViewModel(
     val tools = ToolState()
     private val file = StrokeFile(application.filesDir)
     private val settings = SyncSettings(application)
-    private var sync = SyncClient(settings.endpoints())
+    private var sync = newClient()
     private var loading = false
 
     init {
@@ -63,6 +63,25 @@ class PageViewModel(
     /** Token shown in the settings dialog (empty when the server has none). */
     val syncToken: String get() = settings.token
 
+    private fun newClient(): SyncClient =
+        SyncClient(settings.endpoints()).also { client -> client.onFrame = ::onRemoteFrame }
+
+    /** Applies page snapshots pushed by the server: agent marks and strokes from other devices. */
+    private fun onRemoteFrame(text: String) {
+        val incoming = Wire.parsePage(text) ?: return
+        viewModelScope.launch {
+            val ready =
+                withContext(Dispatchers.Default) {
+                    incoming.forEach { if (it.geometry == null) it.rebuild() }
+                    incoming
+                }
+            if (store.merge(ready)) {
+                Log.i("PenwiseSync", "merged ${ready.size} remote strokes")
+                store.persist()
+            }
+        }
+    }
+
     /** Saves a new address/token and reconnects, resending the page so the mirror is immediately correct. */
     fun updateSync(
         url: String,
@@ -71,7 +90,7 @@ class PageViewModel(
         settings.overrideUrl = url
         settings.token = token
         sync.stop()
-        sync = SyncClient(settings.endpoints())
+        sync = newClient()
         sync.start()
         sync.sendPage(store.snapshot())
     }

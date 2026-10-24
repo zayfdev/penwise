@@ -36,6 +36,9 @@ class SyncClient(
     @Volatile
     private var socket: WebSocket? = null
     private var liveId = 0
+
+    /** Raw inbound text frames (page snapshots and broadcasts); the view model decides what to apply. */
+    var onFrame: ((String) -> Unit)? = null
     private var next = 0
 
     fun start() {
@@ -120,6 +123,13 @@ class SyncClient(
 
     private val listener =
         object : WebSocketListener() {
+            override fun onMessage(
+                webSocket: WebSocket,
+                text: String,
+            ) {
+                onFrame?.invoke(text)
+            }
+
             override fun onOpen(
                 webSocket: WebSocket,
                 response: Response,

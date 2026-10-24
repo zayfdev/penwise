@@ -141,4 +141,6 @@ dependencies {
     implementation(libs.androidx.input.motionprediction)
     implementation(libs.okhttp)
     testImplementation(libs.junit)
+    // Real org.json for JVM tests: the android.jar stub throws instead of parsing.
+    testImplementation(libs.json)
 }

@@ -67,6 +67,33 @@ internal object Wire {
             .toString()
     }
 
+    /** Parses a `{"t":"page","strokes":[…]}` frame; `null` for anything else or malformed JSON. */
+    fun parsePage(text: String): List<SavedStroke>? {
+        val frame = runCatching { JSONObject(text) }.getOrNull() ?: return null
+        if (frame.optString("t") != "page") return null
+        val array = frame.optJSONArray("strokes") ?: return emptyList()
+        return (0 until array.length()).mapNotNull { runCatching { parseStroke(array.getJSONObject(it)) }.getOrNull() }
+    }
+
+    /** Parses one stroke object; throws on a malformed shape so the caller can skip it. */
+    fun parseStroke(json: JSONObject): SavedStroke {
+        val samples = json.getJSONArray("samples")
+        val times = json.getJSONArray("times")
+        val count = times.length()
+        require(samples.length() == count * SAMPLE_STRIDE) { "sample count mismatch" }
+        val floats = FloatArray(samples.length()) { samples.getDouble(it).toFloat() }
+        val micros = IntArray(count) { times.getInt(it) }
+        return SavedStroke(
+            presetIndex = json.getInt("preset"),
+            argb = json.getInt("argb"),
+            sizeScale = json.optDouble("scale", 1.0).toFloat(),
+            seed = json.getString("seed").toLong(),
+            samples = floats,
+            times = micros,
+            count = count,
+        )
+    }
+
     fun liveCancel(id: Int): String =
         JSONObject()
             .put("t", "live")

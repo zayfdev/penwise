@@ -55,6 +55,20 @@ class StrokeStore {
         onAppend?.invoke(stroke)
     }
 
+    /**
+     * Adds strokes this device does not have yet (agent marks, other devices), matched by seed.
+     * Returns true when something was added. Geometry must already be built.
+     */
+    fun merge(incoming: List<SavedStroke>): Boolean {
+        val known = entries.mapTo(HashSet()) { it.seed }
+        val added = incoming.filter { it.seed !in known && it.geometry != null }
+        if (added.isEmpty()) return false
+        entries.addAll(added)
+        publish()
+        onPageChanged?.invoke()
+        return true
+    }
+
     fun canUndo(): Boolean = undoStack.isNotEmpty()
 
     fun canRedo(): Boolean = redoStack.isNotEmpty()
