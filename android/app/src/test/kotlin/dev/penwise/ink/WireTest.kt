@@ -38,7 +38,7 @@ class WireTest {
 
     @Test
     fun a_page_frame_parses_into_its_strokes() {
-        val frame = Wire.page(listOf(stroke(1, 2), stroke(2, 3)))
+        val frame = Wire.page(listOf(stroke(1, 2), stroke(2, 3)), PAGE)
         val parsed = Wire.parsePage(frame)
         assertNotNull(parsed)
         assertEquals(listOf(1L, 2L), parsed!!.map { it.seed })
@@ -60,7 +60,25 @@ class WireTest {
         assertEquals(5L, parsed?.first()?.seed)
     }
 
+    @Test
+    fun every_page_scoped_frame_names_its_page() {
+        val stroke = stroke(1, 2)
+        assertTrue(Wire.strokeFrame(stroke, PAGE).contains("\"page\":\"$PAGE\""))
+        assertTrue(Wire.page(listOf(stroke), PAGE).contains("\"page\":\"$PAGE\""))
+        assertTrue(Wire.liveBegin(1, 0, 0, 1f, 1L, PAGE).contains("\"page\":\"$PAGE\""))
+        assertTrue(Wire.liveSamples(1, FloatArray(5), intArrayOf(0), 1, PAGE).contains(PAGE))
+        assertTrue(Wire.liveCancel(1, PAGE).contains(PAGE))
+        assertTrue(Wire.select(PAGE).contains(PAGE))
+    }
+
+    @Test
+    fun a_blank_page_leaves_frames_unscoped() {
+        val frame = Wire.page(listOf(stroke(1, 2)), "")
+        assertTrue(!frame.contains("\"page\":"))
+    }
+
     private companion object {
         const val SEED = 9001L
+        const val PAGE = "pg_0123456789abcdef"
     }
 }

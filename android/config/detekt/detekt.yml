@@ -6,7 +6,14 @@ complexity:
   # stroke store is a page state machine (add/undo/redo/clear/erase). Both are one concept with one method per event.
   TooManyFunctions:
     ignoreOverridden: true
-    excludes: ['**/StylusStrokeController.kt', '**/StrokeStore.kt']
+    # Coordinators: one small function per platform event, kept flat on purpose.
+    excludes:
+      [
+        '**/StylusStrokeController.kt',
+        '**/StrokeStore.kt',
+        '**/SyncClient.kt',
+        '**/PageViewModel.kt',
+      ]
   # Axis/bounds checks naturally chain several comparisons; keep a ceiling but above detekt's default of 3.
   ComplexCondition:
     allowedConditions: 4

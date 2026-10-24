@@ -155,6 +155,9 @@ pub struct Frame {
 /// Request body of `POST /pages`.
 #[derive(Debug, Default, Deserialize)]
 pub struct NewPage {
+    /// Client-chosen page id (offline-first tablets create pages before they reach the server); ignored when it
+    /// already exists.
+    pub id: Option<String>,
     /// Defaults to `Page N`.
     pub title: Option<String>,
     /// Defaults to A4 portrait.
@@ -357,12 +360,18 @@ impl Library {
             })
             .or_else(|| meta.notebooks.first().map(|notebook| notebook.id.clone()))
             .ok_or("no notebook")?;
+        let requested = request.id.filter(|id| is_page_id(id));
+        if let Some(id) = requested.as_deref()
+            && let Some(existing) = meta.page(id).cloned()
+        {
+            return Ok(existing);
+        }
         let notebook = meta
             .notebook_mut(&notebook_id)
             .ok_or_else(|| format!("unknown notebook {notebook_id}"))?;
         let number = notebook.pages.len() + 1;
         let page = PageMeta {
-            id: new_id("pg"),
+            id: requested.unwrap_or_else(|| new_id("pg")),
             title: title_or(request.title, format!("Page {number}"))?,
             kind: request.kind.unwrap_or_else(PageKind::a4),
             background: request.background.unwrap_or_default(),
@@ -545,6 +554,15 @@ fn new_id(prefix: &str) -> String {
     let bump = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let mixed = nanos as u64 ^ bump.wrapping_mul(0x9E37_79B9_7F4A_7C15);
     format!("{prefix}_{mixed:016x}")
+}
+
+/// `pg_` plus 16 lowercase hex characters, the id shape both the server and the tablet generate.
+fn is_page_id(id: &str) -> bool {
+    id.len() == 19
+        && id.starts_with("pg_")
+        && id[3..]
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
 }
 
 fn check_title(title: &str) -> Result<(), String> {
@@ -857,6 +875,30 @@ mod tests {
         assert!(a.starts_with("pg_"));
         assert_eq!(19, a.len());
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn client_ids_are_accepted_only_in_the_expected_shape() {
+        assert!(is_page_id("pg_0123456789abcdef"));
+        assert!(!is_page_id("pg_short"));
+        assert!(!is_page_id("nb_0123456789abcdef"));
+        assert!(!is_page_id("pg_0123456789ABCDEF"));
+    }
+
+    #[tokio::test]
+    async fn a_client_supplied_id_is_kept_and_is_idempotent() {
+        let dir = temp_dir("client-id");
+        let library = Library::load(dir.clone()).await;
+        let request = || NewPage {
+            id: Some("pg_00000000deadbeef".to_owned()),
+            ..NewPage::default()
+        };
+        let page = library.create_page(request()).await.unwrap();
+        assert_eq!("pg_00000000deadbeef", page.id);
+        let again = library.create_page(request()).await.unwrap();
+        assert_eq!(page.id, again.id);
+        assert_eq!(2, library.meta().await.notebooks[0].pages.len());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

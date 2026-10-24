@@ -39,6 +39,13 @@ class SyncClient(
 
     /** Raw inbound text frames (page snapshots and broadcasts); the view model decides what to apply. */
     var onFrame: ((String) -> Unit)? = null
+
+    /** Runs after every successful (re)connect, before queued frames flush. */
+    var onConnect: (() -> Unit)? = null
+
+    /** Page every outbound frame is scoped to; empty until the library has loaded. */
+    @Volatile
+    var pageId: String = ""
     private var next = 0
 
     fun start() {
@@ -55,7 +62,12 @@ class SyncClient(
     }
 
     fun sendStroke(stroke: SavedStroke) {
-        enqueue(Wire.strokeFrame(stroke))
+        enqueue(Wire.strokeFrame(stroke, pageId))
+    }
+
+    /** Asks the server for `page`'s snapshot (sent after selecting a page and on connect). */
+    fun sendSelect(page: String) {
+        enqueue(Wire.select(page))
     }
 
     /** Starts a live preview (frames are relayed, never stored). */
@@ -66,7 +78,7 @@ class SyncClient(
         seed: Long,
     ) {
         liveId++
-        enqueue(Wire.liveBegin(liveId, preset, argb, scale, seed))
+        enqueue(Wire.liveBegin(liveId, preset, argb, scale, seed, pageId))
     }
 
     /** Appends the samples the pen produced since the last call. */
@@ -75,19 +87,19 @@ class SyncClient(
         times: IntArray,
         count: Int,
     ) {
-        if (count > 0) enqueue(Wire.liveSamples(liveId, samples, times, count))
+        if (count > 0) enqueue(Wire.liveSamples(liveId, samples, times, count, pageId))
     }
 
     /** Withdraws the preview (committed strokes end it server-side). */
     fun sendLiveCancel() {
         if (liveId == 0) return
-        enqueue(Wire.liveCancel(liveId))
+        enqueue(Wire.liveCancel(liveId, pageId))
         liveId = 0
     }
 
     /** Replaces the server's page; used on connect, undo, clear and erase. */
     fun sendPage(strokes: List<SavedStroke>) {
-        enqueue(Wire.page(strokes))
+        enqueue(Wire.page(strokes, pageId))
     }
 
     private fun enqueue(frame: String) {
@@ -136,6 +148,7 @@ class SyncClient(
             ) {
                 connecting.set(false)
                 Log.i(TAG, "connected")
+                onConnect?.invoke()
                 flush()
             }
 

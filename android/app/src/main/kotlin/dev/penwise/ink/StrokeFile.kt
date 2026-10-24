@@ -95,11 +95,12 @@ internal object SavedStrokeCodec {
     }
 }
 
-/** Page file: every stroke of the page, in drawing order. */
+/** Page file: every stroke of one page, in drawing order. */
 class StrokeFile(
     private val dir: File,
+    private val pageId: String,
 ) {
-    private val file: File get() = File(dir, FILE_NAME)
+    private val file: File get() = File(File(dir, PAGES_DIR), "$pageId.bin")
 
     /** Strokes already on disk. A torn or corrupt tail keeps everything before it. */
     suspend fun load(): List<SavedStroke> =
@@ -129,7 +130,7 @@ class StrokeFile(
     /** Adds one stroke; creates the file with its header when it does not exist yet. */
     suspend fun append(stroke: SavedStroke) =
         withContext(Dispatchers.IO) {
-            dir.mkdirs()
+            file.parentFile?.mkdirs()
             val target = file
             val fresh = !target.isFile || target.length() == 0L
             DataOutputStream(BufferedOutputStream(FileOutputStream(target, true))).use { out ->
@@ -141,7 +142,7 @@ class StrokeFile(
     /** Replaces the whole page file (undo, clear, erase). */
     suspend fun rewrite(strokes: List<SavedStroke>) =
         withContext(Dispatchers.IO) {
-            dir.mkdirs()
+            file.parentFile?.mkdirs()
             DataOutputStream(BufferedOutputStream(file.outputStream())).use { out ->
                 writeHeader(out)
                 strokes.forEach { SavedStrokeCodec.write(out, it) }
@@ -153,9 +154,10 @@ class StrokeFile(
         out.writeByte(VERSION)
     }
 
-    private companion object {
-        const val FILE_NAME = "page0.bin"
-        const val VERSION = 1
-        val MAGIC = "PWST".toByteArray(Charsets.US_ASCII)
+    companion object {
+        /** Directory holding one file per page. */
+        const val PAGES_DIR = "pages"
+        private const val VERSION = 1
+        private val MAGIC = "PWST".toByteArray(Charsets.US_ASCII)
     }
 }

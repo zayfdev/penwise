@@ -23,14 +23,28 @@ internal object Wire {
             .put("times", times(stroke.times, stroke.count))
     }
 
-    fun page(strokes: List<SavedStroke>): String {
+    fun page(
+        strokes: List<SavedStroke>,
+        page: String,
+    ): String {
         val array = JSONArray()
         strokes.forEach { array.put(stroke(it)) }
-        return JSONObject().put("t", "page").put("strokes", array).toString()
+        return scoped(JSONObject().put("t", "page").put("strokes", array), page).toString()
     }
 
-    fun strokeFrame(stroke: SavedStroke): String =
-        JSONObject().put("t", "stroke").put("stroke", stroke(stroke)).toString()
+    fun strokeFrame(
+        stroke: SavedStroke,
+        page: String,
+    ): String = scoped(JSONObject().put("t", "stroke").put("stroke", stroke(stroke)), page).toString()
+
+    /** Asks the server to make `page` the active one (it replies with that page's snapshot). */
+    fun select(page: String): String = JSONObject().put("t", "select").put("page", page).toString()
+
+    /** Adds the page every page-scoped frame carries; blank pages are left alone for back-compat. */
+    private fun scoped(
+        frame: JSONObject,
+        page: String,
+    ): JSONObject = if (page.isEmpty()) frame else frame.put("page", page)
 
     fun liveBegin(
         id: Int,
@@ -38,33 +52,39 @@ internal object Wire {
         argb: Int,
         scale: Float,
         seed: Long,
+        page: String,
     ): String =
-        JSONObject()
-            .put("t", "live")
-            .put("id", id)
-            .put("first", true)
-            .put("preset", preset)
-            .put("argb", argb)
-            .put("scale", scale.toDouble())
-            .put("seed", seed.toString())
-            .put("samples", JSONArray())
-            .put("times", JSONArray())
-            .toString()
+        scoped(
+            JSONObject()
+                .put("t", "live")
+                .put("id", id)
+                .put("first", true)
+                .put("preset", preset)
+                .put("argb", argb)
+                .put("scale", scale.toDouble())
+                .put("seed", seed.toString())
+                .put("samples", JSONArray())
+                .put("times", JSONArray()),
+            page,
+        ).toString()
 
     fun liveSamples(
         id: Int,
         samples: FloatArray,
         times: IntArray,
         count: Int,
+        page: String,
     ): String {
         val floats = JSONArray()
         for (i in 0 until count * SAMPLE_STRIDE) floats.put(samples[i].toDouble())
-        return JSONObject()
-            .put("t", "live")
-            .put("id", id)
-            .put("samples", floats)
-            .put("times", times(times, count))
-            .toString()
+        return scoped(
+            JSONObject()
+                .put("t", "live")
+                .put("id", id)
+                .put("samples", floats)
+                .put("times", times(times, count)),
+            page,
+        ).toString()
     }
 
     /** Parses a `{"t":"page","strokes":[…]}` frame; `null` for anything else or malformed JSON. */
@@ -94,12 +114,17 @@ internal object Wire {
         )
     }
 
-    fun liveCancel(id: Int): String =
-        JSONObject()
-            .put("t", "live")
-            .put("id", id)
-            .put("cancel", true)
-            .toString()
+    fun liveCancel(
+        id: Int,
+        page: String,
+    ): String =
+        scoped(
+            JSONObject()
+                .put("t", "live")
+                .put("id", id)
+                .put("cancel", true),
+            page,
+        ).toString()
 
     private fun times(
         times: IntArray,

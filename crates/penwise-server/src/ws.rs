@@ -96,15 +96,23 @@ async fn on_text(library: &Library, session: u64, page: &mut String, text: &str)
         }
         Some("live") => {
             // Relay only: the preview must not touch the page state.
-            let scoped = with_page(&frame, page);
-            library.fan_out(Some(page.clone()), with_session(&scoped, session));
+            let target = match frame_page(library, &frame, page).await {
+                Ok(target) => target,
+                Err(reply) => return Some(reply),
+            };
+            let scoped = with_page(&frame, &target);
+            library.fan_out(Some(target), with_session(&scoped, session));
             None
         }
         Some("stroke") => {
+            let target = match frame_page(library, &frame, page).await {
+                Ok(target) => target,
+                Err(reply) => return Some(reply),
+            };
             let reply = match frame.get("stroke").cloned() {
                 Some(stroke) => match serde_json::from_value::<StrokeMsg>(stroke) {
                     Ok(stroke) => {
-                        if library.append(page, stroke).await {
+                        if library.append(&target, stroke).await {
                             None
                         } else {
                             Some(error_frame("malformed stroke"))
@@ -119,11 +127,15 @@ async fn on_text(library: &Library, session: u64, page: &mut String, text: &str)
             reply
         }
         Some("page") => {
+            let target = match frame_page(library, &frame, page).await {
+                Ok(target) => target,
+                Err(reply) => return Some(reply),
+            };
             let strokes = frame
                 .get("strokes")
                 .and_then(|s| serde_json::from_value::<Vec<StrokeMsg>>(s.clone()).ok())
                 .unwrap_or_default();
-            let count = library.replace(page, strokes).await;
+            let count = library.replace(&target, strokes).await;
             library.fan_out(None, live_end(session));
             Some(json!({ "t": "ack", "strokes": count }).to_string())
         }
@@ -132,6 +144,22 @@ async fn on_text(library: &Library, session: u64, page: &mut String, text: &str)
             None
         }
     }
+}
+
+/// The page a frame is about: its explicit `page` when present (and known), else the session's.
+/// `Err` carries the reply for an unknown page, so a stale client cannot rewrite the active one.
+async fn frame_page(
+    library: &Library,
+    frame: &Value,
+    session_page: &str,
+) -> Result<String, String> {
+    let Some(explicit) = frame.get("page").and_then(Value::as_str) else {
+        return Ok(session_page.to_owned());
+    };
+    if explicit == session_page || library.page(explicit).await.is_some() {
+        return Ok(explicit.to_owned());
+    }
+    Err(error_frame("unknown page"))
 }
 
 /// Adds `page` when the client left it out (older app builds), leaving an explicit one alone.
