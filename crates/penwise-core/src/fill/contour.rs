@@ -81,8 +81,13 @@ impl Cells<'_> {
 /// Closed rings (page px, cell-corner vertices) bounding the set cells of `region`. Saddle cases always
 /// separate diagonal cells (consistent with the 4-connected flood). Rings are emitted in scan order of their
 /// first boundary edge, each starting at its minimum `(y, x)` vertex, collinear vertices removed. Outer rings
-/// have positive shoelace sums, holes negative ([`crate::item::Polygon`] convention).
-pub(crate) fn trace_rings(window: &Window, region: &[u64]) -> Vec<Vec<[f32; 2]>> {
+/// have positive shoelace sums, holes negative ([`crate::item::Polygon`] convention). `visited` is caller
+/// scratch (reset here; contents afterwards unspecified).
+pub(crate) fn trace_rings(
+    window: &Window,
+    region: &[u64],
+    visited: &mut Vec<u64>,
+) -> Vec<Vec<[f32; 2]>> {
     let cells = Cells {
         bits: region,
         w: window.width,
@@ -90,8 +95,7 @@ pub(crate) fn trace_rings(window: &Window, region: &[u64]) -> Vec<Vec<[f32; 2]>>
     };
     let total = window.width as usize * window.height as usize;
     // Visited top edges ("Right" edges), indexed by the cell below them.
-    let mut visited = Vec::new();
-    reset(&mut visited, window.width, window.height);
+    reset(visited, window.width, window.height);
     let mut rings = Vec::new();
     for (wi, &word) in region.iter().enumerate() {
         let mut rest = word;
@@ -102,8 +106,8 @@ pub(crate) fn trace_rings(window: &Window, region: &[u64]) -> Vec<Vec<[f32; 2]>>
                 break;
             }
             let (x, y) = cell_xy(i, window.width);
-            if !get_index(&visited, i) && !cells.get(x, y - 1) {
-                rings.push(trace(window, &cells, &mut visited, [x, y]));
+            if !get_index(visited, i) && !cells.get(x, y - 1) {
+                rings.push(trace(window, &cells, visited, [x, y]));
             }
         }
     }

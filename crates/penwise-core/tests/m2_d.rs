@@ -678,3 +678,22 @@ fn regular_polygons_are_clamped_and_start_at_the_top() {
         assert_eq!(points.len(), len);
     }
 }
+
+/// Regression: a decoded polygon with 131k far-apart vertices used to resample 65 536 pieces per segment
+/// (~8.6e9 synthetic samples); the per-run step floor bounds it to `MAX_SAMPLES_PER_RUN + segments + 2`.
+#[test]
+#[allow(clippy::cast_precision_loss, reason = "test vertex indices")]
+fn huge_far_apart_polygon_builds_bounded_geometry() {
+    const N: usize = 131_072;
+    let points = (0..N)
+        .map(|i| {
+            let x = if i % 2 == 0 { -0.5 } else { 0.5 };
+            [x, i as f32 / N as f32 - 0.5]
+        })
+        .collect();
+    let item = shape(ShapeKind::Polygon { points }, [1.0e6, 1.0e6], None);
+    let g = shape_geometry(&item, &Affine::IDENTITY);
+    let (outline, ends) = outline_points(&g.stroke);
+    assert!(!outline.is_empty() && !ends.is_empty());
+    assert!(all_finite(outline));
+}

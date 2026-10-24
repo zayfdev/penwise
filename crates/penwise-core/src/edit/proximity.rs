@@ -132,9 +132,14 @@ pub fn point_ring_dist(p: [f32; 2], ring: &[[f32; 2]]) -> f32 {
     }
 }
 
+/// Upper bound on the interpolated points one [`resample`] call emits (the step grows to
+/// `arc length / MAX_RESAMPLE_POINTS` for longer lines, so absurdly large paths stay bounded).
+pub const MAX_RESAMPLE_POINTS: u32 = 1 << 18;
+
 /// Appends points every `step` of arc length along `line` (the first vertex, then interior points, then the
 /// last vertex), using an `f64` running arc length. `closed` adds the closing segment. `step ≤ 0` or
-/// non-finite → only the vertices.
+/// non-finite → only the vertices. The effective step is `max(step, arc length / MAX_RESAMPLE_POINTS)`, so at
+/// most [`MAX_RESAMPLE_POINTS`] + 2 points are appended.
 ///
 /// A closed walk ends where it started, so for `closed` the final point is not repeated (the output is an
 /// implicitly closed ring again); with an invalid `step` every input vertex is appended.
@@ -149,13 +154,22 @@ pub fn resample(line: &[[f32; 2]], closed: bool, step: f32, out: &mut Vec<[f32; 
         return;
     }
     out.push(first);
-    let step = f64::from(step);
+    let total: f64 = edges(line, closed)
+        .map(|(a, b)| edge_len(a, b))
+        .filter(|len| len.is_finite())
+        .sum();
+    let floor = total / f64::from(MAX_RESAMPLE_POINTS);
+    let step = if floor > f64::from(step) {
+        floor
+    } else {
+        f64::from(step)
+    };
     let mut walked = 0.0f64; // arc length at the start of the current edge
     let mut k = 1.0f64; // index of the next emitted point (at arc length k·step; no drift)
     for (a, b) in edges(line, closed) {
         let (ax, ay) = wide(a);
         let (bx, by) = wide(b);
-        let len = ((bx - ax) * (bx - ax) + (by - ay) * (by - ay)).sqrt();
+        let len = edge_len(a, b);
         if !len.is_finite() {
             continue;
         }
@@ -181,18 +195,19 @@ pub fn resample(line: &[[f32; 2]], closed: bool, step: f32, out: &mut Vec<[f32; 
     reason = "f64 accumulator, one rounding to f32"
 )]
 pub fn arc_length(line: &[[f32; 2]], closed: bool) -> f32 {
-    let sum: f64 = edges(line, closed)
-        .map(|(a, b)| {
-            let (ax, ay) = wide(a);
-            let (bx, by) = wide(b);
-            ((bx - ax) * (bx - ax) + (by - ay) * (by - ay)).sqrt()
-        })
-        .sum();
+    let sum: f64 = edges(line, closed).map(|(a, b)| edge_len(a, b)).sum();
     sum as f32
 }
 
 fn wide(p: [f32; 2]) -> (f64, f64) {
     (f64::from(p[0]), f64::from(p[1]))
+}
+
+/// Edge length in `f64`.
+fn edge_len(a: [f32; 2], b: [f32; 2]) -> f64 {
+    let (ax, ay) = wide(a);
+    let (bx, by) = wide(b);
+    ((bx - ax) * (bx - ax) + (by - ay) * (by - ay)).sqrt()
 }
 
 /// Cross product `(b − a) × (p − a)` in `f64`: `> 0` when `p` is left of `a→b` in y-up maths.

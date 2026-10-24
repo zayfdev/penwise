@@ -293,7 +293,7 @@ fn fill_at_adds_then_recolors() {
     };
     assert_eq!(item.id, id);
     assert_eq!(item.layer, Layer::Ink);
-    assert_eq!(item.z, scene.next_z());
+    assert_eq!(Some(item.z), scene.next_z());
     assert!(item.transform.bit_eq(&Affine::IDENTITY));
     assert!(matches!(&item.kind, ItemKind::Fill(f) if f.paint == RED));
     scene.apply(&edits[0]).unwrap();
@@ -320,6 +320,98 @@ fn fill_at_adds_then_recolors() {
         },
     };
     assert_eq!(edits, vec![expected]);
+}
+
+#[test]
+fn fill_at_without_z_room_is_rejected() {
+    let mut top = stroke(1, [0.0, 0.0], [50.0, 0.0]);
+    top.z = i64::MAX;
+    let scene = scene_of(PageKind::Infinite, vec![top]);
+    assert_eq!(scene.next_z(), None);
+    let edits = fill_at(
+        &scene,
+        &request([200.0, 200.0], 0.0),
+        ItemId([42; 16]),
+        &mut FillScratch::default(),
+    );
+    assert_eq!(edits, Err(FillError::ZExhausted));
+}
+
+/// A box whose right side, with an 8 px gap at y = 150, lies on the last column (355) of the 512² window
+/// around the tap (100, 150).
+fn box_on_window_edge() -> Scene {
+    let x = 355.5;
+    scene_of(
+        PageKind::Infinite,
+        vec![
+            stroke(1, [40.0, 50.0], [366.0, 50.0]),
+            stroke(2, [366.0, 250.0], [40.0, 250.0]),
+            stroke(3, [50.0, 260.0], [50.0, 40.0]),
+            stroke(4, [x, 40.0], [x, 146.0]),
+            stroke(5, [x, 154.0], [x, 260.0]),
+        ],
+    )
+}
+
+#[test]
+fn grow_back_through_a_gap_on_the_window_edge_escalates() {
+    let scene = box_on_window_edge();
+    // Closing keeps the region inside, but the √2·g grow-back passes the gap to the window's edge: the
+    // 512² window would clip it, so it counts as open there.
+    assert_eq!(
+        fill(&scene, &request([100.0, 150.0], 16.0)),
+        Err(FillError::OpenRegion)
+    );
+    // The 1024² window sees the whole bulge past the wall (x ≥ 357.6), the same bytes every time.
+    let req = FillRequest {
+        max_window: 1024,
+        ..request([100.0, 150.0], 16.0)
+    };
+    let filled = fill(&scene, &req).unwrap();
+    let max_x = filled
+        .polygons
+        .iter()
+        .map(|p| p.bounds().max_x)
+        .fold(f32::MIN, penwise_core::float::max);
+    assert!(max_x > 358.0 && max_x < 380.0, "max_x {max_x}");
+    assert_eq!(bytes(&filled), bytes(&fill(&scene, &req).unwrap()));
+}
+
+#[test]
+fn tap_on_the_far_corner_of_a_fixed_page_fills() {
+    let page = PageKind::Fixed {
+        width: 400.0,
+        height: 300.0,
+    };
+    let scene = scene_of(page, vec![stroke(1, [200.0, -10.0], [200.0, 310.0])]);
+    let req = FillRequest {
+        max_window: 1024,
+        ..request([400.0, 300.0], 0.0)
+    };
+    // The page is closed: (w, h) is on it.
+    let filled = fill(&scene, &req).unwrap();
+    let b = filled.polygons[0].bounds();
+    assert_eq!((b.min_y, b.max_x, b.max_y), (0.0, 400.0, 300.0));
+    assert!(b.min_x > 199.0 && b.min_x < 204.0, "{b:?}");
+    let left = fill(
+        &scene,
+        &FillRequest {
+            tap: [0.0, 300.0],
+            ..req
+        },
+    )
+    .unwrap();
+    assert_eq!(left.polygons[0].bounds().min_x, 0.0);
+    assert_eq!(
+        fill(
+            &scene,
+            &FillRequest {
+                tap: [400.1, 300.0],
+                ..req
+            }
+        ),
+        Err(FillError::OutsidePage)
+    );
 }
 
 #[test]

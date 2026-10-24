@@ -35,7 +35,8 @@ pub(crate) struct FloodInput {
 /// 5. grow back: the 4-connected component (containing the seed) of non-wall cells with a step-4 region cell
 ///    within `√2·g` (via a second EDT on the region; `√2·g` recovers a 90° corner of the dilated walls
 ///    completely), so the region never grows across a wall into a neighbouring area and a narrow corridor
-///    is entered by at most `√2·g`; then tuck under ink: every wall cell 4-adjacent to the region joins it.
+///    is entered by at most `√2·g`; reaching a non-page window edge here is `Leaked` too (the window would
+///    otherwise clip the region); then tuck under ink: every wall cell 4-adjacent to the region joins it.
 pub(crate) fn close_and_flood(
     window: &Window,
     input: FloodInput,
@@ -63,13 +64,10 @@ pub(crate) fn close_and_flood(
     if input.gap > 0 {
         let grow2 = g2.saturating_mul(2);
         squared_edt(region, w, h, [false; 4], dist);
-        grid.flood(
-            seed,
-            &|i: usize| dist[i] <= grow2 && !get_index(walls, i),
-            [false; 4],
-            stack,
-            region,
-        );
+        let free = |i: usize| dist[i] <= grow2 && !get_index(walls, i);
+        if grid.flood(seed, &free, open, stack, region) {
+            return FloodOutcome::Leaked;
+        }
     }
     grid.tuck(walls, region, stack);
     FloodOutcome::Closed
@@ -191,3 +189,6 @@ impl Grid {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

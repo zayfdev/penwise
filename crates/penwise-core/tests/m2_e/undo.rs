@@ -15,9 +15,11 @@ fn scene_with(items: &[Item]) -> Scene {
     scene
 }
 
-/// Live state of `ids` (tombstoned and never-added both read as `None`).
-fn snapshot(scene: &Scene, ids: &[ItemId]) -> Vec<Option<Item>> {
-    ids.iter().map(|&i| scene.get(i).cloned()).collect()
+/// Stored state of `ids` including tombstones (`(item, deleted)`; never-added reads as `None`).
+fn snapshot(scene: &Scene, ids: &[ItemId]) -> Vec<Option<(Item, bool)>> {
+    ids.iter()
+        .map(|&i| scene.get_any(i).map(|(item, dead)| (item.clone(), dead)))
+        .collect()
 }
 
 fn translate(dx: f32, dy: f32) -> Affine {
@@ -71,7 +73,8 @@ fn redo(stack: &mut UndoStack, scene: &mut Scene) -> Vec<Edit> {
 }
 
 /// Records `edits` as one gesture (one `apply_local` per edit), then checks undo restores the pre-gesture
-/// state and redo the post-gesture state, twice. Leaves the gesture applied.
+/// state and redo the post-gesture state bitwise (tombstones included), twice. Items the gesture added
+/// only need to be tombstoned after undo. Leaves the gesture applied.
 fn check_gesture(scene: &mut Scene, stack: &mut UndoStack, ids: &[ItemId], edits: &[Edit]) {
     let before = snapshot(scene, ids);
     stack.begin_gesture();
@@ -85,7 +88,16 @@ fn check_gesture(scene: &mut Scene, stack: &mut UndoStack, ids: &[ItemId], edits
     assert_ne!(before, after, "gesture changes the scene: {edits:?}");
     for _ in 0..2 {
         assert!(!undo(stack, scene).is_empty());
-        assert_eq!(snapshot(scene, ids), before, "undo of {edits:?}");
+        for (now, was) in snapshot(scene, ids).iter().zip(&before) {
+            if was.is_some() {
+                assert_eq!(now, was, "undo of {edits:?}");
+            } else {
+                assert!(
+                    now.as_ref().is_none_or(|(_, dead)| *dead),
+                    "undo of {edits:?} removes added items"
+                );
+            }
+        }
         assert!(!redo(stack, scene).is_empty());
         assert_eq!(snapshot(scene, ids), after, "redo of {edits:?}");
     }
@@ -171,6 +183,8 @@ fn every_gesture_kind_restores_bitwise_state() {
             },
         )],
         vec![Edit::Delete(b), Edit::Delete(t)],
+        // Move then delete: redo must leave the tombstone holding the moved transform.
+        vec![moved(f, 7.0, -3.0), Edit::Delete(f)],
         vec![update(
             c,
             ItemPatch {
@@ -377,6 +391,56 @@ fn undo_ends_an_open_gesture() {
     assert!(stack.can_undo());
     undo(&mut stack, &mut scene);
     assert_eq!(scene.get(a).unwrap().transform, Affine::IDENTITY);
+}
+
+#[test]
+fn can_undo_is_false_for_an_open_gesture_without_net_change() {
+    let a = id(1);
+    let mut scene = scene_with(&[stroke(a, 1, 0.0)]);
+    let mut stack = UndoStack::default();
+    stack.begin_gesture();
+    assert!(!stack.can_undo(), "empty open gesture");
+    stack
+        .apply_local(&mut scene, &[moved(a, 4.0, 0.0), moved(a, 0.0, 0.0)])
+        .unwrap();
+    assert!(!stack.can_undo(), "open gesture with no net change");
+    stack
+        .apply_local(&mut scene, &[moved(a, 2.0, 0.0)])
+        .unwrap();
+    assert!(stack.can_undo());
+    stack.end_gesture();
+    assert!(stack.can_undo());
+}
+
+#[test]
+fn move_then_delete_redo_keeps_the_move_on_the_tombstone() {
+    let a = id(1);
+    let mut scene = scene_with(&[stroke(a, 1, 0.0)]);
+    let original = scene.get(a).unwrap().clone();
+    let mut stack = UndoStack::default();
+    stack
+        .apply_local(&mut scene, &[moved(a, 6.0, 1.0), Edit::Delete(a)])
+        .unwrap();
+    undo(&mut stack, &mut scene);
+    assert_eq!(scene.get(a), Some(&original));
+    let edits = redo(&mut stack, &mut scene);
+    assert_eq!(
+        edits,
+        vec![update(
+            a,
+            ItemPatch {
+                deleted: Some(true),
+                transform: Some(translate(6.0, 1.0)),
+                ..ItemPatch::default()
+            },
+        )]
+    );
+    let (item, dead) = scene.get_any(a).unwrap();
+    assert!(dead);
+    assert!(item.transform.bit_eq(&translate(6.0, 1.0)));
+    // Restoring the tombstone later shows the moved stroke.
+    scene.apply(&restored(a)).unwrap();
+    assert!(scene.get(a).unwrap().transform.bit_eq(&translate(6.0, 1.0)));
 }
 
 #[test]

@@ -36,18 +36,31 @@ impl IndexEntry {
     }
 }
 
-/// R*-tree of live, non-erase items with non-empty bounds.
+/// Largest |coordinate| the index accepts (2³⁰ px). Validated items stay far inside (positions ≤ 2²⁰ px plus
+/// bounded widths); the cap keeps rstar's area/margin arithmetic finite so its `partial_cmp().unwrap()`
+/// never sees NaN.
+const COORD_LIMIT: f32 = 1_073_741_824.0;
+
+/// True for bounds the R*-tree can hold: non-empty, finite and within [`COORD_LIMIT`].
+fn indexable(b: &Bounds) -> bool {
+    !b.is_empty()
+        && [b.min_x, b.min_y, b.max_x, b.max_y]
+            .iter()
+            .all(|v| v.is_finite() && v.abs() <= COORD_LIMIT)
+}
+
+/// R*-tree of live, non-erase items with indexable bounds (see [`indexable`]).
 #[derive(Debug, Clone, Default)]
 pub(crate) struct SpatialIndex {
     tree: RTree<IndexEntry>,
 }
 
 impl SpatialIndex {
-    /// Bulk-loads `entries` (`RTree::bulk_load`); empty bounds are skipped.
+    /// Bulk-loads `entries` (`RTree::bulk_load`); empty or non-indexable bounds are skipped.
     pub(crate) fn bulk(entries: &[(ItemId, Bounds)]) -> Self {
         let entries = entries
             .iter()
-            .filter(|(_, b)| !b.is_empty())
+            .filter(|(_, b)| indexable(b))
             .map(|(id, b)| IndexEntry::new(*id, b))
             .collect();
         Self {
@@ -55,19 +68,25 @@ impl SpatialIndex {
         }
     }
 
-    /// Inserts `id` with `bounds` (no-op for empty bounds).
+    /// Inserts `id` with `bounds` (no-op for empty or non-indexable bounds).
     pub(crate) fn insert(&mut self, id: ItemId, bounds: &Bounds) {
-        if !bounds.is_empty() {
+        if indexable(bounds) {
             self.tree.insert(IndexEntry::new(id, bounds));
         }
     }
 
-    /// Removes the entry `(id, bounds)` (exact match of the bounds it was inserted with; empty bounds were
-    /// never inserted, so they are a no-op).
+    /// Removes the entry `(id, bounds)` (exact match of the bounds it was inserted with; bounds that were
+    /// never inserted — empty or non-indexable — are a no-op).
     pub(crate) fn remove(&mut self, id: ItemId, bounds: &Bounds) {
-        if !bounds.is_empty() {
+        if indexable(bounds) {
             self.tree.remove(&IndexEntry::new(id, bounds));
         }
+    }
+
+    /// Number of indexed entries.
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.tree.size()
     }
 
     /// Ids whose envelope intersects `area` (`locate_in_envelope_intersecting`), **unsorted**, appended to
@@ -84,3 +103,6 @@ impl SpatialIndex {
         );
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -153,3 +153,18 @@ fn resample_invalid_step_copies_vertices_and_appends() {
     resample(&[], false, 1.0, &mut out);
     assert_eq!(out.len(), 9);
 }
+
+#[test]
+fn resample_caps_huge_paths() {
+    // Uncapped this would emit ~1e30 points (hang); the step grows to arc length / MAX_RESAMPLE_POINTS.
+    let line = [[0.0, 0.0], [1.0e30, 0.0], [1.0e30, 1.0e30]];
+    let cap = MAX_RESAMPLE_POINTS as usize + 2;
+    for closed in [false, true] {
+        let mut out = Vec::new();
+        resample(&line, closed, 2.0, &mut out);
+        assert!(out.len() <= cap, "{} points > cap {cap}", out.len());
+        assert!(out.len() > 3, "still resampled");
+        assert_eq!(out[0], [0.0, 0.0]);
+        assert!(out.iter().flatten().all(|v| v.is_finite()));
+    }
+}

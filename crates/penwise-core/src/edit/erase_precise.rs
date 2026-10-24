@@ -5,8 +5,8 @@
 use super::Edit;
 use super::erase_fill::fill_cut_edits;
 use super::erase_mask::{fully_masked, mask_for};
-use super::erase_split::{split_edits, uncovered_ranges};
-use super::erase_stroke::{eraser_bounds, path_touches};
+use super::erase_split::{split_edits, uncovered_in};
+use super::erase_stroke::{EraserIndex, eraser_bounds, path_touches_in};
 use crate::brush::BrushFamily;
 use crate::item::{
     Affine, IdSource, Item, ItemGeometry, ItemId, ItemKind, LayerSet, Scene, StrokeItem,
@@ -36,6 +36,7 @@ pub fn erase_precise(
     let Some(area) = eraser_bounds(path, radius) else {
         return Vec::new();
     };
+    let index = EraserIndex::new(path);
     let mut edits = Vec::new();
     for id in scene.query(&area, layers) {
         let Some(item) = scene.get(id) else {
@@ -43,7 +44,7 @@ pub fn erase_precise(
         };
         match &item.kind {
             ItemKind::Stroke(stroke) if matches!(stroke.params.family, BrushFamily::Outline(_)) => {
-                edits.extend(split_stroke(scene, item, stroke, path, radius, ids));
+                edits.extend(split_stroke(scene, item, stroke, path, radius, &index, ids));
             }
             ItemKind::Stroke(_) | ItemKind::Shape(_) => {
                 edits.extend(mask_edit(scene, item, path, radius, ids));
@@ -66,15 +67,16 @@ fn split_stroke(
     stroke: &StrokeItem,
     path: &[[f32; 2]],
     radius: f32,
+    index: &EraserIndex,
     ids: &mut dyn IdSource,
 ) -> Vec<Edit> {
     // Cheap exact prefilter on the cached visible centreline (outline strokes carry no masks): no capsule
     // contact means no covered point.
-    if !path_touches(scene, item.id, path, radius) {
+    if !path_touches_in(scene, item.id, path, radius, index) {
         return Vec::new();
     }
     let visible = scene.visible_ranges(item.id);
-    match uncovered_ranges(stroke, &item.transform, &visible, path, radius) {
+    match uncovered_in(stroke, &item.transform, &visible, index, radius) {
         Some(kept) => split_edits(item, stroke, &kept, ids),
         None => Vec::new(),
     }

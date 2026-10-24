@@ -74,14 +74,18 @@ impl Window {
         [to_page(self.origin[0], x), to_page(self.origin[1], y)]
     }
 
-    /// Cell containing page point `p`, if inside the window.
+    /// Cell containing page point `p`, if inside the window. A point on a far fixed-page edge (the page is
+    /// closed, `[0, w] × [0, h]`) maps to the last cell of that row or column.
     pub(crate) fn cell_of(&self, p: [f32; 2]) -> Option<[u32; 2]> {
         if !p.iter().all(|v| v.is_finite() && v.abs() <= MAX_TAP) {
             return None;
         }
         let x = u32::try_from(cell_index(p[0]) - self.origin[0]).ok()?;
         let y = u32::try_from(cell_index(p[1]) - self.origin[1]).ok()?;
-        (x < self.width && y < self.height).then_some([x, y])
+        Some([
+            within(x, self.width, self.page_edges[RIGHT])?,
+            within(y, self.height, self.page_edges[BOTTOM])?,
+        ])
     }
 
     /// Page-px rectangle covered by the window's cells.
@@ -104,6 +108,17 @@ impl Window {
 )]
 fn cell_index(v: f32) -> i64 {
     (f64::from(v) / f64::from(FILL_CELL)).floor() as i64
+}
+
+/// Local cell `i` of an axis with `n` cells; `i == n` on a far page edge is the closed edge itself (last cell).
+fn within(i: u32, n: u32, page_edge: bool) -> Option<u32> {
+    if i < n {
+        Some(i)
+    } else if i == n && page_edge {
+        n.checked_sub(1)
+    } else {
+        None
+    }
 }
 
 /// Cells needed to cover a fixed page extent (at least one).

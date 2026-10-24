@@ -67,6 +67,9 @@ pub enum FillError {
     /// The traced region is empty after cleanup (degenerate area).
     #[error("region is empty")]
     EmptyRegion,
+    /// No z value is left above the scene's top item for a new fill.
+    #[error("no z order left above the top item")]
+    ZExhausted,
 }
 
 /// Reusable buffers (caller-owned; one per page or tool) so repeated fills do not reallocate 16 M-cell
@@ -81,6 +84,11 @@ pub struct FillScratch {
     pub(crate) dist: Vec<u16>,
     /// Flood stack of `(x, y)` cell seeds.
     pub(crate) stack: Vec<[u32; 2]>,
+    /// One masked item's wall bits over the window rows it can reach (cleared per item, never reallocated
+    /// once large enough).
+    pub(crate) layer: Vec<u64>,
+    /// Contour tracing's visited-edge bits.
+    pub(crate) visited: Vec<u64>,
 }
 
 /// Traces the closed region around `req.tap` into a fill (page-px polygons on the 1/16 px grid, identity
@@ -101,7 +109,7 @@ pub fn flood_fill(
     for side in WINDOW_SIDES.into_iter().filter(|&s| s <= cap) {
         let window = Window::around(req.tap, side, scene.kind()).ok_or(FillError::OutsidePage)?;
         let seed = window.cell_of(req.tap).ok_or(FillError::OutsidePage)?;
-        walls::rasterize_walls(scene, &window, &mut scratch.walls);
+        walls::rasterize_walls(scene, &window, &mut scratch.walls, &mut scratch.layer);
         let outcome = flood::close_and_flood(
             &window,
             FloodInput { seed, gap },
@@ -111,7 +119,9 @@ pub fn flood_fill(
             &mut scratch.region,
         );
         match outcome {
-            FloodOutcome::Closed => return trace_fill(&window, &scratch.region, req.paint),
+            FloodOutcome::Closed => {
+                return trace_fill(&window, &scratch.region, &mut scratch.visited, req.paint);
+            }
             FloodOutcome::SeedOnWall => return Err(FillError::TapOnInk),
             FloodOutcome::Leaked => {}
         }
@@ -138,8 +148,13 @@ fn gap_cells(gap: f32) -> u32 {
 }
 
 /// Region mask → rings (marching squares) → RDP → `i_overlay` cleanup.
-fn trace_fill(window: &Window, region: &[u64], paint: Paint) -> Result<FillItem, FillError> {
-    let mut rings = contour::trace_rings(window, region);
+fn trace_fill(
+    window: &Window,
+    region: &[u64],
+    visited: &mut Vec<u64>,
+    paint: Paint,
+) -> Result<FillItem, FillError> {
+    let mut rings = contour::trace_rings(window, region, visited);
     let epsilon = simplify::RDP_EPSILON_CELLS * FILL_CELL;
     for ring in &mut rings {
         simplify::simplify_ring(ring, epsilon);
@@ -156,7 +171,7 @@ fn trace_fill(window: &Window, region: &[u64], paint: Paint) -> Result<FillItem,
 /// `Add(Item { id, layer: Ink, z: scene.next_z(), transform: IDENTITY, kind: Fill })`.
 ///
 /// # Errors
-/// The [`flood_fill`] error.
+/// The [`flood_fill`] error; [`FillError::ZExhausted`] when `scene.next_z()` is `None`.
 pub fn fill_at(
     scene: &Scene,
     req: &FillRequest,
@@ -173,11 +188,12 @@ pub fn fill_at(
         };
         return Ok(vec![Edit::Update { id: target, patch }]);
     }
+    let z = scene.next_z().ok_or(FillError::ZExhausted)?;
     let fill = flood_fill(scene, req, scratch)?;
     Ok(vec![Edit::Add(Item {
         id,
         layer: Layer::Ink,
-        z: scene.next_z(),
+        z,
         transform: Affine::IDENTITY,
         kind: ItemKind::Fill(fill),
     })])

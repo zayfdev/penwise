@@ -10,16 +10,19 @@
 //! order and container internals: maps are `BTreeMap`/`BTreeSet`, and rstar hits are sorted by `(z, id)`
 //! before they leave the scene.
 
+mod derive;
+
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::geometry::{DeriveContext, ItemGeometry, RenderKey};
+use super::geometry::{ItemGeometry, RenderKey};
 use super::id::ItemId;
 use super::index::SpatialIndex;
 use super::layer::LayerSet;
-use super::stroke::{SampleRange, intersect_ranges};
 use super::{Item, ItemKind, Z_STEP};
 use crate::bounds::Bounds;
 use crate::edit::{Edit, EditError, Field, ItemPatch};
+
+use derive::Slot;
 
 /// Page extent (PLAN "Data model": page kind).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -30,31 +33,6 @@ pub enum PageKind {
         height: f32,
     },
     Infinite,
-}
-
-/// Per-item state.
-#[derive(Debug, Clone)]
-struct Slot {
-    item: Item,
-    /// Tombstone: deleted items stay (undo/LWW need them) but leave the index, order and families.
-    deleted: bool,
-    /// Cached derived geometry; `None` while deleted.
-    geometry: Option<ItemGeometry>,
-    /// `geometry`'s bounds ([`Bounds::EMPTY`] while deleted); exactly what the index holds for non-erase items.
-    bounds: Bounds,
-}
-
-impl Slot {
-    /// Slot without derived data (the scene links and derives it next).
-    fn new(item: Item, deleted: bool) -> Self {
-        let (geometry, bounds) = (None, Bounds::EMPTY);
-        Self {
-            item,
-            deleted,
-            geometry,
-            bounds,
-        }
-    }
 }
 
 /// One page's items.
@@ -109,30 +87,7 @@ impl Scene {
             item.validate()?;
             scene.slots.insert(item.id, Slot::new(item, deleted));
         }
-        let live: Vec<ItemId> = scene
-            .slots
-            .iter()
-            .filter(|(_, s)| !s.deleted)
-            .map(|(id, _)| *id)
-            .collect();
-        for &id in &live {
-            scene.link(id);
-        }
-        let mut entries = Vec::with_capacity(live.len());
-        for &id in &live {
-            let geometry = scene.derive(id);
-            let Some(slot) = scene.slots.get_mut(&id) else {
-                continue;
-            };
-            slot.bounds = geometry
-                .as_ref()
-                .map_or(Bounds::EMPTY, ItemGeometry::bounds);
-            slot.geometry = geometry;
-            if !matches!(slot.item.kind, ItemKind::Erase(_)) {
-                entries.push((id, slot.bounds));
-            }
-        }
-        scene.index = SpatialIndex::bulk(&entries);
+        scene.derive_all();
         Ok(scene)
     }
 
@@ -230,40 +185,11 @@ impl Scene {
             .unwrap_or(0)
     }
 
-    /// z for a new topmost item: `top_z() + Z_STEP` (saturating).
+    /// z for a new topmost item: `top_z() + Z_STEP`, or `None` when that overflows `i64` (the z space above
+    /// the top item is exhausted; callers must not create an item that would tie with it).
     #[must_use]
-    pub fn next_z(&self) -> i64 {
-        self.top_z().saturating_add(Z_STEP)
-    }
-
-    /// Effective visible ranges of a live stroke: `own(X) ∩ ⋂ family_visible(Y)` over every other live member
-    /// `Y` of its family ([`crate::item::intersect_ranges`], members folded in id order). Empty for non-strokes
-    /// and dead items.
-    #[must_use]
-    pub fn visible_ranges(&self, id: ItemId) -> Vec<SampleRange> {
-        let Some(ItemKind::Stroke(stroke)) = self.get(id).map(|item| &item.kind) else {
-            return Vec::new();
-        };
-        let mut visible = vec![stroke.own_range()];
-        let family = self.families.get(&stroke.origin(id));
-        for &other in family.into_iter().flatten().filter(|&&m| m != id) {
-            if let Some(ItemKind::Stroke(s)) = self.get(other).map(|item| &item.kind) {
-                visible = intersect_ranges(&visible, &s.family_visible());
-            }
-        }
-        visible
-    }
-
-    /// Live erase items targeting `target`, ascending id.
-    #[must_use]
-    pub fn masks(&self, target: ItemId) -> Vec<ItemId> {
-        members(&self.masks, target)
-    }
-
-    /// Live members of the stroke family rooted at `origin`, ascending id.
-    #[must_use]
-    pub fn family(&self, origin: ItemId) -> Vec<ItemId> {
-        members(&self.families, origin)
+    pub fn next_z(&self) -> Option<i64> {
+        self.top_z().checked_add(Z_STEP)
     }
 
     /// Applies one edit atomically (validate first; on error the scene is unchanged).
@@ -352,128 +278,4 @@ impl Scene {
     fn live(&self, id: ItemId) -> Option<&Slot> {
         self.slots.get(&id).filter(|s| !s.deleted)
     }
-
-    /// Swaps in a validated new state for an existing slot and keeps every derived structure exact
-    /// (see the invalidation list on [`Scene`]). `dirty`: the item's own geometry inputs changed.
-    fn replace(&mut self, id: ItemId, item: Item, deleted: bool, dirty: bool) {
-        let Some(slot) = self.slots.get(&id) else {
-            return;
-        };
-        let was_live = !slot.deleted;
-        let moved = !slot.item.transform.bit_eq(&item.transform);
-        if was_live {
-            self.unlink(id);
-        }
-        if let Some(slot) = self.slots.get_mut(&id) {
-            slot.item = item;
-            slot.deleted = deleted;
-        }
-        let now_live = !deleted;
-        if now_live {
-            self.link(id);
-            if dirty || !was_live {
-                self.rederive(id);
-            }
-        } else {
-            self.set_geometry(id, None);
-        }
-        let mut dependents = Vec::new();
-        if was_live != now_live || moved {
-            dependents.extend(self.masks(id));
-        }
-        if was_live != now_live
-            && let Some(ItemKind::Stroke(s)) = self.slots.get(&id).map(|s| &s.item.kind)
-        {
-            dependents.extend(self.family(s.origin(id)).into_iter().filter(|&m| m != id));
-        }
-        for dependent in dependents {
-            self.rederive(dependent);
-        }
-    }
-
-    /// Registers a live slot in the paint order, its family and its target's mask set.
-    fn link(&mut self, id: ItemId) {
-        let Some(slot) = self.slots.get(&id) else {
-            return;
-        };
-        match &slot.item.kind {
-            ItemKind::Erase(e) => {
-                self.masks.entry(e.target).or_default().insert(id);
-            }
-            ItemKind::Stroke(s) => {
-                self.families.entry(s.origin(id)).or_default().insert(id);
-            }
-            ItemKind::Shape(_) | ItemKind::Fill(_) | ItemKind::Text(_) => {}
-        }
-        if let Some(key) = slot.item.paint_key() {
-            self.order.insert(key);
-        }
-    }
-
-    /// Reverse of [`Scene::link`] (called before the slot's item changes).
-    fn unlink(&mut self, id: ItemId) {
-        let Some(slot) = self.slots.get(&id) else {
-            return;
-        };
-        match &slot.item.kind {
-            ItemKind::Erase(e) => remove_member(&mut self.masks, e.target, id),
-            ItemKind::Stroke(s) => remove_member(&mut self.families, s.origin(id), id),
-            ItemKind::Shape(_) | ItemKind::Fill(_) | ItemKind::Text(_) => {}
-        }
-        if let Some(key) = slot.item.paint_key() {
-            self.order.remove(&key);
-        }
-    }
-
-    /// Geometry of a live slot from its current item and scene context.
-    fn derive(&self, id: ItemId) -> Option<ItemGeometry> {
-        let slot = self.live(id)?;
-        let visible = self.visible_ranges(id);
-        let target_transform = if let ItemKind::Erase(e) = &slot.item.kind {
-            self.get(e.target).map(|t| t.transform)
-        } else {
-            None
-        };
-        let ctx = DeriveContext {
-            visible: &visible,
-            target_transform: target_transform.as_ref(),
-        };
-        Some(slot.item.derive_geometry(&ctx))
-    }
-
-    fn rederive(&mut self, id: ItemId) {
-        let geometry = self.derive(id);
-        self.set_geometry(id, geometry);
-    }
-
-    /// Stores `geometry` and moves the slot's index entry to the new bounds (non-erase items only).
-    fn set_geometry(&mut self, id: ItemId, geometry: Option<ItemGeometry>) {
-        let Some(slot) = self.slots.get_mut(&id) else {
-            return;
-        };
-        let bounds = geometry
-            .as_ref()
-            .map_or(Bounds::EMPTY, ItemGeometry::bounds);
-        if !matches!(slot.item.kind, ItemKind::Erase(_)) {
-            self.index.remove(id, &slot.bounds);
-            self.index.insert(id, &bounds);
-        }
-        slot.geometry = geometry;
-        slot.bounds = bounds;
-    }
-}
-
-fn remove_member(map: &mut BTreeMap<ItemId, BTreeSet<ItemId>>, group: ItemId, id: ItemId) {
-    if let Some(set) = map.get_mut(&group)
-        && set.remove(&id)
-        && set.is_empty()
-    {
-        map.remove(&group);
-    }
-}
-
-fn members(map: &BTreeMap<ItemId, BTreeSet<ItemId>>, group: ItemId) -> Vec<ItemId> {
-    map.get(&group)
-        .map(|m| m.iter().copied().collect())
-        .unwrap_or_default()
 }

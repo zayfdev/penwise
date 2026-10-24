@@ -11,9 +11,10 @@
 //!   drag, fill tap, lasso + delete. No time-based merging.
 //! - Staleness: a recorded field is undone only while the scene still holds **bitwise** the value this device
 //!   wrote ([`ItemPatch::field_eq`]); a field someone else changed since is skipped (their edit wins). Non-
-//!   `Deleted` fields of items that are currently tombstoned are skipped too. Value equality stands in for
-//!   per-field op stamps: core has no op metadata, and an equal value written by another device is
-//!   indistinguishable after LWW anyway.
+//!   `Deleted` fields of items that are tombstoned and stay tombstoned after the step are skipped too (a step
+//!   that itself tombstones an item still writes them, so the tombstone matches bitwise). Value equality
+//!   stands in for per-field op stamps: core has no op metadata, and an equal value written by another
+//!   device is indistinguishable after LWW anyway.
 
 use super::{Edit, EditError, Field, ItemPatch};
 use crate::item::{Item, ItemId, Scene};
@@ -98,8 +99,8 @@ impl UndoStack {
     }
 
     /// Edits undoing the newest step that still has a non-stale field (ends an open gesture first).
-    /// Per item (id order): fields still holding our `after` value are set back to `before`; a restored
-    /// `deleted = true` on an item we added is emitted as `Delete(id)`, every other change as one
+    /// Per item (id order): fields still holding our `after` value are set back to `before`; a change that only
+    /// restores `deleted = true` is emitted as `Delete(id)`, every other change as one
     /// `Update { id, patch }`. Steps where every field is stale are dropped and the next one is tried, so the
     /// user never sees a no-op undo. The emitted change is pushed on the redo stack with the **current** values
     /// as its targets (Figma rule). Empty when nothing is undoable.
@@ -117,10 +118,10 @@ impl UndoStack {
         step(&mut self.redo, &mut self.undo, self.depth, scene)
     }
 
-    /// True when an undo step (possibly stale) is stored or a gesture is open.
+    /// True when an undo step (possibly stale) is stored or the open gesture already has a net change.
     #[must_use]
     pub fn can_undo(&self) -> bool {
-        !self.undo.is_empty() || self.open.is_some()
+        !self.undo.is_empty() || self.open.as_ref().is_some_and(Action::has_change)
     }
 
     /// True when a redo step (possibly stale) is stored.
@@ -183,6 +184,16 @@ impl Action {
         }
     }
 
+    /// True when some write has a field whose net before and after differ (what `prune` would keep).
+    fn has_change(&self) -> bool {
+        self.writes.iter().any(|w| {
+            w.before
+                .fields()
+                .into_iter()
+                .any(|f| !w.before.field_eq(&w.after, f))
+        })
+    }
+
     /// Drops fields whose net before and after are bitwise equal, then writes left empty.
     fn prune(&mut self) {
         for write in &mut self.writes {
@@ -226,7 +237,9 @@ impl Action {
 
 impl ItemWrite {
     /// Fields of this write that the scene still holds bitwise as our `after` value. Non-`Deleted` fields are
-    /// dropped when the item is (or, after restoring our `Deleted` value, will be) tombstoned.
+    /// dropped only when the item is tombstoned now **and** stays tombstoned after restoring our `Deleted`
+    /// value; an item being tombstoned by this step (e.g. redo of move-then-delete) keeps its other fields so
+    /// the tombstone holds bitwise the values the gesture left.
     fn live_fields(&self, item: &Item, deleted: bool) -> Vec<Field> {
         let written = self.after.fields();
         let current = ItemPatch::capture(item, deleted, &written);
@@ -239,7 +252,7 @@ impl ItemWrite {
         } else {
             deleted
         };
-        if dead_after {
+        if deleted && dead_after {
             ours.retain(|&f| f == Field::Deleted);
         }
         ours

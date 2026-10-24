@@ -2,9 +2,10 @@
 //!
 //! Owner: slice a.
 
-use super::hit::{in_masks, page_masks, runs};
-use super::proximity::{arc_length, resample, ring_contains};
+use super::hit::{page_masks, runs};
+use super::proximity::{arc_length, point_polyline_dist, resample, ring_contains};
 use crate::bounds::Bounds;
+use crate::float::max;
 use crate::item::{ItemGeometry, ItemId, LayerSet, Scene};
 
 /// Lasso tuning (constants re-tuned at the M4 feel check).
@@ -110,11 +111,40 @@ fn item_samples(
     length
 }
 
+/// Removes the points of `out` inside `id`'s masks. Each mask is culled by its bounds (path box inflated by
+/// the radius plus a rounding pad) before the exact distance test, so points far from every mask cost O(K)
+/// box checks instead of O(K·path) distances.
 fn drop_masked(scene: &Scene, id: ItemId, out: &mut Vec<[f32; 2]>) {
-    let masks = page_masks(scene, id);
-    if !masks.is_empty() {
-        out.retain(|&p| !in_masks(&masks, p));
+    let masks: Vec<_> = page_masks(scene, id)
+        .into_iter()
+        .map(|(path, radius)| (mask_bounds(path, radius), path, radius))
+        .collect();
+    if masks.is_empty() {
+        return;
     }
+    let all = masks
+        .iter()
+        .fold(Bounds::EMPTY, |acc, (b, _, _)| acc.union(b));
+    out.retain(|&p| {
+        !(all.contains(p[0], p[1])
+            && masks.iter().any(|(b, path, radius)| {
+                b.contains(p[0], p[1]) && point_polyline_dist(p, path) <= *radius
+            }))
+    });
+}
+
+/// Conservative box of the points within `radius` of `path`: the path box inflated by `radius` plus a pad
+/// covering `f32` rounding in [`point_polyline_dist`], so the cull never rejects a point the exact test
+/// would accept.
+fn mask_bounds(path: &[[f32; 2]], radius: f32) -> Bounds {
+    let b = path.iter().fold(Bounds::EMPTY, |mut b, p| {
+        b.include_point(p[0], p[1]);
+        b
+    });
+    let magnitude = [b.min_x, b.min_y, b.max_x, b.max_y, radius]
+        .iter()
+        .fold(0.0f32, |m, v| max(m, v.abs()));
+    b.inflate(radius + 1.0e-3 * (1.0 + magnitude))
 }
 
 /// Resampled points of `run` plus the vertices `resample` did not already emit (it emits the first vertex,
@@ -156,4 +186,32 @@ fn selected(polygon: &[[f32; 2]], points: &[[f32; 2]], length: f32, params: &Las
     let inside = f64::from(u32::try_from(inside).unwrap_or(u32::MAX));
     let total = f64::from(u32::try_from(points.len()).unwrap_or(u32::MAX));
     inside >= f64::from(params.threshold) * total
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The cull box never rejects a point the exact mask test accepts (grid around a diagonal mask,
+    /// including points exactly at the radius); a NaN radius masks nothing either way.
+    #[test]
+    #[allow(clippy::cast_precision_loss, reason = "small grid indices")]
+    fn mask_bounds_are_conservative() {
+        let path = [[10.0, 10.0], [40.0, 25.0], [40.0, 25.0]];
+        let radius = 6.0;
+        let b = mask_bounds(&path, radius);
+        let mut inside = 0;
+        for i in 0..=240 {
+            for j in 0..=240 {
+                let p = [i as f32 * 0.25, j as f32 * 0.25];
+                if point_polyline_dist(p, &path) <= radius {
+                    inside += 1;
+                    assert!(b.contains(p[0], p[1]), "{p:?} masked but culled");
+                }
+            }
+        }
+        assert!(inside > 0);
+        assert!(!b.contains(100.0, 100.0));
+        assert!(!mask_bounds(&path, f32::NAN).contains(20.0, 20.0));
+    }
 }

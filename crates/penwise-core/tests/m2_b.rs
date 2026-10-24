@@ -12,7 +12,7 @@
 
 use penwise_core::brush::Color;
 use penwise_core::edit::erase_fill::cut_polygons;
-use penwise_core::edit::erase_split::{split_edits, uncovered_ranges};
+use penwise_core::edit::erase_split::{bisect_cut, split_edits, uncovered_ranges};
 use penwise_core::edit::proximity::point_ring_dist;
 use penwise_core::edit::{Edit, UndoStack, erase_precise, erase_strokes};
 use penwise_core::item::{
@@ -229,6 +229,22 @@ fn middle_split_keeps_ink_outside_the_cut_without_taper() {
             }
         }
     }
+}
+
+#[test]
+fn bisect_cut_with_reversed_or_empty_bounds_returns_a() {
+    let item = stroke_item(1, tapered_ballpoint(), slow_line(400), Affine::IDENTITY);
+    let stroke = stroke_of(&item);
+    // Sample 300 sits at x = 130 (under the eraser), sample 100 at x = 110 (clear): coverage flips between
+    // them, so a reversed pair used to underflow `hi - lo`.
+    let (covered, clear) = (SampleParam::at_index(300), SampleParam::at_index(100));
+    let eraser = vertical(130.0);
+    let cut = |a, b| bisect_cut(stroke, &Affine::IDENTITY, a, b, &eraser, 3.0);
+    assert_eq!(cut(covered, clear), covered);
+    assert_eq!(cut(clear, clear), clear);
+    // The forward pair still bisects to a point strictly inside the segment.
+    let forward = cut(clear, covered);
+    assert!(clear < forward && forward < covered, "{forward:?}");
 }
 
 #[test]

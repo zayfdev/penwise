@@ -238,3 +238,138 @@ fn shape_fill_text_rules() {
     assert_eq!(text(0.0, [10.0, 0.0]).validate(), invalid("font_size"));
     assert_eq!(text(12.0, [f32::NAN, 0.0]).validate(), invalid("text_box"));
 }
+
+fn shape_item(kind: ShapeKind, size: [f32; 2]) -> Item {
+    base(ItemKind::Shape(ShapeItem {
+        kind,
+        size,
+        brush: Preset::Fineliner.params(),
+        fill: None,
+    }))
+}
+
+#[test]
+fn hostile_transforms_and_extents_are_rejected() {
+    let mut s = stroke(Preset::Ballpoint, None);
+    for t in [
+        Affine::scale(3.0e38, 1.0),
+        Affine::translate(0.0, -2.0e6),
+        Affine::rotate(0.5).then(&Affine::scale(2.0e6, 2.0e6)),
+    ] {
+        s.transform = t;
+        assert_eq!(s.validate(), invalid("transform"), "{t:?}");
+    }
+    // Coefficients in range, but the 27 px stroke maps to ~1.8e6 px.
+    s.transform = Affine::scale(65_536.0, 1.0);
+    assert_eq!(s.validate(), invalid("extent"));
+    // Near the limit but inside it: accepted.
+    s.transform = Affine::translate(1.0e6, -1.0e6);
+    assert_eq!(s.validate(), Ok(()));
+    // A single sample at the origin has no extent; its page half-width (1e6 × 5 px) must still be bounded.
+    if let ItemKind::Stroke(st) = &mut s.kind {
+        st.samples.truncate(1);
+        st.samples[0].y = 0.0;
+    }
+    s.transform = Affine::scale(1.0e6, 1.0e6);
+    assert_eq!(s.validate(), invalid("extent"));
+    s.transform = Affine::scale(1000.0, 1000.0);
+    assert_eq!(s.validate(), Ok(()));
+
+    let mut fat = stroke(Preset::Ballpoint, None);
+    if let ItemKind::Stroke(st) = &mut fat.kind {
+        st.params.size_max = 3.0e38;
+    }
+    assert_eq!(fat.validate(), invalid("brush"));
+
+    let far_fill = base(ItemKind::Fill(FillItem {
+        polygons: vec![Polygon {
+            outer: vec![[0.0, 0.0], [3.0e38, 0.0], [0.0, 4.0]],
+            holes: Vec::new(),
+        }],
+        paint: Paint {
+            color: Color {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
+            opacity: 1.0,
+        },
+    }));
+    assert_eq!(far_fill.validate(), invalid("extent"));
+    let far_erase = base(ItemKind::Erase(EraseItem {
+        target: id(2),
+        path: vec![[2.0e6, 0.0]],
+        radius: 1.0,
+    }));
+    assert_eq!(far_erase.validate(), invalid("extent"));
+}
+
+#[test]
+fn polygon_vertex_count_and_shape_size_are_capped() {
+    let ngon = |n: usize| ShapeKind::Polygon {
+        points: (0..n)
+            .map(|k| {
+                let k = f32::from(u16::try_from(k % 2).unwrap());
+                [k - 0.5, 0.0]
+            })
+            .collect(),
+    };
+    assert_eq!(
+        shape_item(ngon(MAX_POLYGON_POINTS), [10.0, 10.0]).validate(),
+        Ok(())
+    );
+    assert_eq!(
+        shape_item(ngon(MAX_POLYGON_POINTS + 1), [10.0, 10.0]).validate(),
+        invalid("shape_kind")
+    );
+    assert_eq!(
+        shape_item(ngon(131_072), [10.0, 10.0]).validate(),
+        invalid("shape_kind")
+    );
+    assert_eq!(
+        shape_item(ShapeKind::Rect, [3.0e38, 1.0]).validate(),
+        invalid("shape_size")
+    );
+    assert_eq!(
+        shape_item(ShapeKind::Rect, [2.0e6, 1.0]).validate(),
+        invalid("shape_size")
+    );
+    // Vertices far outside the unit box blow the local extent up even at a legal size.
+    let wild = ShapeKind::Polygon {
+        points: vec![[0.0, 0.0], [1.0e6, 0.0], [0.0, 1.0]],
+    };
+    assert_eq!(shape_item(wild, [10.0, 10.0]).validate(), invalid("extent"));
+}
+
+#[test]
+fn strokes_past_the_addressable_sample_window_are_rejected() {
+    let sample = Sample {
+        x: 1.0,
+        y: 2.0,
+        pressure: 0.5,
+        tilt: 0.0,
+        azimuth: 0.0,
+        t_us: 0,
+    }
+    .quantize();
+    let n = usize::try_from(MAX_STROKE_SAMPLES).unwrap();
+    let mut whole = stroke(Preset::Ballpoint, None);
+    if let ItemKind::Stroke(st) = &mut whole.kind {
+        st.samples = vec![sample; n + 1];
+    }
+    assert_eq!(whole.validate(), invalid("samples"));
+    if let ItemKind::Stroke(st) = &mut whole.kind {
+        st.samples.pop();
+    }
+    assert_eq!(whole.validate(), Ok(()));
+
+    // A piece whose stored window ends past the last addressable origin index.
+    let last = MAX_STROKE_SAMPLES - 1;
+    let piece = |offset: u32| {
+        let own = range(offset, last);
+        stroke(Preset::Ballpoint, Some(trim(offset, vec![own], 0)))
+    };
+    assert_eq!(piece(last - 9).validate(), Ok(())); // 10 samples ending exactly at `last`
+    assert_eq!(piece(last - 8).validate(), invalid("samples"));
+}

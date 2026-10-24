@@ -273,7 +273,7 @@ fn donut_traces_to_one_polygon_with_one_hole() {
     for y in 9..14 {
         super::grid::clear_run(&mut region, 24, y, 9, 14);
     }
-    let rings = trace_rings(&win, &region);
+    let rings = trace_rings(&win, &region, &mut Vec::new());
     assert_eq!(rings.len(), 2);
     assert_eq!(
         rings[0],
@@ -292,7 +292,7 @@ fn donut_traces_to_one_polygon_with_one_hole() {
 fn saddle_cells_trace_as_separate_rings() {
     let win = window(8, 8, [false; 4]);
     let region = region_of(&[(2, 3, 2, 3), (3, 4, 3, 4)], 8, 8);
-    let rings = trace_rings(&win, &region);
+    let rings = trace_rings(&win, &region, &mut Vec::new());
     assert_eq!(rings.len(), 2);
     assert!(rings.iter().all(|r| r.len() == 4));
 }

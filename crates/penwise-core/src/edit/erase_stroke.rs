@@ -2,6 +2,10 @@
 //!
 //! Owner: slice b.
 
+mod index;
+#[cfg(test)]
+mod tests;
+
 use super::Edit;
 use super::proximity::{
     point_polyline_dist, point_segment_dist2, ring_contains, segment_segment_dist,
@@ -10,6 +14,7 @@ use crate::bounds::Bounds;
 use crate::float::max;
 use crate::item::{CentrePoint, Centreline, ItemGeometry, ItemId, ItemKind, LayerSet, Scene};
 use crate::shape::ShapeGeometry;
+pub(crate) use index::{EraserIndex, query_box};
 
 /// `Delete` for every live item on `layers` the eraser touches, sorted by `(z, id)`. The eraser is the capsule
 /// chain of radius `radius > 0` along `path` (page px; one point = a disc). Touch rules:
@@ -30,10 +35,11 @@ pub fn erase_strokes(scene: &Scene, path: &[[f32; 2]], radius: f32, layers: Laye
     let Some(area) = eraser_bounds(path, radius) else {
         return Vec::new();
     };
+    let index = EraserIndex::new(path);
     scene
         .query(&area, layers)
         .into_iter()
-        .filter(|&id| path_touches(scene, id, path, radius))
+        .filter(|&id| path_touches_in(scene, id, path, radius, &index))
         .map(Edit::Delete)
         .collect()
 }
@@ -44,24 +50,35 @@ pub fn path_touches(scene: &Scene, id: ItemId, path: &[[f32; 2]], radius: f32) -
     if eraser_bounds(path, radius).is_none() {
         return false;
     }
+    path_touches_in(scene, id, path, radius, &EraserIndex::new(path))
+}
+
+/// [`path_touches`] with a prebuilt index of `path` (`path` already validated by [`eraser_bounds`]).
+pub(crate) fn path_touches_in(
+    scene: &Scene,
+    id: ItemId,
+    path: &[[f32; 2]],
+    radius: f32,
+    index: &EraserIndex,
+) -> bool {
     let (Some(item), Some(geometry)) = (scene.get(id), scene.geometry(id)) else {
         return false;
     };
     let masks = page_masks(scene, id);
     match (&item.kind, geometry) {
         (ItemKind::Stroke(_), ItemGeometry::Stroke { centreline, .. }) => {
-            stroke_touches(centreline, path, radius, &masks)
+            stroke_touches(centreline, index, radius, &masks)
         }
         (ItemKind::Shape(shape), ItemGeometry::Shape(g)) => {
-            shape_touches(g, radius + shape.brush.size_max * 0.5, path, &masks)
+            shape_touches(g, radius + shape.brush.size_max * 0.5, path, index, &masks)
         }
         (ItemKind::Fill(_), ItemGeometry::Fill { polygons, .. }) => polygons.iter().any(|poly| {
             std::iter::once(&poly.outer)
                 .chain(&poly.holes)
-                .any(|ring| line_touches(ring, true, path, radius, &[]))
+                .any(|ring| line_touches(ring, true, index, radius, &[]))
         }),
         (ItemKind::Text(_), ItemGeometry::Text { corners, .. }) => {
-            line_touches(corners, true, path, radius, &[])
+            line_touches(corners, true, index, radius, &[])
                 || path.iter().any(|&p| ring_contains(corners, p))
         }
         _ => false,
@@ -162,22 +179,32 @@ fn cross(a: [f32; 2], b: [f32; 2]) -> f32 {
 fn line_touches(
     line: &[[f32; 2]],
     closed: bool,
-    path: &[[f32; 2]],
+    index: &EraserIndex,
     tol: f32,
     masks: &[PageMask<'_>],
 ) -> bool {
-    segments(line, closed).any(|(a0, a1)| {
-        segments(path, false).any(|(e0, e1)| {
-            segment_segment_dist(e0, e1, a0, a1) <= tol
-                && (masks.is_empty() || !masked(masks, closest_on(a0, a1, e0, e1)))
-        })
+    segments(line, closed).any(|(a0, a1)| pair_touches(a0, a1, index, tol, masks))
+}
+
+/// Segment `a0–a1` is within `tol` of some eraser segment at an unmasked point. Only eraser segments whose
+/// box comes within `tol` of the pair's box are tested (none when the pair misses the eraser bounds).
+fn pair_touches(
+    a0: [f32; 2],
+    a1: [f32; 2],
+    index: &EraserIndex,
+    tol: f32,
+    masks: &[PageMask<'_>],
+) -> bool {
+    index.any(&query_box(a0, a1, tol), |e0, e1| {
+        segment_segment_dist(e0, e1, a0, a1) <= tol
+            && (masks.is_empty() || !masked(masks, closest_on(a0, a1, e0, e1)))
     })
 }
 
 /// Stroke rule: tapered-capsule contact with any visible centreline segment.
 fn stroke_touches(
     centreline: &Centreline,
-    path: &[[f32; 2]],
+    index: &EraserIndex,
     radius: f32,
     masks: &[PageMask<'_>],
 ) -> bool {
@@ -186,7 +213,7 @@ fn stroke_touches(
         let end = usize::try_from(end).unwrap_or(usize::MAX);
         let run = centreline.points.get(start..end).unwrap_or(&[]);
         start = end;
-        if run_touches(run, path, radius, masks) {
+        if run_touches(run, index, radius, masks) {
             return true;
         }
     }
@@ -195,7 +222,7 @@ fn stroke_touches(
 
 fn run_touches(
     run: &[CentrePoint],
-    path: &[[f32; 2]],
+    index: &EraserIndex,
     radius: f32,
     masks: &[PageMask<'_>],
 ) -> bool {
@@ -203,31 +230,29 @@ fn run_touches(
         [only] => Some((*only, *only)),
         _ => None,
     };
-    let pairs = single
+    single
         .into_iter()
-        .chain(run.windows(2).map(|w| (w[0], w[1])));
-    for (c0, c1) in pairs {
-        let (a0, a1) = ([c0.x, c0.y], [c1.x, c1.y]);
-        let tol = radius + max(c0.half_width, c1.half_width);
-        let hit = segments(path, false).any(|(e0, e1)| {
-            segment_segment_dist(e0, e1, a0, a1) <= tol
-                && (masks.is_empty() || !masked(masks, closest_on(a0, a1, e0, e1)))
-        });
-        if hit {
-            return true;
-        }
-    }
-    false
+        .chain(run.windows(2).map(|w| (w[0], w[1])))
+        .any(|(c0, c1)| {
+            let tol = radius + max(c0.half_width, c1.half_width);
+            pair_touches([c0.x, c0.y], [c1.x, c1.y], index, tol, masks)
+        })
 }
 
 /// Shape rule: near the flattened path, or an eraser point inside the filled closed run.
-fn shape_touches(g: &ShapeGeometry, tol: f32, path: &[[f32; 2]], masks: &[PageMask<'_>]) -> bool {
+fn shape_touches(
+    g: &ShapeGeometry,
+    tol: f32,
+    path: &[[f32; 2]],
+    index: &EraserIndex,
+    masks: &[PageMask<'_>],
+) -> bool {
     let mut start = 0usize;
     for &end in &g.path.run_ends {
         let end = usize::try_from(end).unwrap_or(usize::MAX);
         let run = g.path.points.get(start..end).unwrap_or(&[]);
         start = end;
-        if line_touches(run, g.path.closed, path, tol, masks) {
+        if line_touches(run, g.path.closed, index, tol, masks) {
             return true;
         }
         if g.fill.is_some()

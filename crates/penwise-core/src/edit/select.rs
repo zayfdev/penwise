@@ -19,6 +19,7 @@ pub fn delete_items(scene: &Scene, ids: &[ItemId]) -> Vec<Edit> {
 /// Copies of the live, non-erase items in `ids`, offset by `(dx, dy)` page px and stacked on top:
 /// - items processed in `(z, id)` order; each copy takes `ids_src.next_id()` in that order, z values
 ///   `scene.next_z() + k·Z_STEP` (k = 0, 1, …) preserving relative order, transform `then(translate)`;
+///   copies whose z would overflow `i64` (or all, when `next_z` is `None`) are not created;
 /// - each copy's masks are copied too (fresh ids drawn right after their target's, `target` retargeted);
 /// - a trimmed stroke piece becomes its own family root: `trim.origin` = the copy's id and `trim.visible`
 ///   = `[the piece's current effective visible range(s)]` (so it no longer intersects with the original's
@@ -27,8 +28,9 @@ pub fn delete_items(scene: &Scene, ids: &[ItemId]) -> Vec<Edit> {
 /// Returns the `Add` edits in creation order.
 ///
 /// A piece renders one range, so when concurrent splits left a stroke with several effective ranges, the
-/// copy is one piece per range (ids drawn consecutively, same z, all rooted at the first). The same applies
-/// to an untrimmed stroke whose live family hides part of it. Strokes with nothing visible are not copied.
+/// copy is one piece per range (same z, all rooted at the first; each piece's id is drawn before its mask
+/// copies, which follow it). The same applies to an untrimmed stroke whose live family hides part of it.
+/// Strokes with nothing visible are not copied.
 #[must_use]
 pub fn duplicate_items(
     scene: &Scene,
@@ -39,13 +41,21 @@ pub fn duplicate_items(
 ) -> Vec<Edit> {
     let mut items: Vec<&Item> = selection(scene, ids).collect();
     items.sort_by_key(|item| (item.z, item.id));
-    let base = scene.next_z();
+    let Some(base) = scene.next_z() else {
+        return Vec::new();
+    };
     let offset = Affine::translate(dx, dy);
     let mut edits = Vec::new();
     for (k, item) in items.into_iter().enumerate() {
-        let step = i64::try_from(k).unwrap_or(i64::MAX).saturating_mul(Z_STEP);
+        let z = i64::try_from(k)
+            .ok()
+            .and_then(|k| k.checked_mul(Z_STEP))
+            .and_then(|step| base.checked_add(step));
+        let Some(z) = z else {
+            break;
+        };
         let mut copy = item.clone();
-        copy.z = base.saturating_add(step);
+        copy.z = z;
         copy.transform = item.transform.then(&offset);
         let pieces = if let ItemKind::Stroke(stroke) = &item.kind {
             let visible = scene.visible_ranges(item.id);
@@ -59,7 +69,8 @@ pub fn duplicate_items(
             for own in 0..visible.len() {
                 let mut piece = copy.clone();
                 piece.id = ids_src.next_id();
-                let origin = *root.get_or_insert(piece.id);
+                let target = piece.id;
+                let origin = *root.get_or_insert(target);
                 if let ItemKind::Stroke(s) = &mut piece.kind {
                     s.trim = Some(Trim {
                         origin,
@@ -68,7 +79,9 @@ pub fn duplicate_items(
                         own: u32::try_from(own).unwrap_or(u32::MAX),
                     });
                 }
+                let (layer, z) = (piece.layer, piece.z);
                 edits.push(Edit::Add(piece));
+                copy_masks(scene, item.id, (target, layer, z), ids_src, &mut edits);
             }
         } else {
             copy.id = ids_src.next_id();

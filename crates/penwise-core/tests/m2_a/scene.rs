@@ -477,7 +477,7 @@ fn index_stays_consistent_through_add_update_delete() {
 fn next_z_and_render_bands() {
     let (scene, _) = sample_scene();
     assert_eq!(scene.top_z(), 5 * Z_STEP);
-    assert_eq!(scene.next_z(), 6 * Z_STEP);
+    assert_eq!(scene.next_z(), Some(6 * Z_STEP));
     assert_eq!(Scene::new(PageKind::Infinite).top_z(), 0);
     // The fill sits in the lowest band although its z is high.
     let order = scene.render_order(LayerSet::ALL);
@@ -488,6 +488,77 @@ fn next_z_and_render_bands() {
     );
     assert_eq!(scene.masks(id(2)), vec![id(3)]);
     assert_eq!(scene.len(), 6);
+}
+
+#[test]
+fn next_z_is_none_instead_of_tying_with_the_top() {
+    let mut scene = Scene::new(PageKind::Infinite);
+    let top = stroke(id(1), i64::MAX - Z_STEP, [0.0, 0.0], [10.0, 0.0]);
+    scene.apply(&Edit::Add(top)).unwrap();
+    assert_eq!(scene.next_z(), Some(i64::MAX));
+    let patch = ItemPatch {
+        z: Some(i64::MAX - Z_STEP + 1),
+        ..ItemPatch::default()
+    };
+    scene.apply(&Edit::Update { id: id(1), patch }).unwrap();
+    assert_eq!(scene.next_z(), None, "no z above the top item is left");
+}
+
+/// A transform whose page image overflows `f32` (or the codec's ±2²⁰ px) is rejected before it can reach
+/// the spatial index (rstar aborts on NaN areas once nodes overflow).
+#[test]
+fn hostile_transforms_are_rejected_before_indexing() {
+    let (mut scene, items) = sample_scene();
+    let before = scene.clone();
+    let hostile = [
+        Affine::scale(3.0e38, 1.0),
+        Affine::scale(1.0, -3.0e38),
+        Affine::translate(2.0e6, 0.0),
+        Affine::scale(65_536.0, 65_536.0), // in-range coefficients, but every item maps past 2²⁰ px
+    ];
+    for transform in hostile {
+        let patch = ItemPatch {
+            transform: Some(transform),
+            ..ItemPatch::default()
+        };
+        for item in items
+            .iter()
+            .filter(|i| !matches!(i.kind, ItemKind::Erase(_)))
+        {
+            let update = Edit::Update {
+                id: item.id,
+                patch: patch.clone(),
+            };
+            assert!(
+                matches!(scene.apply(&update), Err(EditError::InvalidValue { .. })),
+                "{transform:?} on {:?}",
+                item.id
+            );
+            let mut added = item.clone();
+            added.id = id(200);
+            added.transform = transform;
+            assert!(matches!(
+                scene.apply(&Edit::Add(added)),
+                Err(EditError::InvalidValue { .. })
+            ));
+        }
+    }
+    for item in &items {
+        assert_eq!(snapshot(&scene, item.id), snapshot(&before, item.id));
+    }
+    // Many near-limit items still index and query normally (no rstar reinsertion panic).
+    for n in 0..64u16 {
+        let mut s = stroke(id(100 + n), i64::from(n), [0.0, 0.0], [1.0, 1.0]);
+        s.transform = Affine::translate(1.0e6 - f32::from(n), -1.0e6);
+        scene.apply(&Edit::Add(s)).unwrap();
+    }
+    let far = Bounds {
+        min_x: 9.0e5,
+        min_y: -1.1e6,
+        max_x: 1.1e6,
+        max_y: -9.0e5,
+    };
+    assert_eq!(scene.query(&far, LayerSet::ALL).len(), 64);
 }
 
 #[test]

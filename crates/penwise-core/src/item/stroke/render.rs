@@ -116,7 +116,7 @@ pub(super) fn range_params(offset: u32, n: usize, range: &SampleRange, out: &mut
 /// last stored one).
 fn locate(len: usize, offset: u32, u: SampleParam) -> Option<(usize, Option<f32>)> {
     let i = usize::try_from(u.index().checked_sub(offset)?).ok()?;
-    let exact = (u.0 & super::FRAC_MASK) == 0 || i + 1 >= len;
+    let exact = (u.0 & super::param::FRAC_MASK) == 0 || i + 1 >= len;
     (i < len).then(|| (i, (!exact).then(|| u.frac())))
 }
 

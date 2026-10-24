@@ -3,8 +3,9 @@
 //! Owner: slice c (slice-internal).
 
 use super::FILL_CELL;
-use super::grid::{Window, reset};
+use super::grid::{Window, index, reset};
 use super::scan::{clear_capsule, fill_capsule, fill_contours};
+use crate::bounds::Bounds;
 use crate::brush::BlendMode;
 use crate::geometry::{Dab, Outline, StrokeGeometry};
 use crate::item::{Centreline, ItemGeometry, ItemKind, LayerSet, Scene};
@@ -18,14 +19,20 @@ const STAMP_WALL_ALPHA: f32 = 0.25;
 ///   capsules at `max(h, FILL_CELL / 2)` (guarantees ≥ 1 cell width);
 /// - stamp strokes: capsules along consecutive dabs with `opacity · hardness ≥ 0.25`, radius `radius_x`;
 /// - shapes: their stroke outline contours plus path capsules at half the brush's minimum width;
-/// - an item with masks is drawn into a separate layer, its masks are cleared there with
-///   [`super::scan::clear_capsule`], and the layer is merged (a mask only removes its own target's wall).
+/// - an item with masks is drawn into `layer` (caller scratch, reused), restricted to the window rows its
+///   bounds can reach ([`item_rows`]); its masks are cleared there with [`super::scan::clear_capsule`] and
+///   only those rows are merged (a mask only removes its own target's wall). Per masked item the work is
+///   proportional to its rows, never to the window.
 ///
 /// Skipped: fills, shape fills, `BlendMode::Multiply` strokes and shapes, erase items, agent/text layers.
 /// Fixed-page edges are walls of the flood step (virtual EDT edges), not drawn here.
-pub(crate) fn rasterize_walls(scene: &Scene, window: &Window, bits: &mut Vec<u64>) {
+pub(crate) fn rasterize_walls(
+    scene: &Scene,
+    window: &Window,
+    bits: &mut Vec<u64>,
+    layer: &mut Vec<u64>,
+) {
     reset(bits, window.width, window.height);
-    let mut layer: Vec<u64> = Vec::new();
     for id in scene.query(&window.page_bounds().inflate(FILL_CELL), LayerSet::INK) {
         let (Some(item), Some(geometry)) = (scene.get(id), scene.geometry(id)) else {
             continue;
@@ -40,17 +47,75 @@ pub(crate) fn rasterize_walls(scene: &Scene, window: &Window, bits: &mut Vec<u64
             draw(window, geometry, path_radius, bits);
             continue;
         }
-        reset(&mut layer, window.width, window.height);
-        draw(window, geometry, path_radius, &mut layer);
+        let bounds = scene.bounds(id).unwrap_or_else(|| geometry.bounds());
+        let margin = crate::float::max(path_radius, FILL_CELL) + FILL_CELL;
+        let Some((start, end)) = item_rows(window, &bounds, margin) else {
+            continue;
+        };
+        // Same width and global cell grid, fewer rows: rasterization is window-independent, so the band's
+        // cells equal the full window's rows `start..end`.
+        let band = Window {
+            origin: [window.origin[0], window.origin[1] + i64::from(start)],
+            height: end - start,
+            ..*window
+        };
+        reset(layer, band.width, band.height);
+        draw(&band, geometry, path_radius, layer);
         for mask in masks {
             if let Some(ItemGeometry::Erase { path, radius }) = scene.geometry(mask) {
                 chain(path, false, |a, b| {
-                    clear_capsule(window, a, b, *radius, &mut layer);
+                    clear_capsule(&band, a, b, *radius, layer);
                 });
             }
         }
-        for (w, l) in bits.iter_mut().zip(&layer) {
-            *w |= l;
+        or_at(bits, layer, index(window.width, 0, start));
+    }
+}
+
+/// Window rows `start..end` (non-empty) whose cell centres may lie within `margin` page px of `bounds`
+/// vertically; `None` when no row can. Non-finite bounds widen to the whole window.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "window origins are bounded by the 2^24 px tap limit; local rows are clamped to 0..=height"
+)]
+fn item_rows(window: &Window, bounds: &Bounds, margin: f32) -> Option<(u32, u32)> {
+    let cell = f64::from(FILL_CELL);
+    let origin = window.origin[1] as f64;
+    let n = window.height;
+    let local = |g: f64, nan: u32| {
+        let v = g - origin;
+        if v.is_nan() {
+            nan
+        } else if v <= 0.0 {
+            0
+        } else if v >= f64::from(n) {
+            n
+        } else {
+            v as u32
+        }
+    };
+    let m = f64::from(margin);
+    let start = local(((f64::from(bounds.min_y) - m) / cell).floor(), 0);
+    let end = local(((f64::from(bounds.max_y) + m) / cell).ceil() + 1.0, n);
+    (start < end).then_some((start, end))
+}
+
+/// ORs the bit grid `layer` into `bits` starting at flat bit index `offset` (rows are not word-aligned).
+fn or_at(bits: &mut [u64], layer: &[u64], offset: usize) {
+    let (base, shift) = (offset >> 6, offset & 63);
+    for (k, &word) in layer.iter().enumerate() {
+        if word == 0 {
+            continue;
+        }
+        if let Some(w) = bits.get_mut(base + k) {
+            *w |= word << shift;
+        }
+        if shift > 0
+            && let Some(w) = bits.get_mut(base + k + 1)
+        {
+            *w |= word >> (64 - shift);
         }
     }
 }
@@ -163,3 +228,6 @@ fn chain(points: &[[f32; 2]], closed: bool, mut f: impl FnMut([f32; 2], [f32; 2]
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

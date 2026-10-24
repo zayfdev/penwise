@@ -153,7 +153,7 @@ fn duplicate_stacks_copies_on_top_with_masks() {
         added.iter().map(|i| i.id).collect::<Vec<_>>(),
         vec![id(500), id(501), id(502)]
     );
-    let top = scene.next_z();
+    let top = scene.next_z().unwrap();
     assert_eq!(added[0].z, top);
     assert_eq!(added[2].z, top + Z_STEP);
     let ItemKind::Erase(mask) = &added[1].kind else {
@@ -167,8 +167,8 @@ fn duplicate_stacks_copies_on_top_with_masks() {
     assert_eq!(copied.masks(id(500)), vec![id(501)]);
 }
 
-#[test]
-fn duplicated_pieces_become_their_own_family() {
+/// A ballpoint stroke `id(1)` split into a remaining piece `id(2)` (samples 20..40), origin deleted.
+fn piece_scene() -> Scene {
     let origin = stroke(id(1), Z_STEP, [0.0, 0.0], [200.0, 0.0]);
     let ItemKind::Stroke(s) = &origin.kind else {
         panic!()
@@ -202,6 +202,12 @@ fn duplicated_pieces_become_their_own_family() {
     let mut scene = Scene::new(PageKind::Infinite);
     add_all(&mut scene, &[origin.clone(), piece]);
     scene.apply(&Edit::Delete(origin.id)).unwrap();
+    scene
+}
+
+#[test]
+fn duplicated_pieces_become_their_own_family() {
+    let scene = piece_scene();
     let edits = duplicate_items(&scene, &[id(2)], 0.0, 50.0, &mut Counter(900));
     let [Edit::Add(copy)] = edits.as_slice() else {
         panic!("{edits:?}")
@@ -216,6 +222,28 @@ fn duplicated_pieces_become_their_own_family() {
     let mut copied = scene.clone();
     copied.apply_all(&edits).unwrap();
     assert_eq!(copied.family(id(900)), vec![id(900)]);
-    assert_eq!(copied.family(origin.id), vec![id(2)]);
+    assert_eq!(copied.family(id(1)), vec![id(2)]);
     assert_eq!(copied.visible_ranges(id(900)), scene.visible_ranges(id(2)));
+}
+
+#[test]
+fn duplicated_piece_keeps_its_masks() {
+    let mut scene = piece_scene();
+    let piece = scene.get(id(2)).unwrap().clone();
+    add_all(&mut scene, &[erase(id(3), &piece, vec![[150.0, 0.0]], 4.0)]);
+    let edits = duplicate_items(&scene, &[id(2)], 0.0, 50.0, &mut Counter(900));
+    let [Edit::Add(copy), Edit::Add(mask)] = edits.as_slice() else {
+        panic!("{edits:?}")
+    };
+    assert_eq!(copy.id, id(900));
+    assert_eq!(mask.id, id(901));
+    let ItemKind::Erase(e) = &mask.kind else {
+        panic!("not a mask")
+    };
+    assert_eq!(e.target, id(900));
+    assert_eq!((mask.layer, mask.z), (copy.layer, copy.z));
+    let mut copied = scene.clone();
+    copied.apply_all(&edits).unwrap();
+    assert_eq!(copied.masks(id(900)), vec![id(901)]);
+    assert_eq!(copied.masks(id(2)), vec![id(3)]);
 }
