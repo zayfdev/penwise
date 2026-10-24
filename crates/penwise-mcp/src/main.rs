@@ -243,13 +243,7 @@ fn call_tool(
                 ]
             }))
         }
-        "penwise_page_status" => {
-            let body = endpoint
-                .get(&page_path("/health", request))
-                .map_err(|failure| error(-32603, &failure))?;
-            let text = String::from_utf8_lossy(&body).to_string();
-            Ok(serde_json::json!({ "content": [{ "type": "text", "text": text }] }))
-        }
+        "penwise_page_status" => get_text(endpoint, &page_path("/health", request)),
         "penwise_annotate" => {
             let body = request.pointer("/params/arguments").map_or_else(
                 || "{\"strokes\":[]}".to_owned(),
@@ -266,36 +260,16 @@ fn call_tool(
                 .map_err(|failure| error(-32603, &failure))?;
             Ok(text_content(&String::from_utf8_lossy(&reply)))
         }
-        "penwise_list_pages" => {
-            let body = endpoint
-                .get("/pages")
-                .map_err(|failure| error(-32603, &failure))?;
-            Ok(text_content(&String::from_utf8_lossy(&body)))
-        }
-        "penwise_create_page" => {
-            let body = arguments(request).to_string();
-            let reply = endpoint
-                .post("/pages", &body)
-                .map_err(|failure| error(-32603, &failure))?;
-            Ok(text_content(&String::from_utf8_lossy(&reply)))
-        }
-        "penwise_create_notebook" => {
-            let body = arguments(request).to_string();
-            let reply = endpoint
-                .post("/notebooks", &body)
-                .map_err(|failure| error(-32603, &failure))?;
-            Ok(text_content(&String::from_utf8_lossy(&reply)))
-        }
+        "penwise_list_pages" => get_text(endpoint, "/pages"),
+        "penwise_create_page" => post_arguments(request, endpoint, "/pages"),
+        "penwise_create_notebook" => post_arguments(request, endpoint, "/notebooks"),
         "penwise_switch_page" => {
             let arguments = arguments(request);
             let page = arguments
                 .get("page")
                 .and_then(serde_json::Value::as_str)
                 .ok_or_else(|| error(-32602, "missing page"))?;
-            let reply = endpoint
-                .post(&format!("/pages/{page}/select"), "{}")
-                .map_err(|failure| error(-32603, &failure))?;
-            Ok(text_content(&String::from_utf8_lossy(&reply)))
+            post_text(endpoint, &format!("/pages/{page}/select"), "{}")
         }
         other => Err(error(-32602, &format!("unknown tool {other}"))),
     }
@@ -356,6 +330,35 @@ impl Endpoint {
         }
         Ok(raw[split + 4..].to_vec())
     }
+}
+
+/// `GET path`, returned as a text content block.
+fn get_text(endpoint: &Endpoint, path: &str) -> Result<serde_json::Value, serde_json::Value> {
+    let body = endpoint
+        .get(path)
+        .map_err(|failure| error(-32603, &failure))?;
+    Ok(text_content(&String::from_utf8_lossy(&body)))
+}
+
+/// `POST path` with the call's `arguments` as JSON, returned as a text content block.
+fn post_arguments(
+    request: &serde_json::Value,
+    endpoint: &Endpoint,
+    path: &str,
+) -> Result<serde_json::Value, serde_json::Value> {
+    post_text(endpoint, path, &arguments(request).to_string())
+}
+
+/// `POST path` with an explicit body, returned as a text content block.
+fn post_text(
+    endpoint: &Endpoint,
+    path: &str,
+    body: &str,
+) -> Result<serde_json::Value, serde_json::Value> {
+    let reply = endpoint
+        .post(path, body)
+        .map_err(|failure| error(-32603, &failure))?;
+    Ok(text_content(&String::from_utf8_lossy(&reply)))
 }
 
 /// The tool call's `arguments` object, empty when the client sent none.
