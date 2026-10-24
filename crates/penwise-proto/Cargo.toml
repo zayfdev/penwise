@@ -1,0 +1,18 @@
+[package]
+name = "penwise-proto"
+description = "Penwise sync protocol: ids, hybrid logical clock, ops, LWW materialization and versioned wire messages."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# Never enable `raster` here: proto is linked into wasm and FFI builds.
+penwise-core = { path = "../penwise-core" }
+postcard.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

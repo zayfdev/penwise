@@ -38,3 +38,11 @@ fixtures:
 # Rewrite geometry (and raster) goldens natively; then `just wasm-test` proves them cross-target.
 bless:
     PENWISE_BLESS=1 cargo test -p penwise-core --features raster
+
+# Browser viewer bundle (wasm) — rebuild after changing core or penwise-wasm.
+web:
+    wasm-pack build crates/penwise-wasm --target web --out-dir ../../web/pkg --out-name penwise_wasm
+
+# PC mirror server: table page + live updates (PENWISE_PORT, PENWISE_WEB, PENWISE_DATA).
+serve: web
+    cargo run -p penwise-server
