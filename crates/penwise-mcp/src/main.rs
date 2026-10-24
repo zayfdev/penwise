@@ -264,40 +264,18 @@ fn call_tool(
             }))
         }
         "penwise_page_status" => get_text(endpoint, &page_path("/health", request)),
-        "penwise_annotate" => {
-            let body = request.pointer("/params/arguments").map_or_else(
-                || "{\"strokes\":[]}".to_owned(),
-                serde_json::Value::to_string,
-            );
-            let reply = endpoint
-                .post("/annotate", &body)
-                .map_err(|failure| error(-32603, &failure))?;
-            Ok(text_content(&String::from_utf8_lossy(&reply)))
-        }
+        "penwise_annotate" => post_arguments(request, endpoint, "/annotate"),
         "penwise_clear_agent_marks" => {
-            let reply = endpoint
-                .post(&page_path("/annotate/clear", request), "{}")
-                .map_err(|failure| error(-32603, &failure))?;
-            Ok(text_content(&String::from_utf8_lossy(&reply)))
+            post_text(endpoint, &page_path("/annotate/clear", request), "{}")
         }
         "penwise_list_pages" => get_text(endpoint, "/pages"),
         "penwise_search" => {
-            let arguments = arguments(request);
-            let query = arguments
+            let query = arguments(request)
                 .get("query")
                 .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| error(-32602, "missing query"))?;
-            let encoded: String = query
-                .bytes()
-                .map(|byte| match byte {
-                    b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                        (byte as char).to_string()
-                    }
-                    b' ' => "+".to_owned(),
-                    other => format!("%{other:02X}"),
-                })
-                .collect();
-            get_text(endpoint, &format!("/search?q={encoded}"))
+                .ok_or_else(|| error(-32602, "missing query"))?
+                .to_owned();
+            get_text(endpoint, &format!("/search?q={}", encode_query(&query)))
         }
         "penwise_page_text" => {
             let arguments = arguments(request);
@@ -386,6 +364,20 @@ impl Endpoint {
         }
         Ok(raw[split + 4..].to_vec())
     }
+}
+
+/// Percent-encodes a query value, with spaces as `+` (form style, which the URL parser accepts).
+fn encode_query(value: &str) -> String {
+    value
+        .bytes()
+        .map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (byte as char).to_string()
+            }
+            b' ' => "+".to_owned(),
+            other => format!("%{other:02X}"),
+        })
+        .collect()
 }
 
 /// `GET path`, returned as a text content block.
