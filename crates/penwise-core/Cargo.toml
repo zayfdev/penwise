@@ -13,7 +13,9 @@ publish.workspace = true
 raster = ["dep:tiny-skia"]
 
 [dependencies]
+i_overlay.workspace = true
 libm.workspace = true
+rstar.workspace = true
 thiserror.workspace = true
 tiny-skia = { workspace = true, optional = true }
 

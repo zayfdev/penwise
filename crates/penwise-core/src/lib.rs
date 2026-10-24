@@ -12,13 +12,17 @@ pub mod brush;
 pub mod builder;
 pub mod codec;
 pub mod dynamics;
+pub mod edit;
+pub mod fill;
 pub mod float;
 pub mod geometry;
 pub mod hash;
+pub mod item;
 pub mod outline;
 #[cfg(feature = "raster")]
 pub mod raster;
 pub mod sample;
+pub mod shape;
 pub mod smoothing;
 pub mod stamp;
 

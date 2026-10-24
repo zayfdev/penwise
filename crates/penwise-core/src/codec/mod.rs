@@ -5,7 +5,9 @@
 //! Hand-written, zero-dependency, deterministic: no serde/postcard, no `usize` or native-endian bytes in output,
 //! every blob versioned and ending in an FNV-1a 64 trailer ([`crate::hash`]).
 
+pub mod edit;
 pub mod error;
+pub mod item;
 mod params_fields;
 pub mod pwrec;
 pub mod stroke;

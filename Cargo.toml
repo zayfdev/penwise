@@ -13,6 +13,11 @@ publish = false
 # Pure-Rust musl port; the only transcendental math allowed in penwise-core (determinism).
 libm = "0.2.16"
 thiserror = "2"
+# M2 editing: per-page R*-tree item index (MIT OR Apache-2.0, MSRV 1.85; deps heapless, num-traits, smallvec).
+rstar = "0.13.0"
+# M2 editing: integer polygon booleans for fill cleanup and fill erase (MIT OR Apache-2.0, MSRV 1.88; deps
+# i_float/i_shape/i_tree/i_key_sort, all MIT). Default features off: no rayon (`allow_multithreading`).
+i_overlay = { version = "9.1.0", default-features = false }
 # Server-only raster; enabled through penwise-core's `raster` feature, never on wasm.
 tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd", "png-format"] }
 wasm-bindgen-test = "0.3.79"
