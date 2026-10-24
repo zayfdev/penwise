@@ -33,8 +33,9 @@ source file over the limit. Generated code (`uniffi`, `wasm-bindgen` output) is 
 - Errors: `thiserror` enums in libraries; `anyhow` only in `penwise-server`'s `main`. No stringly-typed errors.
 - Logging: `tracing` only, in server code.
 - Hot paths (per pen sample): no allocation; reuse buffers owned by the caller or the stroke builder.
-- **Determinism:** `penwise-core` output must be bit-identical on native and WebAssembly. Use `libm` for
-  transcendental math, never `f32::sin`/`powf` from std; no `HashMap` iteration order in output; golden tests run on both targets.
+- **Determinism:** `penwise-core` geometry (outlines, bounds, codec output) must be bit-identical on native and
+  WebAssembly. Use `libm` for transcendental math, never `f32::sin`/`powf` from std; no `HashMap` iteration order in
+  output; geometry golden tests run on both targets. Pixels are platform-rasterized, so PNG goldens are server-only.
 
 ## Kotlin (android/)
 
