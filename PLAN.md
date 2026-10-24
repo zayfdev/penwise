@@ -120,10 +120,13 @@ penwise/
 | M4 | MCP | All stage-1 tools usable from an agent; annotations appear live on tablet + browser |
 | M5 | Recognition | Scan button + auto-scan produce text layer; `get_page_text` returns it |
 
-## Toolchain status (checked 2026-10-24)
+## Toolchain (installed 2026-10-24)
 
-- Present: rustc 1.93, cargo, OpenJDK 21, bun, node 22, tailscale (this PC = `deskpc`), ollama (not running, no models listed).
-- Missing: Android SDK/NDK, adb, gradle (wrapper will cover), cargo-ndk, wasm-pack, rust targets `aarch64-linux-android`, `wasm32-unknown-unknown`.
+- Rust 1.93.0 pinned, targets `aarch64-linux-android` + `wasm32-unknown-unknown`; cargo-ndk, wasm-pack, just, cargo-deny.
+- Android SDK at `~/Android/Sdk` (env in `~/.zshenv`): cmdline-tools, platform-tools r37.0.1, `platforms;android-37.0`,
+  build-tools 37.0.0, NDK r30 (30.0.16248370). NDK `cdylib` link for arm64-v8a verified.
+- USB access: `/etc/udev/rules.d/51-android.rules` (Samsung `04e8`, uaccess). Tablet serial `R00000000000`.
+- Also present: OpenJDK 21, bun, node 22, tailscale (this PC = `deskpc`), ollama (no models yet). Gradle via wrapper at M3.
 
 ## Later stages (parking lot)
 
