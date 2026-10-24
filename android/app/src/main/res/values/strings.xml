@@ -6,4 +6,9 @@
     <string name="tool_clear_page">Clear</string>
     <string name="tool_preset_color">Auto</string>
     <string name="tool_size_value">%1$.1f×</string>
+    <!-- Penwise PC server, tried in order: home Wi-Fi, then Tailscale from anywhere (port 7420). -->
+    <string-array name="sync_urls" translatable="false">
+        <item>ws://192.168.1.19:7420/ws</item>
+        <item>ws://100.64.10.100:7420/ws</item>
+    </string-array>
 </resources>
