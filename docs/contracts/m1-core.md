@@ -48,16 +48,17 @@ src/geometry.rs       Outline, Dab, StrokeStyle, StrokeGeometry, OutlineView, Ge
 src/brush/            Color, BlendMode, BrushFamily/OutlineKind/StampKind + byte tags, BrushParams, Preset (contract, implemented)
 src/sample.rs         Sample, GridSample, quantize (contract, implemented); RawSample, DigitizerRanges::map (a)
 src/smoothing.rs      OneEuroParams, OneEuro, OneEuroScalar, SmoothingParams, FilteredSample, Smoother (a)
+src/smoothing/speed.rs  SPEED_WINDOW_US, windowed pen speed from quantized positions (a; ink-rendering.md §4.2)
 src/dynamics.rs       PressureCurve, VelocityResponse, TiltResponse, Dynamics, InkPoint (a)
 src/builder.rs        StrokeBuilder (a)
-src/outline/          mod.rs OutlineEngine; freehand.rs (MIT notice); nib.rs (b)
+src/outline/          mod.rs OutlineEngine; freehand.rs (MIT notice); nib.rs; sweep.rs (flat-nib hull sweep); walker.rs (b)
 src/stamp/            mod.rs StampEngine; spacing.rs; dab.rs; prng.rs; texture.rs (c)
 src/codec/            mod.rs; error.rs CodecError; varint.rs; stroke.rs; pwrec.rs (d)
-src/raster/           mod.rs; outline.rs; stamps.rs; png.rs — feature `raster` only (e)
+src/raster/           mod.rs; outline.rs; stamps.rs; png.rs; sheet.rs (+ sheet/pixels.rs: shared brush-sheet renderer, used by examples/brush_sheet.rs and the sheet golden) — feature `raster` only (e)
 ```
 
 `outline/flat.rs` is intentionally absent: flat opacity is a style property (one nonzero polygon never
-double-covers), the round marker is perfect-freehand, and the highlighter/chisel marker is a flat nib in `nib.rs`.
+double-covers), the round marker is perfect-freehand, and the highlighter and calligraphy are flat nibs (`nib.rs`, swept by `sweep.rs`).
 
 ## Data flow
 
@@ -143,7 +144,8 @@ codec::stroke stores {params, seed, quantized samples}; geometry is always re-de
 - `outline/mod.rs`: `OutlineEngine::new`, `extend`, `update_tail`, `view`, `finish`
 - `outline/freehand.rs`: `FreehandOptions::from_params`, `FreehandOptions::radius`, `rot_around`,
   `round_start_cap`, `round_end_cap`, `flat_cap`, `dot`
-- `outline/nib.rs`: `DirectionSmoother::update`, `fountain_scale`, `nib_width`, `effective_angle`, `flat_offsets`
+- `outline/nib.rs`: `DirectionSmoother::update`, `fountain_scale`, `nib_width`, `effective_angle`, `nib_corners`, `nib_rect`
+- `outline/sweep.rs`: `push_segment`, `convex_hull` (exact swept convex hull of consecutive flat nib rectangles, ink-rendering.md §2.1)
 - Tests: dot for one point, polygon closed and finite, `extend` chunk invariance, stable prefix never changes
   across `update_tail`, highlighter width constant under pressure.
 

@@ -126,8 +126,9 @@ impl TiltResponse {
         smoothstep(self.theta0, self.theta1, tilt)
     }
 
-    /// True when this response never changes a dab (`max_aspect == 1 && max_radius_scale == 1` and
-    /// `side_alpha == 1`); lets the stamp engine skip the tilt path.
+    /// True when this response's own values never change a dab (`max_aspect == 1 && max_radius_scale == 1` and
+    /// `side_alpha == 1`). Not the sole gate: `stamp/dab.rs` (`tilt_is_neutral`) also checks `side_hardness`, so a
+    /// response that only changes hardness on the side still applies.
     #[must_use]
     #[allow(clippy::float_cmp, reason = "neutral values are exact constants")]
     pub fn is_none(&self) -> bool {

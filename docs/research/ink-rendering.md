@@ -106,6 +106,8 @@ start={taper:0, cap:true, easing:t→t(2−t)}, end={taper:0, cap:true, easing:t
 | `taper:true` uses `totalLength` | whole stroke geometry changes every sample → nothing stable while streaming | numeric tapers only |
 | `FIXED_PI = π+0.0001` | browser SVG hack | keep (harmless, keeps parity with upstream fixtures) |
 | JS `Math.hypot/sin/cos` | determinism | `sqrt(dx²+dy²)`, `libm::sinf/cosf` |
+| `isVeryShort` (upstream, later version): 2+ points shorter than 3 px | — | ported: round tips render a dot at the first point (`outline/mod.rs`); flat nibs sweep such strokes like any other |
+| flat nib ends | — | no cap points: the swept end rectangles are the caps (§2.1) |
 
 Rendering: fill the polygon directly (tiny-skia `fill_path`, `FillRule::Winding`). tldraw's smoother look comes from
 the README's `getSvgPathFromStroke` (quadratic Béziers `Q p_i, mid(p_i,p_{i+1})`); optional, applied at path
@@ -125,28 +127,26 @@ Direction `d_i = −v_i` (forward unit vector), smoothed over ≈ one radius of 
 arc length: `w = 1 − exp(−Δs/r)`, renormalize) to stop nib-width flicker on jitter.
 
 ### 2.1 Calligraphy (flat nib, fixed angle)
-Nib = segment of width `W` at fixed angle φ (axis `u = (cos φ, sin φ)`) with thickness `t` (`u⊥ = per(u)`).
-The swept width perpendicular to motion is the nib's projection on the normal `n = per(d)`:
+Nib = rectangle of width `W` at fixed angle φ (axis `u = (cos φ, sin φ)`) and thickness `t` along `u⊥ = per(u)`,
+centred on the centreline point. Corners `P ± (W/2)·u ± (t/2)·u⊥` (`outline/nib.rs::nib_corners`, order `(+,+) (−,+) (−,−) (+,−)`).
+Fixation `f`: `φ_eff = lerp_angle(θ + π/2, φ, f)`, `θ = atan2(d.y, d.x)` on the smoothed direction (`effective_angle`;
+`f = 1` keeps `φ`). Pressure modulates `W` only: `W = lerp(W_min, W_max, c(p))` (`nib_width`; highlighter `W_min = W_max`).
 
-```
-width(θ) = W·|sin(θ − φ)| + t·|cos(θ − φ)|       θ = atan2(d.y, d.x)
-```
+The stroke is the exact sweep (`outline/sweep.rs`): segment `P_i → P_{i+1}` fills the convex hull of the eight corners of
+the two nib rectangles. Each hull is appended as its own loop with positive orientation, so the nonzero winding number is
+the count of hulls covering a point and never cancels. A left/right ribbon through two corners is not used: when motion
+crosses the nib axis its corners swap sides, the ribbon becomes a bow-tie, and opposite-winding lobes cancel into holes
+and spikes.
 
-Correct geometry offsets **along the nib axis**, not the normal (this is what makes real calligraphy edges):
-```
-s = −sign(d · u)·sign(d · u⊥)  (each sign +1 if 0)
-left_i  = P_i + (W/2)·u + s·(t/2)·u⊥
-right_i = P_i − (W/2)·u − s·(t/2)·u⊥
-```
-The sign picks the outer corner pair of the nib rectangle for the current direction, so the ribbon width is exactly
-`width(θ)` above (`s = sign(d·u⊥)` alone takes the inner corners whenever `d·u > 0`, giving `W·|sin| − t·|cos|`).
-When the stroke direction crosses φ the ribbon twists to width `t`; nonzero fill renders the twist correctly.
-Pressure modulates `W` only: `W = W_max·(w0 + (1−w0)·c(p))`. Caps: flat (the nib end is the cap). Corner fans of
-§1.3 step 5 are **disabled** for nib brushes (the ribbon already covers the turn). Exact alternative if twist
-artifacts show at sharp reversals: emit, per segment, the convex hull of the nib at `P_i` and `P_{i+1}` (6 points)
-as subpaths of one nonzero path. Inkscape's calligraphy tool exposes the same model (width, thinning, angle,
-**fixation** 1 = fixed angle / 0 = nib ⊥ stroke, caps) — [manual](https://inkscape-manuals.readthedocs.io/en/latest/calligraphy-tool.html);
-add `fixation f`: effective `φ_eff = lerp_angle(θ + π/2, φ, f)`.
+The width across the motion normal `n` is the rectangle's support on `n`, whichever way the stroke crosses the nib:
+`W·|u·n| + t·|u⊥·n| = W·|sin(θ − φ)| + t·|cos(θ − φ)|`.
+
+Caps: none. The end rectangles are the flat caps, also when tapered; taper scales `W` and `t` together, floored at
+`2·MIN_RADIUS`. Corner fans of §1.3 step 5 are **disabled** (the sweep covers turns). A single point is the nib rectangle
+at that point; strokes of 2+ points shorter than 3 px are swept like any other (no dot).
+
+Inkscape's calligraphy tool exposes the same model (width, thinning, angle, **fixation**, caps) —
+[manual](https://inkscape-manuals.readthedocs.io/en/latest/calligraphy-tool.html).
 
 ### 2.2 Fountain pen (pressure + mild direction)
 Model the tipping as an ellipse of semi-axes `R` (along `u`, angle φ) and `a·R` (`a` = aspect, 0.5–0.7); keep
@@ -357,17 +357,17 @@ Sizes are diameters in px at 340 dpi (13.39 px/mm). "pf" = perfect-freehand para
 |---|---|---|---|---|---|---|---|---|---|---|
 | ballpoint | outline pf | 2.4–5.0 (0.18–0.37) | 1.0 | – | – | – | – | γ 0.75 | k_v 0.1 | round caps, taper start 0 / end 2 px |
 | fineliner | outline pf | 3.8–4.6 (≈0.3) | 1.0 | – | – | – | – | γ 1.0 (near-constant) | none | round caps, no taper |
-| fountain | outline pf + ellipse nib (§2.2) | 2.5–9.0 | 1.0 | – | – | – | – | γ 0.8 | k_v 0.25; ellipse a 0.55, φ 45° | round caps, end taper 6 px |
-| calligraphy | outline nib (§2.1) | W 10–22, t 1.5 | 1.0 | – | – | – | – | W = W_max(0.55 + 0.45c) | φ 40°, fixation 1 | flat caps, corner fans off |
-| marker | outline pf (round) / nib (chisel) | 14–18 round; chisel W 20 t 7 | 0.9 (flat) | – | – | – | – | γ 1.0, thinning ≈ 0.1 | none | round caps / chisel φ 30° |
+| fountain | outline pf + ellipse nib (§2.2) | 1.5–10 (0.11–0.75) | 1.0 | – | – | – | – | γ 1.0 (linear) | k_v 0.15; ellipse a 0.55, φ 45° | round caps, end taper 6 px |
+| calligraphy | outline nib (§2.1) | W 10–22, t 1.5 | 1.0 | – | – | – | – | W = lerp(10, 22, c), γ 0.75 | φ 40°, fixation 1 | flat caps, corner fans off |
+| marker | outline pf (round) | 14–18 | 0.9 (flat) | – | – | – | – | γ 1.0, thinning 0.125 | none | round caps, no taper |
 | highlighter | outline nib | W 26, t 8 | 0.35, multiply | – | – | – | – | pressure off | none | φ 90°, flat caps, under-ink band |
-| pencil | stamp | 3–6 (0.22–0.45) | 0.9 | 0.35 | 0.10 | 0.6 | 0 | size g 0.5, k_flow 0.85 (pressure mostly → darkness) | tilt §3.8 (A 4, K 3, h_side 0.3); k_v 0.15 on alpha | grain canvas, strength 0.7, w 0.15, scale 1 |
-| crayon | stamp | 8–14 | 1.0 | 0.6 | 0.08 | 0.8 | 0.05 | k_flow 0.5, size g 0.7 | tilt K 1.5 | grain coarse scale 3, strength 0.9, w 0.05 |
-| airbrush | stamp | 30–90 | 1.0 (build-up) | 0.05 | 0.05 | 0.05 | 0 | pressure → flow (k_flow 1), size g 0.3 | none | dabs_per_second 60 |
-| spray | stamp (particles) | area 40–80; particle 1–2.5 | 1.0 | 0.6/particle | 0.25 | 1.0 | uniform disk | N_max 12, N = round(12·c) | none | Gaussian option |
-| soft | stamp | 12–48 | 1.0 | 0.15 | 0.08 | 0.25 | 0 | size g 1.0, k_flow 0.6 | none | wash mode |
+| pencil | stamp | 3–6 (0.22–0.45) | 0.95 | 1.0 | 0.08 | 0.8 | 0 | size g 0.5, k_flow 0.4 | tilt §3.8 (A 4, K 3, h_side 0.3); k_v 0.1 on alpha | grain canvas, strength 0.7, w 0.15, scale 1 |
+| crayon | stamp | 8–14 | 1.0 | 0.8 | 0.06 | 0.9 | 0.03 | k_flow 0.3, size g 0.7 | tilt K 1.5 (side h 0.8) | grain scale 1, strength 0.85, w 0.25 |
+| airbrush | stamp | 16–60 | 1.0 (build-up) | 0.45 | 0.05 | 0.4 | 0 | k_flow 0.7, size g 0.7 | none | dabs_per_second 60 |
+| spray | stamp (particles) | area 24–56; particle 1–2.5 | 1.0 | 1.0 | 0.15 | 1.0 | burst | N = round(36·c), c = curve; size g 1.0 | none | Gaussian disk (σ = R/2, clipped to R) |
+| soft | stamp | 12–48 | 1.0 | 0.6 | 0.06 | 0.45 | 0 | size g 1.0, k_flow 0.5 | none | – |
 | solid | stamp | 6–24 | 1.0 | 1.0 | 0.06 | 0.95 | 0 | size g 1.0 | none | 1 px min fade |
-| shading | stamp | 40–160 | 0.3 cap | 0.06 | 0.10 | 0.1 | 0 | k_flow 0.8, size g 0.5 | tilt K 2 (no aspect), A 1.5 | grain strength 0.3 |
+| shading | stamp | 16–56 | 0.75 | 0.7 | 0.08 | 0.45 | 0 | size g 0.6, k_flow 0.6 | tilt from 20°: K 2.5, A 1.8, side h 0.3, side alpha 1.0 | graphite; grain strength 0.4, w 0.3, scale 1 |
 
 Tuning notes from `docs/research/pen-recordings.md`:
 - **Dots** (09-dots: 45 strokes, ~30 frames each, p50 2315): outline `n == 1` dot path and stamp "first dab at s=0"
