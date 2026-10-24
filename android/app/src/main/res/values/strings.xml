@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Penwise</string>
+    <string name="tool_undo">Undo</string>
+    <string name="tool_clear_page">Clear</string>
+    <string name="tool_preset_color">Auto</string>
+    <string name="tool_size_value">%1$.1f×</string>
 </resources>

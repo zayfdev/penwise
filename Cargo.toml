@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/penwise-core", "crates/penwise-fixtures"]
+members = ["crates/penwise-core", "crates/penwise-ffi", "crates/penwise-fixtures"]
 
 [workspace.package]
 version = "0.1.0"
@@ -24,6 +24,8 @@ wasm-bindgen-test = "0.3.79"
 # Dev tool only (`penwise-fixtures`): gzip input and CLI error reporting for the fixture converter.
 anyhow = "1"
 flate2 = "1.1"
+# Hand-written JNI for penwise-ffi (android-stack.md §3).
+jni = "0.22.4"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

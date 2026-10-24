@@ -1,6 +1,9 @@
 # Overrides on top of detekt's default config (buildUponDefaultConfig = true).
 # Limits mirror the hard limits in AGENTS.md.
 complexity:
+  # Framework callbacks (SurfaceHolder.Callback, View lifecycle) are mandatory overrides, not design choices.
+  TooManyFunctions:
+    ignoreOverridden: true
   LongMethod:
     allowedLines: 80
   LongParameterList:
