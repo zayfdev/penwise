@@ -378,6 +378,41 @@ impl Library {
         Ok((notebook, index))
     }
 
+    /// Renames a notebook.
+    pub async fn rename_notebook(&self, id: &str, title: String) -> Result<Meta, String> {
+        check_title(&title)?;
+        let mut meta = self.meta.write().await;
+        let notebook = meta
+            .notebook_mut(id)
+            .ok_or_else(|| format!("unknown notebook {id}"))?;
+        notebook.title = title;
+        let index = meta.clone();
+        drop(meta);
+        self.save_meta(&index).await;
+        self.fan_out(None, meta_frame_of(&index));
+        Ok(index)
+    }
+
+    /// Deletes an empty notebook; refuses the last notebook and any notebook that still holds pages.
+    pub async fn delete_notebook(&self, id: &str) -> Result<Meta, String> {
+        let mut meta = self.meta.write().await;
+        if meta.notebooks.len() <= 1 {
+            return Err("cannot delete the last notebook".to_owned());
+        }
+        let Some(notebook) = meta.notebooks.iter().find(|notebook| notebook.id == id) else {
+            return Err(format!("unknown notebook {id}"));
+        };
+        if !notebook.pages.is_empty() {
+            return Err("move or delete the notebook's pages first".to_owned());
+        }
+        meta.notebooks.retain(|notebook| notebook.id != id);
+        let index = meta.clone();
+        drop(meta);
+        self.save_meta(&index).await;
+        self.fan_out(None, meta_frame_of(&index));
+        Ok(index)
+    }
+
     async fn has_page(&self, id: &str) -> bool {
         self.meta.read().await.page(id).is_some()
     }

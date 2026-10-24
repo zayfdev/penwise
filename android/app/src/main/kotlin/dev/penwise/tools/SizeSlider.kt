@@ -12,6 +12,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 
 private const val SLIDER_WIDTH_DP = 160
@@ -37,6 +39,7 @@ private fun sliderValue(
 internal fun SizeSlider(
     value: Float,
     range: ClosedFloatingPointRange<Float>,
+    label: String,
     onChange: (Float) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -44,6 +47,7 @@ internal fun SizeSlider(
     Canvas(
         modifier
             .size(SLIDER_WIDTH_DP.dp, SLIDER_HEIGHT_DP.dp)
+            .semantics { contentDescription = label }
             .pointerInput(range) {
                 val inset = THUMB_DP.dp.toPx()
                 val width = size.width.toFloat()

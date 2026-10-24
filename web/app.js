@@ -65,6 +65,16 @@ function pageById(id) {
 
 const GLYPHS = { blank: "▢", ruled: "☰", grid: "▦", dots: "⋯" };
 
+/** Small inline icons; the sidebar stayed text-heavy otherwise. */
+const ICONS = {
+  rename:
+    '<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path d="M4 20h4l10-10-4-4L4 16v4Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="m14 6 4 4" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>',
+  remove:
+    '<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path d="M5 7h14M10 5h4M7 9v10h10V9M10 12v4M14 12v4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
+  page:
+    '<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path d="M6 4h9l3 3v13H6z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>',
+};
+
 /** Rebuilds the sidebar list, keeping it in sync with `meta`. */
 function renderSidebar() {
   library.textContent = "";
@@ -72,7 +82,23 @@ function renderSidebar() {
   for (const notebook of meta.notebooks) {
     const heading = document.createElement("div");
     heading.className = "notebook";
-    heading.textContent = notebook.title;
+    const name = document.createElement("span");
+    name.className = "name";
+    name.textContent = notebook.title;
+    const addHere = document.createElement("button");
+    addHere.innerHTML = ICONS.page;
+    addHere.title = `New page in ${notebook.title}`;
+    addHere.addEventListener("click", () => openNewPageForm(notebook.id));
+    const rename = document.createElement("button");
+    rename.innerHTML = ICONS.rename;
+    rename.title = "Rename notebook";
+    rename.addEventListener("click", () => renameNotebook(notebook));
+    const remove = document.createElement("button");
+    remove.innerHTML = ICONS.remove;
+    remove.title = "Delete notebook";
+    remove.disabled = notebook.pages.length > 0 || meta.notebooks.length <= 1;
+    remove.addEventListener("click", () => deleteNotebook(notebook));
+    heading.append(name, addHere, rename, remove);
     library.append(heading);
     for (const page of notebook.pages) {
       const row = document.createElement("div");
@@ -90,15 +116,15 @@ function renderSidebar() {
       const tools = document.createElement("span");
       tools.className = "tools";
       const rename = document.createElement("button");
-      rename.textContent = "✎";
-      rename.title = "Rename";
+      rename.innerHTML = ICONS.rename;
+      rename.title = "Rename page";
       rename.addEventListener("click", (event) => {
         event.stopPropagation();
         renamePage(page);
       });
       const remove = document.createElement("button");
-      remove.textContent = "×";
-      remove.title = "Delete";
+      remove.innerHTML = ICONS.remove;
+      remove.title = "Delete page";
       remove.disabled = totalPages() <= 1;
       remove.addEventListener("click", (event) => {
         event.stopPropagation();
@@ -110,6 +136,28 @@ function renderSidebar() {
       library.append(row);
     }
   }
+}
+
+/** Opens the new-page form, remembered against a notebook so the page lands in it. */
+function openNewPageForm(notebookId) {
+  newPageForm.querySelector('input[name="notebook"]').value = notebookId;
+  newPageForm.classList.add("open");
+  newPageForm.querySelector('input[name="title"]').focus();
+}
+
+function renameNotebook(notebook) {
+  const name = window.prompt("Notebook name", notebook.title);
+  if (!name || name === notebook.title) return;
+  void mutate(`/notebooks/${notebook.id}`, "PATCH", { title: name });
+}
+
+function deleteNotebook(notebook) {
+  if (notebook.pages.length > 0) {
+    status.textContent = "notebook still has pages";
+    return;
+  }
+  if (!window.confirm(`Delete notebook "${notebook.title}"?`)) return;
+  void mutate(`/notebooks/${notebook.id}`, "DELETE");
 }
 
 function totalPages() {
@@ -155,9 +203,11 @@ newPageForm.addEventListener("submit", async (event) => {
   const data = new FormData(newPageForm);
   const title = String(data.get("title") ?? "").trim();
   const template = String(data.get("template") ?? "blank");
+  const notebook = String(data.get("notebook") ?? "");
   const payload = {
     background: template === "infinite" ? "blank" : template,
     kind: template === "infinite" ? { t: "infinite" } : undefined,
+    notebook: notebook || undefined,
   };
   if (title) payload.title = title;
   const result = await mutate("/pages", "POST", payload);
@@ -167,7 +217,13 @@ newPageForm.addEventListener("submit", async (event) => {
 });
 
 document.getElementById("add-page").addEventListener("click", () => {
-  newPageForm.classList.toggle("open");
+  openNewPageForm(activePage ? (meta?.notebooks.find((n) => n.pages.some((p) => p.id === activePage.id))?.id ?? "") : "");
+});
+
+document.getElementById("add-notebook").addEventListener("click", async () => {
+  const title = window.prompt("Notebook name", `Notebook ${(meta?.notebooks.length ?? 0) + 1}`);
+  if (!title) return;
+  await mutate("/notebooks", "POST", { title });
 });
 
 // ---------------------------------------------------------------- page geometry

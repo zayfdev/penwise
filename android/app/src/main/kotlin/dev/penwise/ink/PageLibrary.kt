@@ -58,5 +58,31 @@ class PageLibrary(
     /** Deletes a page on the server. */
     fun deleteRemote(id: String): String? = client().deletePage(id)
 
+    /** Creates a notebook on the server. */
+    fun createNotebookRemote(title: String): String? =
+        client().request("POST", "/notebooks", JSONObject().put("title", title).toString())
+
+    /** Renames a notebook on the server. */
+    fun renameNotebookRemote(
+        id: String,
+        title: String,
+    ): String? = client().request("PATCH", "/notebooks/$id", JSONObject().put("title", title).toString())
+
+    /** Deletes an empty notebook on the server. */
+    fun deleteNotebookRemote(id: String): String? = client().request("DELETE", "/notebooks/$id", null)
+
+    /** A fresh notebook id in the server's shape. */
+    fun newNotebookId(): String =
+        "nb_" +
+            java.util.UUID
+                .randomUUID()
+                .toString()
+                .replace("-", "")
+                .take(ID_DIGITS)
+
+    private companion object {
+        const val ID_DIGITS = 16
+    }
+
     private fun client(): LibraryClient = LibraryClient(settings.endpoints().firstOrNull().orEmpty(), settings.token)
 }

@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -23,9 +22,10 @@ private const val PANEL_COLOR = 0xF2FFFFFF
 private const val PANEL_RADIUS_DP = 14
 private const val PANEL_PAD_DP = 8
 private const val GAP_DP = 6
-private const val SECTION_GAP_DP = 16
+private const val SECTION_GAP_DP = 14
+private const val RGB_MASK = 0xFFFFFF
 
-/** Compact floating toolbar: brushes, colors, size, undo and clear. */
+/** Floating toolbar: brush previews, colours, size, shapes, eraser, undo and page actions — all as icons. */
 @Composable
 fun Toolbar(
     state: ToolState,
@@ -33,6 +33,7 @@ fun Toolbar(
     onRedo: () -> Unit,
     onClear: () -> Unit,
     onSync: () -> Unit,
+    onHome: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -48,23 +49,62 @@ fun Toolbar(
         ) {
             ColorRow(state)
             SizeControl(state)
-            ToolChip(stringResource(R.string.tool_eraser), selected = state.eraserMode, onClick = state::toggleEraser)
-            if (state.eraserMode) {
-                ToolChip(
-                    stringResource(R.string.tool_precise),
-                    selected = state.preciseErase,
-                    onClick = state::togglePreciseErase,
+            ToolGroup {
+                GlyphChip(
+                    glyph = Glyph.Eraser,
+                    label = stringResource(R.string.tool_eraser),
+                    selected = state.eraserMode,
+                    onClick = state::toggleEraser,
                 )
+                if (state.eraserMode) {
+                    GlyphChip(
+                        glyph = Glyph.PreciseEraser,
+                        label = stringResource(R.string.tool_precise),
+                        selected = state.preciseErase,
+                        onClick = state::togglePreciseErase,
+                    )
+                }
             }
             ShapeChips(state)
-            ToolChip(stringResource(R.string.tool_undo), selected = false, onClick = onUndo)
-            ToolChip(stringResource(R.string.tool_redo), selected = false, onClick = onRedo)
-            ToolChip(stringResource(R.string.tool_clear_page), selected = false, onClick = onClear)
-            ToolChip(stringResource(R.string.tool_sync), selected = false, onClick = onSync)
+            ToolGroup {
+                GlyphChip(
+                    glyph = Glyph.Undo,
+                    label = stringResource(R.string.tool_undo),
+                    selected = false,
+                    onClick = onUndo,
+                )
+                GlyphChip(
+                    glyph = Glyph.Redo,
+                    label = stringResource(R.string.tool_redo),
+                    selected = false,
+                    onClick = onRedo,
+                )
+                GlyphChip(
+                    glyph = Glyph.Trash,
+                    label = stringResource(R.string.tool_clear_page),
+                    selected = false,
+                    onClick = onClear,
+                )
+            }
+            ToolGroup {
+                GlyphChip(
+                    glyph = Glyph.Sync,
+                    label = stringResource(R.string.tool_sync),
+                    selected = false,
+                    onClick = onSync,
+                )
+                GlyphChip(
+                    glyph = Glyph.Home,
+                    label = stringResource(R.string.tool_home),
+                    selected = false,
+                    onClick = onHome,
+                )
+            }
         }
     }
 }
 
+/** One horizontally scrollable row of brush previews; the preview is drawn by the brush itself. */
 @Composable
 private fun BrushRow(state: ToolState) {
     Row(
@@ -72,26 +112,45 @@ private fun BrushRow(state: ToolState) {
         horizontalArrangement = Arrangement.spacedBy(GAP_DP.dp),
     ) {
         InkPresets.names.forEachIndexed { index, name ->
-            ToolChip(name, selected = index == state.presetIndex, onClick = { state.selectPreset(index) })
+            BrushIcon(
+                preset = index,
+                argb = state.presetArgb(index),
+                label = name,
+                selected = index == state.presetIndex,
+                onClick = { state.selectPreset(index) },
+            )
         }
     }
 }
 
 @Composable
 private fun ShapeChips(state: ToolState) {
-    val labels =
+    val shapes =
         listOf(
-            ShapeMode.Line to R.string.shape_line,
-            ShapeMode.Rect to R.string.shape_rect,
-            ShapeMode.Ellipse to R.string.shape_ellipse,
-            ShapeMode.Arrow to R.string.shape_arrow,
+            Triple(ShapeMode.Line, Glyph.Line, R.string.shape_line),
+            Triple(ShapeMode.Rect, Glyph.Rect, R.string.shape_rect),
+            Triple(ShapeMode.Ellipse, Glyph.Ellipse, R.string.shape_ellipse),
+            Triple(ShapeMode.Arrow, Glyph.Arrow, R.string.shape_arrow),
         )
-    labels.forEach { (mode, label) ->
-        ToolChip(
-            stringResource(label),
-            selected = state.shapeMode == mode,
-            onClick = { state.toggleShape(mode) },
-        )
+    ToolGroup {
+        shapes.forEach { (mode, glyph, label) ->
+            GlyphChip(
+                glyph = glyph,
+                label = stringResource(label),
+                selected = state.shapeMode == mode,
+                onClick = { state.toggleShape(mode) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun ToolGroup(content: @Composable () -> Unit) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        content()
     }
 }
 
@@ -101,29 +160,32 @@ private fun ColorRow(state: ToolState) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(GAP_DP.dp),
     ) {
-        ToolChip(
-            stringResource(R.string.tool_preset_color),
+        ColorSwatch(
+            state.presetArgb(),
             selected = state.swatchRgb == null,
             onClick = { state.selectSwatch(null) },
+            label = stringResource(R.string.tool_preset_color),
         )
-        ColorSwatch(state.presetArgb(), selected = state.swatchRgb == null, onClick = { state.selectSwatch(null) })
         Palette.swatches.forEach { rgb ->
-            ColorSwatch(rgb, selected = state.swatchRgb == rgb, onClick = { state.selectSwatch(rgb) })
+            ColorSwatch(
+                rgb,
+                selected = state.swatchRgb == rgb,
+                onClick = { state.selectSwatch(rgb) },
+                label = rgb.toHexColor(),
+            )
         }
     }
 }
 
+/** Screen-reader name for a swatch. */
+private fun Int.toHexColor(): String = "#%06X".format(this and RGB_MASK)
+
 @Composable
 private fun SizeControl(state: ToolState) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(GAP_DP.dp),
-    ) {
-        SizeSlider(
-            value = state.sizeScale,
-            range = ToolState.SIZE_MIN..ToolState.SIZE_MAX,
-            onChange = state::changeSize,
-        )
-        BasicText(stringResource(R.string.tool_size_value, state.sizeScale))
-    }
+    SizeSlider(
+        value = state.sizeScale,
+        range = ToolState.SIZE_MIN..ToolState.SIZE_MAX,
+        label = stringResource(R.string.tool_size_value, state.sizeScale),
+        onChange = state::changeSize,
+    )
 }

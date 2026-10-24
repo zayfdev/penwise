@@ -16,15 +16,25 @@
         display: flex; align-items: center; justify-content: space-between;
         padding: 10px 12px; font-weight: 600; border-bottom: 1px solid #e3e3e6;
       }
-      #add-page {
-        border: 1px solid #cfcfd4; background: #fff; border-radius: 6px;
-        width: 24px; height: 24px; line-height: 1; cursor: pointer; font-size: 16px;
+      .header-actions { display: flex; gap: 4px; }
+      .header-actions button {
+        display: grid; place-items: center; width: 26px; height: 26px; padding: 0;
+        border: 1px solid #cfcfd4; background: #fff; border-radius: 6px; cursor: pointer; color: #3a3c42;
       }
+      .header-actions button:hover { background: #eceef2; }
       #library { flex: 1; overflow-y: auto; padding: 6px 0; }
       .notebook {
-        padding: 10px 12px 4px; font-size: 11px; letter-spacing: 0.04em;
-        text-transform: uppercase; color: #7a7a82;
+        display: flex; align-items: center; gap: 4px; padding: 10px 12px 4px;
+        font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: #7a7a82;
       }
+      .notebook .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .notebook button {
+        display: none; border: none; background: transparent; cursor: pointer;
+        color: #7a7a82; padding: 0 2px; border-radius: 4px; line-height: 1;
+      }
+      .notebook:hover button { display: grid; place-items: center; }
+      .notebook button:hover { background: #dcdce2; color: #222; }
+      .notebook button svg { display: block; }
       .page {
         display: flex; align-items: center; gap: 8px; padding: 6px 12px;
         cursor: pointer; border-left: 3px solid transparent;
@@ -36,9 +46,10 @@
       .page .tools { display: none; gap: 2px; }
       .page:hover .tools, .page.active .tools { display: flex; }
       .page .tools button {
-        border: none; background: transparent; cursor: pointer; color: #6a6a73;
-        font-size: 13px; padding: 0 3px; border-radius: 4px;
+        display: grid; place-items: center; border: none; background: transparent;
+        cursor: pointer; color: #6a6a73; padding: 1px 3px; border-radius: 4px;
       }
+      .page .tools button svg { display: block; }
       .page .tools button:hover { background: #d8d8de; color: #222; }
       .page .tools button:disabled { opacity: 0.3; cursor: default; }
       #new-page {
@@ -70,10 +81,23 @@
     <aside id="sidebar">
       <header>
         <span>Penwise</span>
-        <button id="add-page" title="New page">＋</button>
+        <span class="header-actions">
+          <button id="add-notebook" title="New notebook" aria-label="New notebook">
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+              <path d="M6 4h10a2 2 0 0 1 2 2v14H8a2 2 0 0 1-2-2V4Zm0 0v16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+              <path d="M15 9v6M12 12h6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+            </svg>
+          </button>
+          <button id="add-page" title="New page" aria-label="New page">
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+              <path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
+            </svg>
+          </button>
+        </span>
       </header>
       <div id="library"></div>
       <form id="new-page">
+        <input type="hidden" name="notebook" value="" />
         <input type="text" name="title" placeholder="Page title (optional)" />
         <div class="row">
           <label><input type="radio" name="template" value="blank" checked /> Blank</label>

@@ -5,6 +5,7 @@
     <string name="tool_redo">Redo</string>
     <string name="tool_precise">Precise</string>
     <string name="tool_eraser">Eraser</string>
+    <string name="tool_home">Home</string>
     <string name="tool_sync">Sync</string>
     <string name="sync_url_label">PC server (ws://…/ws)</string>
     <string name="sync_token_label">Access token</string>

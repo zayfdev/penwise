@@ -236,10 +236,11 @@ class PageViewModel(
         }
     }
 
-    /** Creates a page locally, tells the server, and shows it. */
+    /** Creates a page locally, tells the server, and shows it. `notebook` defaults to the active page's. */
     fun newPage(
         title: String,
         template: PageTemplate,
+        notebook: String? = null,
     ) {
         val list = _pages.value
         val page =
@@ -249,7 +250,7 @@ class PageViewModel(
                 infinite = template.infinite,
                 background = template.background,
             )
-        val withPage = list.withPage(page)
+        val withPage = list.withPage(page, notebook)
         _pages.value = withPage.copy(active = page.id)
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
@@ -274,6 +275,45 @@ class PageViewModel(
                 library.save(list)
                 library.renameRemote(id, renamed.title)
             }
+        }
+    }
+
+    /** Creates a notebook locally and on the server. */
+    fun createNotebook(title: String) {
+        val trimmed = title.trim().ifBlank { "Notebook ${_pages.value.books.size + 1}" }
+        val book = PageBook(library.newNotebookId(), trimmed, emptyList())
+        val list = _pages.value.withNotebook(book.id, book.title)
+        _pages.value = list
+        viewModelScope.launch(Dispatchers.IO) {
+            library.save(list)
+            library.createNotebookRemote(book.title)
+        }
+    }
+
+    /** Renames a notebook. */
+    fun renameNotebook(
+        id: String,
+        title: String,
+    ) {
+        val trimmed = title.trim()
+        if (trimmed.isEmpty()) return
+        val list = _pages.value.withRenamedNotebook(id, trimmed)
+        _pages.value = list
+        viewModelScope.launch(Dispatchers.IO) {
+            library.save(list)
+            library.renameNotebookRemote(id, trimmed)
+        }
+    }
+
+    /** Deletes an empty notebook (the last one and non-empty ones are refused). */
+    fun deleteNotebook(id: String) {
+        val before = _pages.value
+        val after = before.withoutNotebook(id)
+        if (after.books.size == before.books.size) return
+        _pages.value = after
+        viewModelScope.launch(Dispatchers.IO) {
+            library.save(after)
+            library.deleteNotebookRemote(id)
         }
     }
 

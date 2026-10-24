@@ -60,6 +60,8 @@ canvas shadow.
 | `PATCH /pages/<id>` | `{"title"?, "background"?}` | `{"page":{…},"meta":{…}}` |
 | `DELETE /pages/<id>` | — | `{"ok":true,"meta":{…}}`; `400` when it is the last page |
 | `POST /notebooks` | `{"title"}` | `{"notebook":{…},"meta":{…}}` |
+| `PATCH /notebooks/<id>` | `{"title"}` | `{"ok":true,"meta":{…}}` |
+| `DELETE /notebooks/<id>` | — | `{"ok":true,"meta":{…}}`; `400` when it holds pages or is the last one |
 | `POST /pages/<id>/select` | — | `{"active":"pg_…"}` |
 | `GET /page?page=<id>` | — | `{"version":1,"strokes":[…]}` for that page |
 | `GET /page.png?page=<id>&scale=<n>` | — | PNG of that page; `page` defaults to active |
@@ -129,6 +131,11 @@ Frames without a page are applied to the sender's selected page (back-compat wit
 
 ## App
 
+- **Home screen** first: notebooks with their pages as cards (glyph + name + template), `＋` for a new page
+  inside each notebook, a pencil to rename (and, when a notebook is empty, delete) it, `＋ New notebook`, and the
+  sync settings. Opening a card enters the canvas; the home icon (or system back) returns.
+- Toolbar is icon-only: the 13 brushes are previews drawn by the engine itself, colours are swatches, and the
+  eraser, precise-erase, shapes, undo, redo, clear, sync and home are path icons with screen-reader labels.
 - Page strip above the canvas: one chip per page in the active notebook plus `＋` (new page).
 - New page dialog: title field, template picker (Blank / Ruled / Grid / Infinite), Create.
 - Selecting a chip swaps the local store, clears undo history, sends `select`, repaints.

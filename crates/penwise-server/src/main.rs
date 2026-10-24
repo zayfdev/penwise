@@ -48,6 +48,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/pages/{id}", patch(page_update).delete(page_remove))
         .route("/pages/{id}/select", post(page_select))
         .route("/notebooks", post(notebook_create))
+        .route(
+            "/notebooks/{id}",
+            patch(notebook_update).delete(notebook_remove),
+        )
         .route("/page", get(page_strokes))
         .route("/page.png", get(page_png))
         .route("/health", get(health))
@@ -239,6 +243,44 @@ async fn notebook_create(
         Ok((notebook, meta)) => {
             axum::Json(serde_json::json!({ "notebook": notebook, "meta": meta })).into_response()
         }
+        Err(message) => (axum::http::StatusCode::BAD_REQUEST, message).into_response(),
+    }
+}
+
+/// `PATCH /notebooks/<id>` — rename.
+async fn notebook_update(
+    State(app): State<AppState>,
+    Path(id): Path<String>,
+    Query(auth_query): Query<AuthQuery>,
+    headers: axum::http::HeaderMap,
+    axum::Json(body): axum::Json<serde_json::Value>,
+) -> Response {
+    if !auth::authorized(&app.token, auth_query.token.as_deref(), &headers) {
+        return auth::deny();
+    }
+    let title = body
+        .get("title")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    match app.library.rename_notebook(&id, title).await {
+        Ok(meta) => axum::Json(serde_json::json!({ "ok": true, "meta": meta })).into_response(),
+        Err(message) => (axum::http::StatusCode::BAD_REQUEST, message).into_response(),
+    }
+}
+
+/// `DELETE /notebooks/<id>` — only when it is empty.
+async fn notebook_remove(
+    State(app): State<AppState>,
+    Path(id): Path<String>,
+    Query(auth_query): Query<AuthQuery>,
+    headers: axum::http::HeaderMap,
+) -> Response {
+    if !auth::authorized(&app.token, auth_query.token.as_deref(), &headers) {
+        return auth::deny();
+    }
+    match app.library.delete_notebook(&id).await {
+        Ok(meta) => axum::Json(serde_json::json!({ "ok": true, "meta": meta })).into_response(),
         Err(message) => (axum::http::StatusCode::BAD_REQUEST, message).into_response(),
     }
 }

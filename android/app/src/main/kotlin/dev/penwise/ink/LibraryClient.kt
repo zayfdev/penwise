@@ -17,21 +17,28 @@ class LibraryClient(
     private val token: String,
 ) {
     /** `POST /pages`; returns the response body, or `null` on any failure. */
-    fun createPage(body: String): String? = request("POST", "/pages", body)
+    fun createPage(body: String): String? = send("POST", "/pages", body)
 
     /** `PATCH /pages/<id>`. */
     fun updatePage(
         id: String,
         body: String,
-    ): String? = request("PATCH", "/pages/$id", body)
+    ): String? = send("PATCH", "/pages/$id", body)
 
     /** `DELETE /pages/<id>`. */
-    fun deletePage(id: String): String? = request("DELETE", "/pages/$id", null)
+    fun deletePage(id: String): String? = send("DELETE", "/pages/$id", null)
 
     /** The library index, or `null` when the server cannot be reached. */
-    fun pages(): String? = request("GET", "/pages", null)
+    fun pages(): String? = send("GET", "/pages", null)
 
-    private fun request(
+    /** One library call; `null` on any failure. */
+    fun request(
+        method: String,
+        path: String,
+        body: String?,
+    ): String? = send(method, path, body)
+
+    private fun send(
         method: String,
         path: String,
         body: String?,

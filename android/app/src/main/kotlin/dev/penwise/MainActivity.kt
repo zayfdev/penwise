@@ -2,6 +2,7 @@ package dev.penwise
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -19,7 +21,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import dev.penwise.home.HomeActions
+import dev.penwise.home.HomeScreen
 import dev.penwise.ink.InkCanvas
+import dev.penwise.ink.PageList
 import dev.penwise.ink.PageStrip
 import dev.penwise.ink.PageViewModel
 import dev.penwise.tools.SyncDialog
@@ -33,12 +38,12 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        val store = page.store
-        val tools = page.tools
         page.loadPage()
         setContent {
-            var showSync by remember { mutableStateOf(false) }
             val pages by page.pages.collectAsState()
+            var showSync by remember { mutableStateOf(false) }
+            var openPage by remember { mutableStateOf<String?>(null) }
+
             if (showSync) {
                 SyncDialog(
                     initialUrl = page.syncUrl,
@@ -50,34 +55,79 @@ class MainActivity : ComponentActivity() {
                     },
                 )
             }
-            Box(modifier = Modifier.fillMaxSize()) {
-                InkCanvas(store = store, brushes = tools, liveOut = page.liveOut, modifier = Modifier.fillMaxSize())
-                Column(
-                    modifier =
-                        Modifier
-                            .align(Alignment.TopCenter)
-                            .safeDrawingPadding()
-                            .padding(TOOLBAR_MARGIN_DP.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(TOOLBAR_MARGIN_DP.dp),
-                ) {
-                    Toolbar(
-                        state = tools,
-                        onUndo = store::undo,
-                        onRedo = store::redo,
-                        onClear = store::clear,
-                        onSync = { showSync = true },
-                    )
-                    PageStrip(
-                        pages = pages,
-                        activeId = pages.active,
-                        onSelect = page::selectPage,
-                        onNew = page::newPage,
-                        onRename = page::renamePage,
-                        onDelete = page::deletePage,
+
+            val actions =
+                remember(pages.active) {
+                    HomeActions(
+                        openPage = { id ->
+                            page.selectPage(id)
+                            openPage = id
+                        },
+                        newPage = { title, template, notebook ->
+                            page.newPage(title, template, notebook)
+                            openPage = page.activePageId
+                        },
+                        newNotebook = page::createNotebook,
+                        renameNotebook = page::renameNotebook,
+                        deleteNotebook = page::deleteNotebook,
+                        renamePage = page::renamePage,
+                        deletePage = page::deletePage,
+                        sync = { showSync = true },
                     )
                 }
+
+            BackHandler(enabled = openPage != null) { openPage = null }
+
+            if (openPage == null) {
+                HomeScreen(pages = pages, actions = actions, modifier = Modifier.fillMaxSize())
+            } else {
+                CanvasScreen(
+                    pages = pages,
+                    page = page,
+                    onHome = { openPage = null },
+                    onSync = { showSync = true },
+                )
             }
+        }
+    }
+}
+
+@Composable
+private fun CanvasScreen(
+    pages: PageList,
+    page: PageViewModel,
+    onHome: () -> Unit,
+    onSync: () -> Unit,
+) {
+    val store = page.store
+    val tools = page.tools
+    Box(modifier = Modifier.fillMaxSize()) {
+        InkCanvas(store = store, brushes = tools, liveOut = page.liveOut, modifier = Modifier.fillMaxSize())
+        Column(
+            modifier =
+                Modifier
+                    .align(Alignment.TopCenter)
+                    .safeDrawingPadding()
+                    .padding(TOOLBAR_MARGIN_DP.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(TOOLBAR_MARGIN_DP.dp),
+        ) {
+            Toolbar(
+                state = tools,
+                onUndo = store::undo,
+                onRedo = store::redo,
+                onClear = store::clear,
+                onSync = onSync,
+                onHome = onHome,
+            )
+            PageStrip(
+                pages = pages,
+                activeId = pages.active,
+                onSelect = page::selectPage,
+                onNew = { title, template -> page.newPage(title, template) },
+                onRename = page::renamePage,
+                onDelete = page::deletePage,
+            )
         }
     }
 }

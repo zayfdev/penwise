@@ -15,6 +15,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -60,10 +62,12 @@ internal fun ColorSwatch(
     selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    label: String = "",
 ) {
     Box(
         modifier
             .size(SWATCH_DP.dp)
+            .semantics { if (label.isNotEmpty()) contentDescription = label }
             .clip(CircleShape)
             .background(Color(argb))
             .border(

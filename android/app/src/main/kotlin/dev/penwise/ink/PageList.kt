@@ -72,6 +72,25 @@ data class PageList(
         return PageList(active = if (active == id) survivor else active, books = next)
     }
 
+    /** A copy with a new (empty) notebook appended. */
+    fun withNotebook(
+        id: String,
+        title: String,
+    ): PageList = copy(books = books + PageBook(id, title, emptyList()))
+
+    /** A copy with `id`'s title changed. */
+    fun withRenamedNotebook(
+        id: String,
+        title: String,
+    ): PageList = copy(books = books.map { if (it.id == id) it.copy(title = title) else it })
+
+    /** A copy without an empty notebook; returns the receiver when it has pages or is the last one. */
+    fun withoutNotebook(id: String): PageList {
+        val target = books.firstOrNull { it.id == id } ?: return this
+        if (target.pages.isNotEmpty() || books.size <= 1) return this
+        return copy(books = books.filterNot { it.id == id })
+    }
+
     /** A copy with `page` replaced by [changed] (title or background edits). */
     fun withUpdated(changed: PageMeta): PageList =
         copy(

@@ -279,6 +279,44 @@ async fn a_client_supplied_id_is_kept_and_is_idempotent() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[tokio::test]
+async fn notebooks_can_be_created_renamed_and_emptied() {
+    let dir = temp_dir("notebooks");
+    let library = Library::load(dir.clone()).await;
+    let (book, meta) = library.create_notebook("Recipes".to_owned()).await.unwrap();
+    assert_eq!(2, meta.notebooks.len());
+    assert!(book.pages.is_empty());
+    let meta = library
+        .rename_notebook(&book.id, "Recipes 2".to_owned())
+        .await
+        .unwrap();
+    assert!(meta.notebooks.iter().any(|n| n.title == "Recipes 2"));
+    let page = library
+        .create_page(NewPage {
+            notebook: Some(book.id.clone()),
+            ..NewPage::default()
+        })
+        .await
+        .unwrap();
+    assert!(
+        library.delete_notebook(&book.id).await.is_err(),
+        "not empty"
+    );
+    library.delete_page(&page.id).await.unwrap();
+    let meta = library.delete_notebook(&book.id).await.unwrap();
+    assert_eq!(1, meta.notebooks.len());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn the_last_notebook_cannot_be_deleted() {
+    let dir = temp_dir("last-notebook");
+    let library = Library::load(dir.clone()).await;
+    let only = library.meta().await.notebooks[0].id.clone();
+    assert!(library.delete_notebook(&only).await.is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn titles_are_bounded() {
     assert!(check_title("ok").is_ok());
