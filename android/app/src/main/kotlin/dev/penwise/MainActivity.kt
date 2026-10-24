@@ -46,7 +46,7 @@ class MainActivity : ComponentActivity() {
                 )
             }
             Box(modifier = Modifier.fillMaxSize()) {
-                InkCanvas(store = store, brushes = tools, modifier = Modifier.fillMaxSize())
+                InkCanvas(store = store, brushes = tools, liveOut = page.liveOut, modifier = Modifier.fillMaxSize())
                 Toolbar(
                     state = tools,
                     onUndo = store::undo,

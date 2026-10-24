@@ -48,6 +48,11 @@ impl ServerState {
         })
     }
 
+    /// Fans a frame out to every connected client (live previews, end-of-preview markers).
+    pub fn broadcast(&self, frame: String) {
+        let _ = self.tx.send(frame);
+    }
+
     pub fn subscribe(&self) -> broadcast::Receiver<String> {
         self.tx.subscribe()
     }

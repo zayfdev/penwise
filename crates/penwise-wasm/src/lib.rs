@@ -84,6 +84,21 @@ impl Stroke {
     }
 }
 
+/// Builds a whole stroke in one call (finished strokes and live previews both use it).
+#[wasm_bindgen]
+pub fn geometry(
+    preset: u32,
+    seed: u64,
+    argb: u32,
+    scale: f32,
+    samples: &[f32],
+    times: &[i32],
+) -> String {
+    let mut stroke = Stroke::new(preset, seed, argb, scale);
+    stroke.push(samples, times);
+    stroke.finish()
+}
+
 const EMPTY: &str = "{\"stamps\":false,\"outline\":[],\"ends\":[],\"dabs\":[],\"argb\":0,\"opacity\":0,\"multiply\":false,\"points\":0}";
 
 fn params_for(preset: u32, scale: f32) -> BrushParams {

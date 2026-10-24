@@ -36,6 +36,27 @@ class PageViewModel(
         }
     }
 
+    /** Streams the in-progress stroke to the PC mirror. */
+    val liveOut: LiveOut =
+        object : LiveOut {
+            override fun begin(
+                preset: Int,
+                argb: Int,
+                scale: Float,
+                seed: Long,
+            ) = sync.sendLiveBegin(preset, argb, scale, seed)
+
+            override fun samples(
+                samples: FloatArray,
+                times: IntArray,
+                count: Int,
+            ) = sync.sendLiveSamples(samples, times, count)
+
+            override fun end(cancelled: Boolean) {
+                if (cancelled) sync.sendLiveCancel()
+            }
+        }
+
     /** URL shown in the settings dialog. */
     val syncUrl: String get() = settings.displayedUrl()
 

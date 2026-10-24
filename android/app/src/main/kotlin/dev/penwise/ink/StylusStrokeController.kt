@@ -23,6 +23,7 @@ internal class StylusStrokeController(
     private val brushes: BrushSource,
     private val live: LiveStroke,
     private val sink: StrokeSink,
+    private val liveOut: LiveOut? = null,
 ) {
     private val buffer = SampleBuffer()
     private var stroke: InkStroke? = null
@@ -86,6 +87,7 @@ internal class StylusStrokeController(
         startNanos = event.eventTimeNanos
         strokeId++
         live.reset()
+        liveOut?.begin(brush.presetIndex, brush.argb, brush.sizeScale, activeSeed)
         append(event, index)
     }
 
@@ -169,6 +171,7 @@ internal class StylusStrokeController(
         val current = stroke ?: return
         buffer.fill(event, index, startNanos)
         current.push(buffer.samples, buffer.times, buffer.count)
+        liveOut?.samples(buffer.samples, buffer.times, buffer.count)
         if (live.claimFrame()) {
             live.publish(LiveFrame(strokeId, current.snapshot()))
             sink.requestFrontFrame()
@@ -195,6 +198,7 @@ internal class StylusStrokeController(
         current.close()
         saved.attachGeometry(geometry)
         store.add(saved)
+        liveOut?.end(cancelled = false)
         sink.commitStroke()
     }
 
@@ -229,11 +233,13 @@ internal class StylusStrokeController(
         shape.close()
         saved.attachGeometry(geometry)
         store.add(saved)
+        liveOut?.end(cancelled = false)
         sink.commitStroke()
     }
 
     private fun cancel() {
         if (stroke != null) {
+            liveOut?.end(cancelled = true)
             release()
             sink.cancelStroke()
         }

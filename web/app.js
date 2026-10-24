@@ -1,7 +1,7 @@
 // Live mirror of the tablet page. Read-only: the server sends the page on connect, then every new stroke.
 // Geometry comes from the same Rust engine the tablet uses (wasm), so strokes look identical.
 
-import init, { Stroke } from "./pkg/penwise_wasm.js";
+import init, { geometry } from "./pkg/penwise_wasm.js";
 
 const PAGE_WIDTH = 1600;
 const PAGE_HEIGHT = 2560;
@@ -13,6 +13,10 @@ const ctx = canvas.getContext("2d");
 
 /** @type {Array<{json: object, argb: number}>} */
 let strokes = [];
+
+/** In-progress strokes from the tablet, keyed `${session}:${id}`; dropped when the stroke commits. */
+const live = new Map();
+const LIVE_REBUILD_MS = 50;
 
 await init();
 resize();
@@ -73,18 +77,49 @@ class WebSocketClient {
       strokes.push(rebuild(frame.stroke));
       this.setState(`mirroring · ${strokes.length} strokes`, false);
       render();
+    } else if (frame.t === "live" && Array.isArray(frame.samples)) {
+      accumulateLive(frame);
+      render();
+    } else if (frame.t === "live_end") {
+      for (const key of [...live.keys()]) {
+        if (key.startsWith(`${frame.session}:`)) live.delete(key);
+      }
+      render();
     }
   }
 }
 
 /** Rebuilds one stroke's geometry through the wasm engine; malformed strokes are dropped. */
 function rebuild(wire) {
-  const samples = new Float32Array(wire.samples);
-  const times = new Int32Array(wire.times);
-  const stroke = new Stroke(wire.preset, BigInt(wire.seed), wire.argb, wire.scale);
-  stroke.push(samples, times);
-  const json = JSON.parse(stroke.finish());
+  const json = buildJson(wire.preset, wire.seed, wire.argb, wire.scale, wire.samples, wire.times);
   return { json, argb: wire.argb };
+}
+
+/** Runs a stroke through the engine; returns parsed geometry or null when it is not renderable. */
+function buildJson(preset, seed, argb, scale, samples, times) {
+  try {
+    return JSON.parse(geometry(preset, BigInt(seed), argb, scale, new Float32Array(samples), new Int32Array(times)));
+  } catch {
+    return null;
+  }
+}
+
+/** Appends new samples to a live preview and rebuilds its geometry at most every LIVE_REBUILD_MS. */
+function accumulateLive(frame) {
+  const key = `${frame.session}:${frame.id}`;
+  let entry = live.get(key);
+  if (!entry) {
+    if (!frame.first) return; // missed the opening frame: wait for the next stroke
+    entry = { preset: frame.preset, argb: frame.argb, scale: frame.scale, seed: frame.seed, samples: [], times: [], json: null, builtAt: 0 };
+    live.set(key, entry);
+  }
+  entry.samples.push(...frame.samples);
+  entry.times.push(...frame.times);
+  const now = performance.now();
+  if (now - entry.builtAt < LIVE_REBUILD_MS) return;
+  entry.builtAt = now;
+  entry.json = buildJson(entry.preset, entry.seed, entry.argb, entry.scale, entry.samples, entry.times);
+  if (!entry.json) live.delete(key);
 }
 
 function rgba(argb, alpha) {
@@ -106,6 +141,9 @@ function render() {
     for (const stroke of strokes) {
       if (Boolean(stroke.json.multiply) === pass) drawStroke(stroke);
     }
+  }
+  for (const entry of live.values()) {
+    if (entry.json) drawStroke({ json: entry.json, argb: entry.argb });
   }
 }
 

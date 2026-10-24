@@ -32,9 +32,10 @@ class InkSurfaceView
         fun bind(
             store: StrokeStore,
             brushes: BrushSource,
+            liveOut: LiveOut? = null,
         ) {
             this.store = store
-            controller = StylusStrokeController(store, brushes, live, this)
+            controller = StylusStrokeController(store, brushes, live, this, liveOut)
         }
 
         override fun onAttachedToWindow() {

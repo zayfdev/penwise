@@ -10,9 +10,10 @@ fun InkCanvas(
     store: StrokeStore,
     brushes: BrushSource,
     modifier: Modifier = Modifier,
+    liveOut: LiveOut? = null,
 ) {
     AndroidView(
-        factory = { context -> InkSurfaceView(context).apply { bind(store, brushes) } },
+        factory = { context -> InkSurfaceView(context).apply { bind(store, brushes, liveOut) } },
         modifier = modifier,
     )
 }
