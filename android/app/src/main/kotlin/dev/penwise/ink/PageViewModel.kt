@@ -236,12 +236,15 @@ class PageViewModel(
         }
     }
 
-    /** Creates a page locally, tells the server, and shows it. `notebook` defaults to the active page's. */
+    /**
+     * Creates a page locally, tells the server, and switches to it; returns the new page's id so the caller can
+     * navigate immediately. `notebook` defaults to the active page's.
+     */
     fun newPage(
         title: String,
         template: PageTemplate,
         notebook: String? = null,
-    ) {
+    ): String {
         val list = _pages.value
         val page =
             PageMeta(
@@ -250,15 +253,17 @@ class PageViewModel(
                 infinite = template.infinite,
                 background = template.background,
             )
-        val withPage = list.withPage(page, notebook)
-        _pages.value = withPage.copy(active = page.id)
+        // Add the page first, then switch to it: `selectPage` is what saves the page being left, loads the new
+        // (empty) file, clears undo history and tells the server which page this session shows.
+        _pages.value = list.withPage(page, notebook)
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
-                library.save(withPage)
+                library.save(_pages.value)
                 library.createRemote(page)
             }
             selectPage(page.id)
         }
+        return page.id
     }
 
     /** Renames a page locally and on the server. */

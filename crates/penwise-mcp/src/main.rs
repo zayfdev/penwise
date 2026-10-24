@@ -193,6 +193,15 @@ const TOOLS: &str = r##"{
       }
     },
     {
+      "name": "penwise_create_notebook",
+      "description": "Create an empty notebook to group pages.",
+      "inputSchema": {
+        "type": "object",
+        "properties": { "title": { "type": "string" } },
+        "required": ["title"]
+      }
+    },
+    {
       "name": "penwise_switch_page",
       "description": "Make a page the active one (what other tools address by default).",
       "inputSchema": {
@@ -267,6 +276,13 @@ fn call_tool(
             let body = arguments(request).to_string();
             let reply = endpoint
                 .post("/pages", &body)
+                .map_err(|failure| error(-32603, &failure))?;
+            Ok(text_content(&String::from_utf8_lossy(&reply)))
+        }
+        "penwise_create_notebook" => {
+            let body = arguments(request).to_string();
+            let reply = endpoint
+                .post("/notebooks", &body)
                 .map_err(|failure| error(-32603, &failure))?;
             Ok(text_content(&String::from_utf8_lossy(&reply)))
         }

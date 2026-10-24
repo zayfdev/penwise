@@ -32,6 +32,7 @@ Build it with `cargo build -p penwise-mcp` (or `just mcp` to run it by hand).
 | `penwise_clear_agent_marks` | — | `{"removed":N}` — wipes the agent layer, keeps the user's ink |
 | `penwise_list_pages` | — | `{"active":"pg_…","notebooks":[…]}` |
 | `penwise_create_page` | `{title?, background?, kind?, notebook?}` | `{"page":{…},"meta":{…}}` |
+| `penwise_create_notebook` | `{title}` | `{"notebook":{…},"meta":{…}}` |
 | `penwise_switch_page` | `{page}` | `{"active":"pg_…"}` |
 
 The MCP server finds the access token itself: `PENWISE_TOKEN`, else `~/.local/share/penwise/token` (where the

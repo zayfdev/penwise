@@ -64,8 +64,7 @@ class MainActivity : ComponentActivity() {
                             openPage = id
                         },
                         newPage = { title, template, notebook ->
-                            page.newPage(title, template, notebook)
-                            openPage = page.activePageId
+                            openPage = page.newPage(title, template, notebook)
                         },
                         newNotebook = page::createNotebook,
                         renameNotebook = page::renameNotebook,
