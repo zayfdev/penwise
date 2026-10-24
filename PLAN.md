@@ -61,7 +61,7 @@ penwise/
       render.rs          page → PNG via penwise-core
       recognize/         Recognizer trait, worker, ollama backend
       web.rs             serves embedded viewer assets
-    penwise-ffi/       uniffi bindings → Kotlin (types only)
+    penwise-ffi/       hand-written JNI (`jni` crate, MIT/Apache) → Kotlin; batch calls, types only
     penwise-wasm/      wasm-bindgen bindings → TypeScript (types only)
   android/app/src/main/kotlin/dev/penwise/
     ink/  tools/  sync/  pairing/  notebooks/  debug/ (recorder + replay, debug builds only)
@@ -184,7 +184,7 @@ Two brush families in `penwise-core`, both deterministic on every surface:
 |---|---|---|
 | Rust crates | Cargo workspace | libraries + `penwise-server` binary |
 | Browser viewer | `wasm-pack build penwise-wasm` → Vite + TypeScript (bun as runner) | static assets embedded into the server binary (`rust-embed`) |
-| Android app | Gradle wrapper (Kotlin DSL, version catalog); a Gradle task runs `cargo ndk -t arm64-v8a` for `penwise-ffi` before packaging; `uniffi-bindgen` generates Kotlin into `build/generated` (never committed) | debug/release APK, compileSdk 37, targetSdk 36 |
+| Android app | Gradle wrapper (Kotlin DSL, version catalog); a Gradle task runs `cargo ndk -t arm64-v8a` for `penwise-ffi` before packaging; Kotlin side of the JNI bridge is hand-written in `dev.penwise.core` (decision 2026-10-24: uniffi's MPL-2.0 license rejected to keep the license policy permissive) | debug/release APK, compileSdk 37, targetSdk 36 |
 | Release | `just release` | one server binary per OS + one APK |
 
 `just` recipes: `check`, `android`, `install`, `device-check`, `web`, `serve`, `release`. Heavy builds run under `batch`.
@@ -223,7 +223,7 @@ Two brush families in `penwise-core`, both deterministic on every surface:
 | M1 ink engine | stroke/brush rendering methods (perfect-freehand, stamp brushes in open painting apps), `tiny-skia` | `sample`, brush params, `builder` API, outline + stamp output types, codec signatures | (a) smoothing + dynamics, (b) outline brushes, (c) stamp brushes + PRNG + textures, (d) codec, (e) raster + PNG goldens, (f) fixture converter + golden harness + wasm test runner | — |
 | M2 editing engine | vector stroke splitting, flood fill + contour tracing | item kinds, edit API | (a) hit test + lasso + transforms, (b) erasers, (c) fill, (d) shapes + handles, (e) undo model | — |
 | M3 server + web | `rmcp`, axum websockets, mDNS crates, `rust-embed` | `penwise-proto` ops/messages + storage schema | (a) storage + migrations, (b) sync + live deltas, (c) pairing + mDNS + auth, (d) `penwise-wasm` + web viewer | security review |
-| M4 Android | `androidx.graphics` front-buffer, `MotionEventPredictor`, uniffi + Gradle + cargo-ndk, Samsung stylus specifics | `penwise-ffi` API + Gradle Rust build | (a) input + low-latency render, (b) toolbar + brush/color/size UI, (c) eraser/fill/shape/select tools, (d) local store + sync client, (e) pairing/discovery UI, (f) debug recorder/replay + `device-check` | human feel check |
+| M4 Android | `androidx.graphics` front-buffer, `MotionEventPredictor`, `jni` crate + Gradle + cargo-ndk, Samsung stylus specifics | `penwise-ffi` JNI API + Gradle Rust build | (a) input + low-latency render, (b) toolbar + brush/color/size UI, (c) eraser/fill/shape/select tools, (d) local store + sync client, (e) pairing/discovery UI, (f) debug recorder/replay + `device-check` | human feel check |
 | M5 MCP | `rmcp` tool/image result shapes | tool schemas | (a) navigation tools, (b) PNG + text tools, (c) annotate → agent layer on tablet, (d) agent layer on web, (e) MCP e2e test client | security review |
 | M6 recognition | local vision models for handwriting (Ollama) | `Recognizer` trait + text-layer item shape | (a) worker + triggers, (b) Ollama backend + model evaluation on fixtures, (c) tablet scan button + text layer view | human quality check |
 

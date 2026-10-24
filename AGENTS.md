@@ -22,7 +22,7 @@ fails `just check` is not done.
 | Function parameters | 5 | 7 (use a struct) | clippy `too_many_arguments`, detekt `LongParameterList` |
 
 Rust unit tests live in a sibling `tests.rs` (`#[cfg(test)] mod tests;`) or in `tests/`, so they never push a
-source file over the limit. Generated code (`uniffi`, `wasm-bindgen` output) is excluded and never edited by hand.
+source file over the limit. Generated code (`wasm-bindgen` output) is excluded and never edited by hand.
 
 ## Rust
 

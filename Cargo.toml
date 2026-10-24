@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/penwise-core"]
+members = ["crates/penwise-core", "crates/penwise-fixtures"]
 
 [workspace.package]
 version = "0.1.0"
@@ -10,6 +10,15 @@ license = "MIT OR Apache-2.0"
 publish = false
 
 [workspace.dependencies]
+# Pure-Rust musl port; the only transcendental math allowed in penwise-core (determinism).
+libm = "0.2.16"
+thiserror = "2"
+# Server-only raster; enabled through penwise-core's `raster` feature, never on wasm.
+tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd", "png-format"] }
+wasm-bindgen-test = "0.3.79"
+# Dev tool only (`penwise-fixtures`): gzip input and CLI error reporting for the fixture converter.
+anyhow = "1"
+flate2 = "1.1"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -27,3 +36,6 @@ print_stdout = "deny"
 print_stderr = "deny"
 too_many_lines = "deny"
 too_many_arguments = "deny"
+# Geometry code uses conventional math names (x, y, d, r, tilt_x/tilt_y); these pedantic lints fight that.
+similar_names = "allow"
+many_single_char_names = "allow"
