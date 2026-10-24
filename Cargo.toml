@@ -1,6 +1,12 @@
 [workspace]
 resolver = "3"
-members = ["crates/penwise-core", "crates/penwise-fixtures"]
+members = [
+    "crates/penwise-core",
+    "crates/penwise-fixtures",
+    "crates/penwise-proto",
+    "crates/penwise-server",
+    "crates/penwise-wasm",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -24,6 +30,37 @@ wasm-bindgen-test = "0.3.79"
 # Dev tool only (`penwise-fixtures`): gzip input and CLI error reporting for the fixture converter.
 anyhow = "1"
 flate2 = "1.1"
+
+# --- M3: protocol, server, browser viewer (docs/research/server-stack.md, docs/contracts/m3-server.md) ---
+# Wire + stored op bodies (postcard 1.x wire format is stable and specified).
+serde = { version = "1.0.229", default-features = false, features = ["std", "derive"] }
+postcard = { version = "1.1.3", default-features = false, features = ["alloc"] }
+# HTTP + WebSocket (`ws`); axum bundles its own tungstenite, never add tokio-tungstenite to the server itself.
+axum = { version = "0.8.9", features = ["ws"] }
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "process", "signal"] }
+tower-http = { version = "0.7.1", features = ["trace", "limit"] }
+futures-util = { version = "0.3.34", default-features = false, features = ["std", "sink"] }
+# Pinned to 0.40: rusqlite_migration 2.6 requires ^0.40, and 0.41 would link a second libsqlite3-sys (`links` clash).
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+rusqlite_migration = "2.6.0"
+# Device tokens and ids: random bytes (getrandom), base64url text, SHA-256 at rest, constant-time compare.
+getrandom = "0.4.3"
+base64 = "0.23.1"
+sha2 = "0.11.1"
+subtle = "2.6.1"
+# LAN discovery (`_penwise._tcp`) and LAN address pick for the QR payload (if-addrs is already an mdns-sd dep).
+mdns-sd = "0.21.6"
+if-addrs = "0.15.0"
+qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
+rust-embed = { version = "8.13.0", features = ["mime-guess"] }
+# `tailscale status --json` and the pairing JSON endpoints.
+serde_json = "1.0.154"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+# Browser bindings (same wasm-bindgen release line as the locked wasm-bindgen-test 0.3.79).
+wasm-bindgen = "0.2.129"
+# Dev only: WebSocket client for penwise-server sync integration tests.
+tokio-tungstenite = "0.30.0"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
