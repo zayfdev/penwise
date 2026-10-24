@@ -1,0 +1,38 @@
+[package]
+name = "penwise-ffi"
+description = "JNI bindings exposing penwise-core's stroke builder to the Android app."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "penwise_ffi"
+crate-type = ["cdylib"]
+
+[dependencies]
+penwise-core = { path = "../penwise-core" }
+jni.workspace = true
+
+# Mirrors [workspace.lints] except `unsafe_code`: JNI needs `#[unsafe(no_mangle)] extern "system"` entry
+# points and the boxed-handle round trip. Only this crate may use unsafe; lib.rs opts in with
+# `#![allow(unsafe_code)]`, every other module stays denied.
+[lints.rust]
+unsafe_code = "deny"
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+too_many_lines = "deny"
+too_many_arguments = "deny"
+similar_names = "allow"
+many_single_char_names = "allow"

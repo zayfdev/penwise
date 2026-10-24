@@ -1,0 +1,26 @@
+# Overrides on top of detekt's default config (buildUponDefaultConfig = true).
+# Limits mirror the hard limits in AGENTS.md.
+complexity:
+  # Framework callbacks (SurfaceHolder.Callback, View lifecycle) are mandatory overrides, not design choices.
+  # The stroke controller is an input state machine: one function per MotionEvent phase plus the eraser path.
+  TooManyFunctions:
+    ignoreOverridden: true
+    excludes: ['**/StylusStrokeController.kt']
+  # Axis/bounds checks naturally chain several comparisons; keep a ceiling but above detekt's default of 3.
+  ComplexCondition:
+    allowedConditions: 4
+  LongMethod:
+    allowedLines: 80
+  LongParameterList:
+    allowedFunctionParameters: 7
+    allowedConstructorParameters: 7
+
+style:
+  # Guard clauses and early returns are preferred over nesting (AGENTS.md); detekt's default of 2 is stricter
+  # than the codebase rule, so allow a few exits per function while still catching sprawling ones.
+  ReturnCount:
+    max: 4
+
+naming:
+  FunctionNaming:
+    ignoreAnnotated: ['Composable']

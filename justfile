@@ -39,10 +39,26 @@ fixtures:
 bless:
     PENWISE_BLESS=1 cargo test -p penwise-core --features raster
 
+# Android (android/): the SDK comes from ANDROID_HOME, defaulting to ~/Android/Sdk.
+export ANDROID_HOME := env_var_or_default("ANDROID_HOME", home_directory() / "Android/Sdk")
+
+android:
+    cd android && ./gradlew :app:assembleDebug
+
+android-check:
+    cd android && ./gradlew :app:lintDebug ktlintCheck detekt :app:testDebugUnitTest
+
+install:
+    cd android && ./gradlew :app:installDebug
+
+# libpenwise_ffi.so for Android (Gradle runs the same build automatically) → target/jniLibs/arm64-v8a/.
+ffi:
+    ANDROID_NDK_HOME="$ANDROID_HOME/ndk/30.0.16248370" cargo ndk -t arm64-v8a -P 34 -o target/jniLibs build --release -p penwise-ffi
+
 # Browser viewer bundle (wasm) — rebuild after changing core or penwise-wasm.
 web:
     wasm-pack build crates/penwise-wasm --target web --out-dir ../../web/pkg --out-name penwise_wasm
 
-# PC mirror server: table page + live updates (PENWISE_PORT, PENWISE_WEB, PENWISE_DATA).
-serve: web
+# PC mirror server on :7420 (PENWISE_PORT, PENWISE_WEB, PENWISE_DATA).
+serve:
     cargo run -p penwise-server
