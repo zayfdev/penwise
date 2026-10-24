@@ -71,6 +71,9 @@ class StrokeStore {
         return true
     }
 
+    /** A copy of the stored strokes, for resending the page. */
+    fun snapshot(): List<SavedStroke> = entries.toList()
+
     /** Writes the current stroke list back to disk. */
     fun persist() {
         onRewrite?.invoke(entries.toList())

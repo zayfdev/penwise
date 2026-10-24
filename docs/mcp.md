@@ -29,6 +29,9 @@ Build it with `cargo build -p penwise-mcp` (or `just mcp` to run it by hand).
 | `penwise_page_png` | `scale` (0.05–4, default 1; 0.5 halves the image) | PNG image content + a one-line text summary |
 | `penwise_page_status` | — | `{"ok":true,"strokes":N}` |
 
+The MCP server finds the access token itself: `PENWISE_TOKEN`, else `~/.local/share/penwise/token` (where the
+server writes it). Set `PENWISE_TOKEN` explicitly if the server uses a different data directory.
+
 Both are read-only. There is no write-back and no text extraction yet: an agent that needs handwriting as text
 should look at the PNG with a vision model.
 

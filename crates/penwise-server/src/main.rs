@@ -3,6 +3,7 @@
 //! Thin vertical slice of the M3 contract: JSON over WebSocket instead of the postcard/HLC op log, and no pairing
 //! or mDNS yet (see `docs/contracts/m3-server.md` for the full design).
 
+mod auth;
 mod http;
 mod render;
 mod state;
@@ -38,7 +39,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tracing::warn!(dir = %web.display(), "no index.html (set PENWISE_WEB)");
     }
 
-    let state = ServerState::load(data).await;
+    let token = auth::load_or_create(&data);
+    let state = ServerState::load(data.clone()).await;
     let router = Router::new()
         .route("/ws", get(upgrade))
         .route("/page.png", get(page_png))
@@ -47,14 +49,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_state(AppState {
             state,
             web: Arc::new(web.clone()),
+            token: Arc::new(token.clone()),
         });
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!(%addr, "penwise-server listening");
     for url in advertised_urls(port) {
-        tracing::info!("viewer: {url}");
+        tracing::info!("viewer: {url}/?token={token}");
     }
+    tracing::info!("token: {token}  (also in {}/token)", data.display());
     axum::serve(listener, router).await?;
     Ok(())
 }
@@ -63,14 +67,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 struct AppState {
     state: Arc<ServerState>,
     web: Arc<PathBuf>,
+    token: Arc<String>,
 }
 
-async fn upgrade(ws: WebSocketUpgrade, State(app): State<AppState>) -> Response {
+async fn upgrade(
+    ws: WebSocketUpgrade,
+    State(app): State<AppState>,
+    Query(auth_query): Query<AuthQuery>,
+    headers: axum::http::HeaderMap,
+) -> Response {
+    if !auth::authorized(&app.token, auth_query.token.as_deref(), &headers) {
+        return auth::deny();
+    }
     ws.on_upgrade(move |socket| ws::handle(socket, app.state))
 }
 
 /// `GET /page.png?scale=1` — the current page as PNG (scale is pixels per page px).
-async fn page_png(State(app): State<AppState>, Query(query): Query<ImageQuery>) -> Response {
+async fn page_png(
+    State(app): State<AppState>,
+    Query(query): Query<ImageQuery>,
+    Query(auth_query): Query<AuthQuery>,
+    headers: axum::http::HeaderMap,
+) -> Response {
+    if !auth::authorized(&app.token, auth_query.token.as_deref(), &headers) {
+        return auth::deny();
+    }
     let strokes = app.state.snapshot_strokes().await;
     let scale = query.scale.unwrap_or(1.0);
     match render::page_png(&strokes, scale) {
@@ -87,7 +108,14 @@ async fn page_png(State(app): State<AppState>, Query(query): Query<ImageQuery>) 
 }
 
 /// `GET /health` — stroke count, for scripts and agents.
-async fn health(State(app): State<AppState>) -> Response {
+async fn health(
+    State(app): State<AppState>,
+    Query(auth_query): Query<AuthQuery>,
+    headers: axum::http::HeaderMap,
+) -> Response {
+    if !auth::authorized(&app.token, auth_query.token.as_deref(), &headers) {
+        return auth::deny();
+    }
     let strokes = app.state.snapshot_strokes().await;
     axum::Json(serde_json::json!({ "ok": true, "strokes": strokes.len() })).into_response()
 }
@@ -95,6 +123,12 @@ async fn health(State(app): State<AppState>) -> Response {
 #[derive(serde::Deserialize)]
 struct ImageQuery {
     scale: Option<f32>,
+}
+
+/// Both token-bearing routes take the token in the query; `ImageQuery` stays separate so `scale` parsing is unaffected.
+#[derive(serde::Deserialize)]
+struct AuthQuery {
+    token: Option<String>,
 }
 
 async fn file(State(app): State<AppState>, uri: axum::http::Uri) -> Response {

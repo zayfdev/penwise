@@ -21,7 +21,8 @@ class PageViewModel(
     val store = StrokeStore()
     val tools = ToolState()
     private val file = StrokeFile(application.filesDir)
-    private val sync = SyncClient(application.resources.getStringArray(R.array.sync_urls).toList())
+    private val settings = SyncSettings(application)
+    private var sync = SyncClient(settings.endpoints())
     private var loading = false
 
     init {
@@ -33,6 +34,25 @@ class PageViewModel(
             viewModelScope.launch { file.rewrite(strokes) }
             sync.sendPage(strokes)
         }
+    }
+
+    /** URL shown in the settings dialog. */
+    val syncUrl: String get() = settings.displayedUrl()
+
+    /** Token shown in the settings dialog (empty when the server has none). */
+    val syncToken: String get() = settings.token
+
+    /** Saves a new address/token and reconnects, resending the page so the mirror is immediately correct. */
+    fun updateSync(
+        url: String,
+        token: String,
+    ) {
+        settings.overrideUrl = url
+        settings.token = token
+        sync.stop()
+        sync = SyncClient(settings.endpoints())
+        sync.start()
+        sync.sendPage(store.snapshot())
     }
 
     /** Loads the saved page once, rebuilds its geometry off the main thread, then mirrors it to the PC. */

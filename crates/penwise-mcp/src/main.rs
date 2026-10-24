@@ -27,7 +27,11 @@ fn main() {
         .ok()
         .and_then(|p| p.parse().ok())
         .unwrap_or(DEFAULT_PORT);
-    let endpoint = Endpoint { host, port };
+    let endpoint = Endpoint {
+        host,
+        port,
+        token: resolve_token(),
+    };
     let stdin = std::io::stdin();
     let mut lines = stdin.lock().lines();
     while let Some(Ok(line)) = lines.next() {
@@ -55,6 +59,25 @@ fn main() {
 struct Endpoint {
     host: String,
     port: u16,
+    token: String,
+}
+
+/// `PENWISE_TOKEN`, else `$XDG_DATA_HOME/penwise/token` (where the server writes it). Empty = no auth.
+fn resolve_token() -> String {
+    if let Ok(token) = std::env::var("PENWISE_TOKEN")
+        && !token.is_empty()
+    {
+        return token;
+    }
+    let base = std::env::var("XDG_DATA_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|_| {
+            std::env::var("HOME").map(|home| std::path::PathBuf::from(home).join(".local/share"))
+        })
+        .unwrap_or_default();
+    std::fs::read_to_string(base.join("penwise/token"))
+        .map(|token| token.trim().to_owned())
+        .unwrap_or_default()
 }
 
 fn handle(request: &serde_json::Value, endpoint: &Endpoint) -> Option<serde_json::Value> {
@@ -157,10 +180,16 @@ impl Endpoint {
         stream
             .set_read_timeout(Some(Duration::from_secs(30)))
             .map_err(|e| e.to_string())?;
-        let request = format!(
-            "GET {path} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
+        let mut request = format!(
+            "GET {path} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n",
             self.host
         );
+        if !self.token.is_empty() {
+            request.push_str("X-Penwise-Token: ");
+            request.push_str(&self.token);
+            request.push_str("\r\n");
+        }
+        request.push_str("\r\n");
         stream
             .write_all(request.as_bytes())
             .map_err(|e| e.to_string())?;

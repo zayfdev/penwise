@@ -60,7 +60,7 @@ web:
     wasm-pack build crates/penwise-wasm --target web --out-dir ../../web/pkg --out-name penwise_wasm
 
 # PC mirror server on :7420 (PENWISE_PORT, PENWISE_WEB, PENWISE_DATA).
-serve:
+serve: web
     cargo run -p penwise-server
 
 # MCP (stdio) server for agents: reads the page from the running server.

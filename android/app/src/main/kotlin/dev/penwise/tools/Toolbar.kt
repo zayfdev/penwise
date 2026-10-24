@@ -31,6 +31,7 @@ fun Toolbar(
     state: ToolState,
     onUndo: () -> Unit,
     onClear: () -> Unit,
+    onSync: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -50,6 +51,7 @@ fun Toolbar(
             ShapeChips(state)
             ToolChip(stringResource(R.string.tool_undo), selected = false, onClick = onUndo)
             ToolChip(stringResource(R.string.tool_clear_page), selected = false, onClick = onClear)
+            ToolChip(stringResource(R.string.tool_sync), selected = false, onClick = onSync)
         }
     }
 }

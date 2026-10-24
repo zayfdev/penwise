@@ -43,6 +43,15 @@ class SyncClient(
         connect()
     }
 
+    /** Drops the connection and stops retrying (used when the address changes). */
+    fun stop() {
+        retry.shutdownNow()
+        socket?.close(NORMAL_CLOSURE, "reconfigured")
+        socket = null
+        connecting.set(false)
+        synchronized(pending) { pending.clear() }
+    }
+
     fun sendStroke(stroke: SavedStroke) {
         enqueue(JSONObject().put(T, STROKE).put(STROKE_KEY, strokeJson(stroke)).toString())
     }
@@ -132,6 +141,7 @@ class SyncClient(
         const val PING_SECONDS = 20L
         const val RETRY_SECONDS = 3L
         const val MAX_PENDING = 64
+        const val NORMAL_CLOSURE = 1000
         const val SAMPLE_STRIDE = 5
         const val T = "t"
         const val STROKE = "stroke"

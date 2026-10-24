@@ -36,9 +36,12 @@ function resize() {
   ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
 }
 
+/** Access token from the page URL (`/?token=…`); empty when the server runs without one. */
+const TOKEN = new URLSearchParams(location.search).get("token") ?? "";
+
 class WebSocketClient {
   start() {
-    const url = `ws://${location.host}/ws`;
+    const url = `ws://${location.host}/ws${TOKEN ? `?token=${encodeURIComponent(TOKEN)}` : ""}`;
     const socket = new WebSocket(url);
     this.socket = socket;
     socket.addEventListener("open", () => this.setState("mirroring", false));

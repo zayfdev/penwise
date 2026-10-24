@@ -24,7 +24,7 @@ A working vertical slice of the M3 contract, not the whole contract:
 | pairing, tokens, mDNS, Tailscale discovery | bind `0.0.0.0:7420`, two fixed URLs in the app | Pairing matters once more than one device writes; recorded as an open security item |
 | embedded web assets | served from `web/` on disk | Avoids build-order coupling; trivial to embed later |
 
-Security state: no auth on the LAN socket yet — anyone on the network can read or write the page. Acceptable on a
+Security state (updated): the LAN socket now requires a token — anyone on the network can read or write the page. Acceptable on a
 trusted home LAN, **not** acceptable over Tailscale or on untrusted Wi-Fi; the token-in-QR pairing from the contract
 must land before daily out-of-home use.
 
