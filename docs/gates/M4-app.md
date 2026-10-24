@@ -8,7 +8,7 @@ Branch merged to `master`. Verdict: **PASS for the app slices done so far**; too
 | Piece | Where | Notes |
 |---|---|---|
 | Pen input | `ink/StylusStrokeController.kt`, `ink/SampleBuffer.kt` | Stylus-only (palm rejection), historical samples, `requestUnbufferedDispatch`, pen-up commit |
-| Rendering | `ink/InkSurfaceView.kt`, `GeometyPainter.kt` | `CanvasFrontBufferedRenderer` front layer for the live stroke, double-buffered page behind it |
+| Rendering | `ink/InkSurfaceView.kt`, `GeometryPainter.kt` | `CanvasFrontBufferedRenderer` front layer for the live stroke, double-buffered page behind it |
 | Brushes | `dev.penwise.core.*` via JNI (`crates/penwise-ffi`) | All 13 presets from the shared engine, colour swatches, size slider |
 | Persistence | `ink/StrokeFile.kt` | `PWST` page file: preset, colour, size, seed, raw samples, timings; rebuilt on launch |
 | Eraser | `ink/EraseHit.kt`, toolbar toggle | Whole-stroke erase, radius from the size slider |
