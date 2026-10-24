@@ -7,6 +7,12 @@ class BrushSpec(
     val sizeScale: Float,
 )
 
-fun interface BrushSource {
+interface BrushSource {
     fun current(): BrushSpec
+
+    /** True when the pen erases whole strokes instead of drawing. */
+    val eraserMode: Boolean get() = false
+
+    /** Eraser contact radius in view px. */
+    val eraserRadiusPx: Float get() = 16f
 }

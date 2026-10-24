@@ -45,6 +45,7 @@ fun Toolbar(
         ) {
             ColorRow(state)
             SizeControl(state)
+            ToolChip(stringResource(R.string.tool_eraser), selected = state.eraserMode, onClick = state::toggleEraser)
             ToolChip(stringResource(R.string.tool_undo), selected = false, onClick = onUndo)
             ToolChip(stringResource(R.string.tool_clear_page), selected = false, onClick = onClear)
         }

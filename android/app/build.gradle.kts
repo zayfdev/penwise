@@ -139,4 +139,5 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.graphics.core)
     implementation(libs.androidx.input.motionprediction)
+    testImplementation(libs.junit)
 }

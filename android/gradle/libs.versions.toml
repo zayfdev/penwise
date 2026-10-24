@@ -8,6 +8,7 @@ inputMotionPrediction = "1.0.0"
 ktlintPlugin = "14.2.0"
 ktlint = "1.8.0"
 detekt = "2.0.0-alpha.6"
+junit = "4.13.2"
 
 [libraries]
 androidx-compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
@@ -16,6 +17,7 @@ androidx-compose-foundation = { module = "androidx.compose.foundation:foundation
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activityCompose" }
 androidx-graphics-core = { module = "androidx.graphics:graphics-core", version.ref = "graphicsCore" }
 androidx-input-motionprediction = { module = "androidx.input:input-motionprediction", version.ref = "inputMotionPrediction" }
+junit = { module = "junit:junit", version.ref = "junit" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

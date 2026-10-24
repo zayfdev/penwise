@@ -43,9 +43,26 @@ class ToolState : BrushSource {
 
     override fun current(): BrushSpec = BrushSpec(presetIndex, argb(), sizeScale)
 
+    /** True while the eraser tool is selected; the pen then erases instead of drawing. */
+    override var eraserMode by mutableStateOf(false)
+        private set
+
+    /** Eraser radius derived from the size slider (0.5–3× maps to [ERASER_MIN_PX]–[ERASER_MAX_PX] px). */
+    override val eraserRadiusPx: Float
+        get() {
+            val t = (sizeScale - SIZE_MIN) / (SIZE_MAX - SIZE_MIN)
+            return ERASER_MIN_PX + t * (ERASER_MAX_PX - ERASER_MIN_PX)
+        }
+
+    fun toggleEraser() {
+        eraserMode = !eraserMode
+    }
+
     companion object {
         const val SIZE_MIN = 0.5f
         const val SIZE_MAX = 3f
+        private const val ERASER_MIN_PX = 8f
+        private const val ERASER_MAX_PX = 40f
         private const val BLACK = -0x1000000
         private const val ALPHA_MASK = -0x1000000
         private const val RGB_MASK = 0x00FFFFFF

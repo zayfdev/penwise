@@ -26,6 +26,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val store = page.store
         val tools = page.tools
+        page.loadPage()
         setContent {
             Box(modifier = Modifier.fillMaxSize()) {
                 InkCanvas(store = store, brushes = tools, modifier = Modifier.fillMaxSize())
