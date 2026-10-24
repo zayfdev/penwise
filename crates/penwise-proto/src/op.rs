@@ -56,8 +56,8 @@ pub struct NotebookOp {
 /// Any log entry. Variant order is frozen (postcard discriminant; SQLite `ops.kind` = discriminant).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AnyOp {
-    /// Kind 0.
-    Item(Op),
+    /// Kind 0. Boxed: an [`Op`] carries the whole edit payload, far larger than the other variants.
+    Item(Box<Op>),
     /// Kind 1.
     Page(PageOp),
     /// Kind 2.

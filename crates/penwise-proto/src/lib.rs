@@ -14,6 +14,11 @@
 //!   → server log (seq) → ServerMsg::OpsSince / broadcast → Replica::apply (LWW per (item, field) by HLC)
 //!   → PageReplica scene → renderer
 //! ```
+// Contract stubs: the public docs are the specification and are finalised when each type is implemented.
+#![allow(
+    clippy::doc_markdown,
+    reason = "stub crate: prose docs are the contract, rewritten with the implementations"
+)]
 #![allow(
     clippy::todo,
     clippy::missing_panics_doc,
