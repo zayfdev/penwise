@@ -4,6 +4,7 @@
 //! or mDNS yet (see `docs/contracts/m3-server.md` for the full design).
 
 mod http;
+mod render;
 mod state;
 mod ws;
 
@@ -12,8 +13,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::{State, WebSocketUpgrade};
-use axum::response::Response;
+use axum::extract::{Query, State, WebSocketUpgrade};
+use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 
 use state::ServerState;
@@ -40,6 +41,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = ServerState::load(data).await;
     let router = Router::new()
         .route("/ws", get(upgrade))
+        .route("/page.png", get(page_png))
+        .route("/health", get(health))
         .fallback(get(file))
         .with_state(AppState {
             state,
@@ -64,6 +67,34 @@ struct AppState {
 
 async fn upgrade(ws: WebSocketUpgrade, State(app): State<AppState>) -> Response {
     ws.on_upgrade(move |socket| ws::handle(socket, app.state))
+}
+
+/// `GET /page.png?scale=1` — the current page as PNG (scale is pixels per page px).
+async fn page_png(State(app): State<AppState>, Query(query): Query<ImageQuery>) -> Response {
+    let strokes = app.state.snapshot_strokes().await;
+    let scale = query.scale.unwrap_or(1.0);
+    match render::page_png(&strokes, scale) {
+        Ok(png) => (
+            [
+                (axum::http::header::CONTENT_TYPE, "image/png"),
+                (axum::http::header::CACHE_CONTROL, "no-store"),
+            ],
+            png,
+        )
+            .into_response(),
+        Err(error) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),
+    }
+}
+
+/// `GET /health` — stroke count, for scripts and agents.
+async fn health(State(app): State<AppState>) -> Response {
+    let strokes = app.state.snapshot_strokes().await;
+    axum::Json(serde_json::json!({ "ok": true, "strokes": strokes.len() })).into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct ImageQuery {
+    scale: Option<f32>,
 }
 
 async fn file(State(app): State<AppState>, uri: axum::http::Uri) -> Response {

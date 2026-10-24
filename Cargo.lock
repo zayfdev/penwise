@@ -771,6 +771,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "penwise-mcp"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "penwise-proto"
 version = "0.1.0"
 dependencies = [
@@ -789,6 +797,7 @@ dependencies = [
  "penwise-core",
  "serde",
  "serde_json",
+ "tiny-skia",
  "tokio",
  "tokio-tungstenite 0.30.0",
  "tracing",

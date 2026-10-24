@@ -62,3 +62,7 @@ web:
 # PC mirror server on :7420 (PENWISE_PORT, PENWISE_WEB, PENWISE_DATA).
 serve:
     cargo run -p penwise-server
+
+# MCP (stdio) server for agents: reads the page from the running server.
+mcp:
+    cargo run -q -p penwise-mcp

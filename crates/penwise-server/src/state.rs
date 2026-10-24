@@ -52,6 +52,11 @@ impl ServerState {
         self.tx.subscribe()
     }
 
+    /// A copy of the current page (for rendering).
+    pub async fn snapshot_strokes(&self) -> Vec<StrokeMsg> {
+        self.strokes.read().await.clone()
+    }
+
     /// The `{"t":"page","strokes":[…]}` frame every client gets on connect.
     pub async fn snapshot_frame(&self) -> String {
         let strokes = self.strokes.read().await;

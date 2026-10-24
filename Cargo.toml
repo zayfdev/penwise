@@ -4,6 +4,7 @@ members = [
     "crates/penwise-core",
     "crates/penwise-ffi",
     "crates/penwise-fixtures",
+    "crates/penwise-mcp",
     "crates/penwise-proto",
     "crates/penwise-server",
     "crates/penwise-wasm",

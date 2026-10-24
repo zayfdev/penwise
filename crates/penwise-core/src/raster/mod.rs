@@ -15,12 +15,12 @@ pub mod stamps;
 /// Re-export so callers use the exact `tiny-skia` version core was built against.
 pub use tiny_skia;
 
-use crate::bounds::Bounds;
+pub use crate::bounds::Bounds;
 use crate::brush::BlendMode;
 use crate::float::clamp01;
 use crate::geometry::{StrokeGeometry, StrokeStyle};
 use ::tiny_skia::Pixmap;
-use stamps::CoverageBuffer;
+pub use stamps::CoverageBuffer;
 
 /// Page → pixel mapping: `px = (page_x − origin_x)·scale`, `py = (page_y − origin_y)·scale`.
 #[derive(Debug, Clone, Copy, PartialEq)]
