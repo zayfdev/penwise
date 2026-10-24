@@ -10,6 +10,7 @@ mod library;
 mod ocr;
 mod pairing;
 mod render;
+mod search;
 mod urls;
 mod ws;
 
@@ -64,6 +65,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .route("/page", get(page_strokes))
         .route("/text", get(ocr::page_text))
+        .route("/search", get(search::search))
         .route("/page.png", get(page_png))
         .route("/health", get(health))
         .route("/annotate", post(annotate))

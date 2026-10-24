@@ -220,8 +220,38 @@ document.getElementById("add-page").addEventListener("click", () => {
   openNewPageForm(activePage ? (meta?.notebooks.find((n) => n.pages.some((p) => p.id === activePage.id))?.id ?? "") : "");
 });
 
+const textPanel = document.getElementById("text-panel");
+const textBody = document.getElementById("text-body");
+const textHint = document.getElementById("text-hint");
 const pairPanel = document.getElementById("pair-panel");
 const pairCode = document.getElementById("pair-code");
+
+/** Shows (or hides) the recognised text of the active page; reading it can take a while on CPU. */
+async function toggleText(refresh = false) {
+  if (!textPanel.classList.contains("open")) {
+    textPanel.classList.add("open");
+    refresh = false;
+  } else if (!refresh) {
+    textPanel.classList.remove("open");
+    return;
+  }
+  if (!activePage) return;
+  textBody.textContent = "reading…";
+  textHint.textContent = "the handwriting model runs locally; the first read of a page takes ~30 s";
+  const query = `page=${encodeURIComponent(activePage.id)}${refresh ? "&refresh=true" : ""}`;
+  const response = await fetch(`/text?${query}&token=${encodeURIComponent(TOKEN)}`);
+  if (!response.ok) {
+    textBody.textContent = "";
+    textHint.textContent = `not read: ${await response.text()}`;
+    return;
+  }
+  const result = await response.json();
+  textBody.textContent = result.text?.trim() ? result.text : "(no handwriting recognised)";
+  textHint.textContent = result.cached ? "cached" : "just read";
+}
+
+document.getElementById("read-text").addEventListener("click", () => void toggleText());
+document.getElementById("text-refresh").addEventListener("click", () => void toggleText(true));
 
 /** Shows (or hides) the pairing code; the code is single-use, so a dead one is simply refreshed. */
 async function togglePairing() {
@@ -353,6 +383,7 @@ class WebSocketClient {
         render();
       }
     } else if (frame.t === "page" && Array.isArray(frame.strokes)) {
+      if (textPanel.classList.contains("open")) void toggleText();
       const page = pageById(frame.page);
       if (!page) return;
       activePage = page;

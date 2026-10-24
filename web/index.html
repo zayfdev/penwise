@@ -57,6 +57,21 @@
         padding: 10px 12px; border-top: 1px solid #e3e3e6; background: #fbfbfc;
       }
       #new-page.open { display: flex; }
+      #text-panel {
+        display: none; flex-direction: column; gap: 6px; max-height: 45%;
+        /* Clears the floating status pill in the bottom-left corner. */
+        padding: 10px 12px 46px; border-top: 1px solid #e3e3e6; background: #fbfbfc; overflow-y: auto;
+      }
+      #text-panel.open { display: flex; }
+      #text-body {
+        white-space: pre-wrap; font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: #23252a; margin: 0;
+      }
+      #text-panel .hint { font-size: 11px; color: #7a7a82; }
+      #text-panel button {
+        align-self: flex-start; padding: 4px 9px; border-radius: 6px;
+        border: 1px solid #cfcfd4; background: #fff; cursor: pointer; font-size: 12px;
+      }
       #pair-panel {
         display: none; flex-direction: column; gap: 6px;
         /* Clears the floating status pill in the bottom-left corner. */
@@ -103,6 +118,11 @@
               <path d="M15 9v6M12 12h6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
             </svg>
           </button>
+          <button id="read-text" title="Read handwriting" aria-label="Read handwriting">
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+              <path d="M5 6h14M5 10h14M5 14h9M5 18h6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+            </svg>
+          </button>
           <button id="pair-device" title="Pair a device" aria-label="Pair a device">
             <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
               <path d="M8 7V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-8a2 2 0 0 1-2-2v-2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
@@ -117,6 +137,11 @@
         </span>
       </header>
       <div id="library"></div>
+      <div id="text-panel">
+        <div class="hint" id="text-hint"></div>
+        <div id="text-body"></div>
+        <button id="text-refresh">Read page</button>
+      </div>
       <div id="pair-panel">
         <div id="pair-code">······</div>
         <div class="hint">Type this code on the tablet: Sync → Token.</div>

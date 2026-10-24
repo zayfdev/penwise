@@ -151,6 +151,7 @@ The page PNG is read by a **local** vision model (Ollama) and the transcription 
 |---|---|
 | `GET /text?page=<id>&refresh=1` | `{"page":…,"text":"…","cached":false}`; the second call is a cache hit |
 | `GET /page.png` | unchanged — agents can still look at the ink themselves |
+| `GET /search?q=…` | `{"query":…,"hits":[{page,title,snippet}]}` over every page whose text has been read |
 
 - Model: `PENWISE_OCR_MODEL` (default `qwen2.5vl:3b`), server: `PENWISE_OCR_URL` (default
   `http://127.0.0.1:11434`). Nothing leaves the machine; when no model is running the route answers `503` and
@@ -158,6 +159,7 @@ The page PNG is read by a **local** vision model (Ollama) and the transcription 
 - Only the **ink** is sent, cropped to the stroke bounds with a 48 px margin and capped at 1400 px per side: a
   full A4 render is slower to read and no clearer, and the crop took a page from >120 s to ~29 s on CPU.
 - The result is cached in `pages/<id>.txt` and dropped when the page is deleted; `refresh` re-reads.
+- The viewer's ☰ button shows the active page's text, reading it on demand (cached reads are instant).
 - Quality note: a 3B model reads upright handwriting closely but not perfectly (it dropped a leading `0` and
   merged one word in testing). Set `PENWISE_OCR_MODEL=qwen2.5vl:7b` for accuracy at roughly double the time.
 

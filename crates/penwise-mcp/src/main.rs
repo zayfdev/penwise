@@ -204,6 +204,15 @@ const TOOLS: &str = r##"{
       }
     },
     {
+      "name": "penwise_search",
+      "description": "Search the handwriting of every page already read as text.",
+      "inputSchema": {
+        "type": "object",
+        "properties": { "query": { "type": "string", "description": "Words to look for, case-insensitive." } },
+        "required": ["query"]
+      }
+    },
+    {
       "name": "penwise_create_notebook",
       "description": "Create an empty notebook to group pages.",
       "inputSchema": {
@@ -272,6 +281,24 @@ fn call_tool(
             Ok(text_content(&String::from_utf8_lossy(&reply)))
         }
         "penwise_list_pages" => get_text(endpoint, "/pages"),
+        "penwise_search" => {
+            let arguments = arguments(request);
+            let query = arguments
+                .get("query")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| error(-32602, "missing query"))?;
+            let encoded: String = query
+                .bytes()
+                .map(|byte| match byte {
+                    b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                        (byte as char).to_string()
+                    }
+                    b' ' => "+".to_owned(),
+                    other => format!("%{other:02X}"),
+                })
+                .collect();
+            get_text(endpoint, &format!("/search?q={encoded}"))
+        }
         "penwise_page_text" => {
             let arguments = arguments(request);
             let page = arguments
