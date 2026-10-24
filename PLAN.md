@@ -39,14 +39,18 @@ penwise/
   crates/
     penwise-core/      pure: no I/O
       sample.rs          raw pen sample, units, normalization from digitizer range
-      brush.rs           tool, color, base width, pressure curve
       builder.rs         incremental StrokeBuilder: push samples, emit stable + tentative geometry
       smoothing.rs       input filtering / resampling
-      width.rs           pressure/velocity/tilt → width
-      outline.rs         centerline + widths → closed outline polygon
-      bounds.rs          bounding boxes, hit testing (eraser, lasso)
-      codec/             quantize, delta, varint, versioned stroke blob
-      raster.rs          outline → pixels (server/native only, feature-gated)
+      dynamics.rs        pressure curve, velocity, tilt → size/opacity/flow
+      brush/             params, presets, family dispatch
+      outline/           outline brushes: centerline + widths → closed polygon (pen, fountain, calligraphy, marker, highlighter)
+      stamp/             stamp brushes: deterministic dab placement, scatter, seeded PRNG (pencil, crayon, airbrush, spray, soft, solid, shading)
+      shape/             rectangle, ellipse, line, arrow, polygon geometry + handle math
+      fill/              flood region at fixed resolution, contour trace, simplify → polygon
+      edit/              hit testing, lasso, precise-erase split, transforms
+      bounds.rs          bounding boxes, spatial index
+      codec/             quantize, delta, varint, versioned blobs
+      raster/            geometry + stamps → pixels (server/native only, feature-gated)
     penwise-proto/     ids (ULID), hlc, op, message, version
     penwise-server/
       main.rs, config.rs
@@ -60,9 +64,10 @@ penwise/
     penwise-ffi/       uniffi bindings → Kotlin (types only)
     penwise-wasm/      wasm-bindgen bindings → TypeScript (types only)
   android/app/src/main/kotlin/dev/penwise/
-    ink/  sync/  pairing/  notebooks/  debug/ (recorder + replay, debug builds only)
+    ink/  tools/  sync/  pairing/  notebooks/  debug/ (recorder + replay, debug builds only)
   web/src/             main.ts, connection.ts, viewer.ts, ui/
   fixtures/            real pen recordings + golden outputs
+  assets/brushes/      brush textures and dab shapes, shared by app, web and server
   scripts/             check-sizes, record-pen, device-check
   docs/gates/          one gate record per phase
 ```
@@ -72,10 +77,37 @@ penwise/
 - **Notebook** `{id, title, created, updated}`
 - **Page** `{id, notebook_id, index, kind: fixed{w,h} | infinite, background: blank|lined|grid|dot}`
 - **Item** `{id (ULID), page_id, layer: ink|agent|text, kind, data, z, author: device|agent:<name>, deleted}`
-  - `stroke`: brush `{tool: pen|highlighter|eraser, color, base_width}` + raw samples
-    `(x, y, pressure, tilt, orientation, t)`, quantized + delta-encoded binary
-  - `shape` (line, rect, ellipse, arrow, polyline), `text {content, box, font_size}`, `image` (later)
-- Raw samples are the source of truth; geometry is derived, so brush improvements re-render old notes.
+  - `stroke`: brush params + seed + raw samples `(x, y, pressure, tilt_x, tilt_y, t)`, quantized + delta-encoded
+  - `erase`: precise-eraser path for stamp brushes and fills (masks what it covers); outline strokes are split instead
+  - `shape`: kind, transform, stroke style (brush params), optional fill color
+  - `fill`: polygon(s) with holes, color, opacity
+  - `text {content, box, font_size}`, `image` (later)
+- Raw samples + brush params + seed are the source of truth; geometry is derived, so brush improvements re-render old notes.
+
+## Brushes & tools
+
+Two brush families in `penwise-core`, both deterministic on every surface:
+
+| Family | How it renders | Presets |
+|---|---|---|
+| Outline | centerline + widths → one filled polygon | ballpoint pen, fineliner, fountain pen (pressure + direction width), calligraphy (fixed nib angle), marker (broad, flat opacity), highlighter (translucent, sits under ink) |
+| Stamp | dabs placed along the path, each with size/angle/opacity, textured | pencil (grain; tilt → wide soft side shading), crayon (coarse paper tooth), airbrush (soft dab, pressure → flow, builds up), spray (scattered particles), soft brush, solid brush, shading brush (wide, very soft, low opacity) |
+
+- **Brush params:** size min/max, opacity, flow, color, hardness, spacing, scatter, texture, pressure curve, velocity
+  and tilt response, blend mode. Presets are editable and saved; custom brushes are params, not code.
+- **Determinism:** stamp positions/jitter come from a seeded PRNG inside core (seed stored per stroke); textures are
+  shared files in `assets/brushes/`.
+- **Eraser** (the Noris classic has no button or eraser end, so erasing is a tool with a quick toggle):
+  stroke eraser (removes whole items), precise eraser (splits outline strokes; masks stamp strokes/fills), size control.
+- **Fill bucket:** tap a closed area → region found at a fixed resolution, traced to a vector polygon, stored as a
+  `fill` item; gap-tolerance setting closes small gaps.
+- **Shapes:** rectangle, rounded rectangle, ellipse, line, arrow, polygon. Drag to create; handles to stretch, rotate,
+  move; constrain toggle (square/circle); stroke style from any outline brush; optional fill.
+- **Select:** lasso or tap; move, scale, rotate, delete, duplicate, recolor any item.
+- **Color & size:** color wheel, swatches, recent colors; per-brush size and opacity sliders.
+- **Undo/redo** per page, built on the op log.
+- **No-button pen ergonomics:** toolbar quick-swap between the last two tools, plus finger gestures (e.g. two-finger
+  tap undo, three-finger tap redo); final mapping decided at the M4 feel check.
 
 ## Sync protocol
 
@@ -119,8 +151,7 @@ penwise/
 - Input: `MotionEvent` historical samples, `AXIS_PRESSURE`, `AXIS_TILT`, `AXIS_ORIENTATION`,
   hover events, `BUTTON_STYLUS_PRIMARY`; palm rejection = stylus-only drawing, fingers pan/zoom.
 - Latency: `androidx.graphics` front-buffered renderer + `androidx.input` motion prediction.
-- Tools: pen, highlighter, stroke eraser, lasso select (move/delete), undo/redo, page/notebook navigation,
-  agent-layer toggle, scan button.
+- Tools: everything in "Brushes & tools", plus page/notebook navigation, agent-layer toggle, scan button.
 
 ## Verification harness
 
@@ -140,11 +171,12 @@ penwise/
 | # | Milestone | Done when |
 |---|---|---|
 | M0 | Toolchain ✅ | Android SDK/NDK, adb authorized, cargo-ndk, wasm-pack, `aarch64-linux-android` + `wasm32-unknown-unknown` targets, `just check` gate |
-| M1 | `penwise-core` | Recorded sample streams → bit-identical outlines on native and WebAssembly; server PNG goldens; codec round-trips |
-| M2 | Server + browser view | Op log in SQLite; browser renders pages and live `StrokeDelta`s; pairing QR |
-| M3 | Android app | Low-latency pressure ink on the Tab S9; local store; LAN + Tailscale sync; offline drawing syncs on reconnect |
-| M4 | MCP | All stage-1 tools usable from an agent; annotations appear live on tablet + browser |
-| M5 | Recognition | Scan button + auto-scan produce text layer; `get_page_text` returns it |
+| M1 | Ink engine | Both brush families with all presets; dynamics tuned from your recordings; bit-identical geometry/stamps on native and WebAssembly; server PNG goldens; codec round-trips; brush sheet PNG in the gate record |
+| M2 | Editing engine | Stroke + precise eraser, fill bucket, shapes with handles, lasso select + transforms, undo model; all in core with tests |
+| M3 | Server + browser view | Op log in SQLite; browser renders every item kind and live `StrokeDelta`s; pairing QR |
+| M4 | Android app | Low-latency ink with every brush and tool; toolbar, brush picker, color/size; local store; LAN + Tailscale sync; offline drawing syncs on reconnect |
+| M5 | MCP | All stage-1 tools usable from an agent; annotations appear live on tablet + browser |
+| M6 | Recognition | Scan button + auto-scan produce text layer; `get_page_text` returns it |
 
 ## Build process
 
@@ -181,20 +213,21 @@ penwise/
 5. **Gate B (review):** reviewer verdict PASS / FAIL with findings → corrective tasks → re-run Gate A.
 6. **Gate C (evidence):** the milestone's "done when" is exercised for real (replay a fixture, open the browser view,
    call MCP tools) and the output is recorded.
-7. **Gate D (human, only where feel matters):** M3 ink feel, M5 recognition quality.
+7. **Gate D (human, only where feel matters):** M4 ink + tools feel, M6 recognition quality.
 8. **Close:** gate record in `docs/gates/M<n>.md`, one commit per green phase.
 
 ### Phase map
 
 | Phase | Research | Contract (serial) | Parallel slices | Extra gates |
 |---|---|---|---|---|
-| M1 core | stroke smoothing/width methods (perfect-freehand et al.), `tiny-skia` determinism | `sample`, `brush`, `builder` API, outline type, codec signatures | (a) smoothing + width + outline, (b) codec, (c) raster + PNG goldens, (d) fixture tooling: `record-pen` + golden harness + wasm test runner | — |
-| M2 server + web | `rmcp`, axum websockets, mDNS crates, `rust-embed` | `penwise-proto` ops/messages + storage schema | (a) storage + migrations, (b) sync + live deltas, (c) pairing + mDNS + auth, (d) `penwise-wasm` + web viewer | security review |
-| M3 Android | `androidx.graphics` front-buffer, `MotionEventPredictor`, uniffi + Gradle + cargo-ndk, Samsung stylus specifics | `penwise-ffi` API + Gradle Rust build | (a) input + low-latency render, (b) local store + sync client, (c) pairing/discovery UI, (d) debug recorder/replay + `device-check` | human feel check |
-| M4 MCP | `rmcp` tool/image result shapes | tool schemas | (a) navigation tools, (b) PNG + text tools, (c) annotate → agent layer on tablet, (d) agent layer on web, (e) MCP e2e test client | security review |
-| M5 recognition | local vision models for handwriting (Ollama) | `Recognizer` trait + text-layer item shape | (a) worker + triggers, (b) Ollama backend + model evaluation on fixtures, (c) tablet scan button + text layer view | human quality check |
+| M1 ink engine | stroke/brush rendering methods (perfect-freehand, stamp brushes in open painting apps), `tiny-skia` | `sample`, brush params, `builder` API, outline + stamp output types, codec signatures | (a) smoothing + dynamics, (b) outline brushes, (c) stamp brushes + PRNG + textures, (d) codec, (e) raster + PNG goldens, (f) fixture converter + golden harness + wasm test runner | — |
+| M2 editing engine | vector stroke splitting, flood fill + contour tracing | item kinds, edit API | (a) hit test + lasso + transforms, (b) erasers, (c) fill, (d) shapes + handles, (e) undo model | — |
+| M3 server + web | `rmcp`, axum websockets, mDNS crates, `rust-embed` | `penwise-proto` ops/messages + storage schema | (a) storage + migrations, (b) sync + live deltas, (c) pairing + mDNS + auth, (d) `penwise-wasm` + web viewer | security review |
+| M4 Android | `androidx.graphics` front-buffer, `MotionEventPredictor`, uniffi + Gradle + cargo-ndk, Samsung stylus specifics | `penwise-ffi` API + Gradle Rust build | (a) input + low-latency render, (b) toolbar + brush/color/size UI, (c) eraser/fill/shape/select tools, (d) local store + sync client, (e) pairing/discovery UI, (f) debug recorder/replay + `device-check` | human feel check |
+| M5 MCP | `rmcp` tool/image result shapes | tool schemas | (a) navigation tools, (b) PNG + text tools, (c) annotate → agent layer on tablet, (d) agent layer on web, (e) MCP e2e test client | security review |
+| M6 recognition | local vision models for handwriting (Ollama) | `Recognizer` trait + text-layer item shape | (a) worker + triggers, (b) Ollama backend + model evaluation on fixtures, (c) tablet scan button + text layer view | human quality check |
 
-M2 and M3 overlap once `penwise-proto` and `penwise-ffi` contracts are committed.
+M2 starts once M1's output types are committed. M3 and M4 overlap once `penwise-proto` and `penwise-ffi` contracts are committed.
 
 ## Toolchain (installed 2026-10-24)
 
