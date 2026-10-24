@@ -1,6 +1,7 @@
 package dev.penwise.ink
 
 import android.util.Log
+import org.json.JSONObject
 import java.io.IOException
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
@@ -30,6 +31,17 @@ class LibraryClient(
 
     /** The library index, or `null` when the server cannot be reached. */
     fun pages(): String? = send("GET", "/pages", null)
+
+    /** Exchanges a pairing code for the server's token; `null` when the code is wrong or the server is away. */
+    fun pair(code: String): Pair<String, String>? {
+        val body = JSONObject().put("code", code).toString()
+        val reply = send("POST", "/pair", body) ?: return null
+        val json = runCatching { JSONObject(reply) }.getOrNull() ?: return null
+        val token = json.optString("token").takeIf { it.isNotEmpty() } ?: return null
+        val urls = json.optJSONArray("urls")
+        val url = if (urls != null && urls.length() > 0) urls.optString(0) else ""
+        return token to url
+    }
 
     /** One library call; `null` on any failure. */
     fun request(
@@ -85,10 +97,14 @@ class LibraryClient(
         path: String,
     ): String = root.trimEnd('/') + path + (if (token.isEmpty()) "" else "?token=$token")
 
-    private companion object {
-        const val TAG = "PenwiseLibrary"
-        const val TIMEOUT_MS = 4_000
-        const val HTTP_OK_FIRST = 200
-        const val HTTP_OK_LAST = 299
+    companion object {
+        /** A pairing code is six characters from the server's unambiguous alphabet. */
+        fun looksLikeCode(input: String): Boolean = input.trim().replace("-", "").length == CODE_LEN
+
+        private const val TAG = "PenwiseLibrary"
+        private const val CODE_LEN = 6
+        private const val TIMEOUT_MS = 4_000
+        private const val HTTP_OK_FIRST = 200
+        private const val HTTP_OK_LAST = 299
     }
 }

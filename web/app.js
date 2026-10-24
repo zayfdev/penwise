@@ -220,6 +220,33 @@ document.getElementById("add-page").addEventListener("click", () => {
   openNewPageForm(activePage ? (meta?.notebooks.find((n) => n.pages.some((p) => p.id === activePage.id))?.id ?? "") : "");
 });
 
+const pairPanel = document.getElementById("pair-panel");
+const pairCode = document.getElementById("pair-code");
+
+/** Shows (or hides) the pairing code; the code is single-use, so a dead one is simply refreshed. */
+async function togglePairing() {
+  if (pairPanel.classList.contains("open")) {
+    pairPanel.classList.remove("open");
+    return;
+  }
+  pairPanel.classList.add("open");
+  await loadPairCode("/pair/code");
+}
+
+async function loadPairCode(path, method = "GET") {
+  pairCode.textContent = "······";
+  const response = await fetch(`${path}?token=${encodeURIComponent(TOKEN)}`, { method });
+  if (!response.ok) {
+    pairCode.textContent = "unavailable";
+    return;
+  }
+  const result = await response.json();
+  pairCode.textContent = result.code ?? "·····";
+}
+
+document.getElementById("pair-device").addEventListener("click", () => void togglePairing());
+document.getElementById("pair-new").addEventListener("click", () => void loadPairCode("/pair/code", "POST"));
+
 document.getElementById("add-notebook").addEventListener("click", async () => {
   const title = window.prompt("Notebook name", `Notebook ${(meta?.notebooks.length ?? 0) + 1}`);
   if (!title) return;

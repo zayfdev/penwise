@@ -7,6 +7,7 @@ mod annotate;
 mod auth;
 mod http;
 mod library;
+mod pairing;
 mod render;
 mod ws;
 
@@ -42,12 +43,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let token = auth::load_or_create(&data);
     let library = Library::load(data.clone()).await;
+    let pairing = Arc::new(pairing::Pairing::new());
+    let urls = platform_urls(port);
     let router = Router::new()
         .route("/ws", get(upgrade))
         .route("/pages", get(pages_list).post(page_create))
         .route("/pages/{id}", patch(page_update).delete(page_remove))
         .route("/pages/{id}/select", post(page_select))
         .route("/notebooks", post(notebook_create))
+        .route("/pair", post(pair_exchange))
+        .route("/pair/code", get(pair_code).post(pair_refresh))
         .route(
             "/notebooks/{id}",
             patch(notebook_update).delete(notebook_remove),
@@ -62,15 +67,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             library,
             web: Arc::new(web.clone()),
             token: Arc::new(token.clone()),
+            pairing: Arc::clone(&pairing),
+            urls: Arc::new(urls),
         });
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!(%addr, "penwise-server listening");
-    for url in advertised_urls(port) {
+    for url in platform_urls(port) {
         tracing::info!("viewer: {url}/?token={token}");
     }
     tracing::info!("token: {token}  (also in {}/token)", data.display());
+    tracing::info!(
+        "pairing code: {}  (single use, {} minutes; show it in the viewer)",
+        pairing.current(),
+        pairing::CODE_TTL.as_secs() / 60
+    );
     axum::serve(listener, router).await?;
     Ok(())
 }
@@ -80,6 +92,8 @@ struct AppState {
     library: Arc<Library>,
     web: Arc<PathBuf>,
     token: Arc<String>,
+    pairing: Arc<pairing::Pairing>,
+    urls: Arc<Vec<String>>,
 }
 
 async fn upgrade(
@@ -285,6 +299,60 @@ async fn notebook_remove(
     }
 }
 
+/// `POST /pair` — exchanges a short pairing code for the token and the reachable URLs.
+///
+/// The code is the credential, so this route takes no bearer token; it is single-use and rate limited.
+async fn pair_exchange(
+    State(app): State<AppState>,
+    axum::Json(body): axum::Json<serde_json::Value>,
+) -> Response {
+    let code = body
+        .get("code")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    if !app.pairing.exchange(code) {
+        return (axum::http::StatusCode::UNAUTHORIZED, "bad pairing code").into_response();
+    }
+    axum::Json(serde_json::json!({
+        "ok": true,
+        "token": *app.token,
+        "urls": *app.urls,
+    }))
+    .into_response()
+}
+
+/// `GET /pair/code` — the current code, for the viewer to display.
+async fn pair_code(
+    State(app): State<AppState>,
+    Query(auth_query): Query<AuthQuery>,
+    headers: axum::http::HeaderMap,
+) -> Response {
+    if !auth::authorized(&app.token, auth_query.token.as_deref(), &headers) {
+        return auth::deny();
+    }
+    axum::Json(serde_json::json!({
+        "code": app.pairing.current(),
+        "expires_in": app.pairing.remaining().as_secs(),
+    }))
+    .into_response()
+}
+
+/// `POST /pair/code` — mints a new code (invalidates the old one).
+async fn pair_refresh(
+    State(app): State<AppState>,
+    Query(auth_query): Query<AuthQuery>,
+    headers: axum::http::HeaderMap,
+) -> Response {
+    if !auth::authorized(&app.token, auth_query.token.as_deref(), &headers) {
+        return auth::deny();
+    }
+    axum::Json(serde_json::json!({
+        "code": app.pairing.refresh(),
+        "expires_in": app.pairing.remaining().as_secs(),
+    }))
+    .into_response()
+}
+
 /// `GET /page?page=<id>` — one page's strokes, for clients bootstrapping a specific page.
 async fn page_strokes(
     State(app): State<AppState>,
@@ -390,9 +458,14 @@ async fn file(State(app): State<AppState>, uri: axum::http::Uri) -> Response {
     http::serve((*app.web).clone(), uri).await
 }
 
-/// URLs worth printing: this machine's LAN address and its Tailscale name when present.
-fn advertised_urls(port: u16) -> Vec<String> {
-    let mut urls = vec![format!("http://127.0.0.1:{port}")];
+/// Every URL this machine is reachable at, best first: LAN address, Tailscale name, loopback.
+///
+/// The tablet must not be handed `127.0.0.1`, so the LAN address is discovered rather than assumed.
+fn platform_urls(port: u16) -> Vec<String> {
+    let mut urls = Vec::new();
+    if let Some(lan) = lan_address() {
+        urls.push(format!("http://{lan}:{port}"));
+    }
     if let Ok(output) = std::process::Command::new("tailscale")
         .args(["status", "--json"])
         .output()
@@ -406,5 +479,25 @@ fn advertised_urls(port: u16) -> Vec<String> {
         let name = name.trim_end_matches('.');
         urls.push(format!("http://{name}:{port}"));
     }
+    urls.push(format!("http://127.0.0.1:{port}"));
     urls
+}
+
+/// This host's primary IPv4 address, by asking the routing table which source an outside route would use.
+fn lan_address() -> Option<String> {
+    let output = std::process::Command::new("ip")
+        .args(["-4", "route", "get", "1.1.1.1"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut words = text.split_whitespace();
+    while let Some(word) = words.next() {
+        if word == "src" {
+            return words.next().map(str::to_owned);
+        }
+    }
+    None
 }

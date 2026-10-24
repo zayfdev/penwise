@@ -57,6 +57,21 @@
         padding: 10px 12px; border-top: 1px solid #e3e3e6; background: #fbfbfc;
       }
       #new-page.open { display: flex; }
+      #pair-panel {
+        display: none; flex-direction: column; gap: 6px;
+        /* Clears the floating status pill in the bottom-left corner. */
+        padding: 10px 12px 46px; border-top: 1px solid #e3e3e6; background: #fbfbfc;
+      }
+      #pair-panel.open { display: flex; }
+      #pair-code {
+        font: 600 26px/1.1 ui-monospace, SFMono-Regular, Menlo, monospace;
+        letter-spacing: 0.22em; color: #23252a;
+      }
+      #pair-panel .hint { font-size: 11px; color: #7a7a82; }
+      #pair-panel button {
+        align-self: flex-start; padding: 4px 9px; border-radius: 6px;
+        border: 1px solid #cfcfd4; background: #fff; cursor: pointer; font-size: 12px;
+      }
       #new-page input[type="text"] { padding: 5px 7px; border: 1px solid #cfcfd4; border-radius: 6px; }
       #new-page label { display: flex; align-items: center; gap: 5px; font-size: 12px; }
       #new-page .row { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px; }
@@ -88,6 +103,12 @@
               <path d="M15 9v6M12 12h6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
             </svg>
           </button>
+          <button id="pair-device" title="Pair a device" aria-label="Pair a device">
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+              <path d="M8 7V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-8a2 2 0 0 1-2-2v-2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+              <path d="M3 12h8m-3-3 3 3-3 3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
           <button id="add-page" title="New page" aria-label="New page">
             <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
               <path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
@@ -96,6 +117,11 @@
         </span>
       </header>
       <div id="library"></div>
+      <div id="pair-panel">
+        <div id="pair-code">······</div>
+        <div class="hint">Type this code on the tablet: Sync → Token.</div>
+        <button id="pair-new">New code</button>
+      </div>
       <form id="new-page">
         <input type="hidden" name="notebook" value="" />
         <input type="text" name="title" placeholder="Page title (optional)" />

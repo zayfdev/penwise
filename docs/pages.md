@@ -143,6 +143,25 @@ Frames without a page are applied to the sender's selected page (back-compat wit
   the first page.
 - Chips show a background glyph (Blank ▢, Ruled ☰, Grid ▦, Infinite ∞) and the page title.
 
+## Pairing
+
+Copying the 43-character token by hand is the clumsy part of setting up a tablet, so the server also mints a
+**pairing code**: six characters from an unambiguous alphabet (`A–Z` without `I`/`O`, `2–9`), valid for 10
+minutes, single use.
+
+| Route | Auth | Body / result |
+|---|---|---|
+| `POST /pair` | none — the code is the credential | `{"code":"6WSGM4"}` → `{"ok":true,"token":"…","urls":["http://192.168.1.19:7420",…]}` |
+| `GET /pair/code` | token | `{"code":"…","expires_in":599}` |
+| `POST /pair/code` | token | mints a new code (the old one dies) |
+
+The exchange is rate limited: eight wrong codes inside a minute lock it for a minute. The viewer's ⇄ button shows
+the current code (and rotates it); in the tablet's Sync dialog, six characters in the token field are treated as a
+code, exchanged for the real token and the server's LAN URL before connecting.
+
+Still missing from this item: a QR image and an in-app scanner (so a phone could pair the tablet), and TLS — the
+LAN is still plaintext HTTP.
+
 ## Undo history
 
 Each page keeps its undo/redo stacks beside its strokes: `pages/<id>.undo` (`PWUN` v1). A step stores the exact

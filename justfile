@@ -51,6 +51,10 @@ android-check:
 install:
     cd android && ./gradlew :app:installDebug
 
+# Build, install and smoke-check the tablet: crash buffer, page load, local files, sync, screenshot.
+device-check:
+    scripts/device-check.sh
+
 # libpenwise_ffi.so for Android (Gradle runs the same build automatically) → target/jniLibs/arm64-v8a/.
 ffi:
     ANDROID_NDK_HOME="$ANDROID_HOME/ndk/30.0.16248370" cargo ndk -t arm64-v8a -P 34 -o target/jniLibs build --release -p penwise-ffi

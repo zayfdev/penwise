@@ -202,8 +202,32 @@ class PageViewModel(
         }
     }
 
-    /** Saves a new address/token and reconnects, resending the page so the mirror is immediately correct. */
+    /**
+     * Saves a new address/token and reconnects, resending the page so the mirror is immediately correct.
+     *
+     * A six-character code in the token field is a pairing code: it is exchanged for the real token (and the
+     * server's URL) first, so nobody has to copy 43 characters by hand.
+     */
     fun updateSync(
+        url: String,
+        token: String,
+    ) {
+        viewModelScope.launch {
+            val trimmed = token.trim()
+            val resolved =
+                if (LibraryClient.looksLikeCode(trimmed)) {
+                    val base = url.ifBlank { settings.displayedUrl() }
+                    withContext(Dispatchers.IO) {
+                        LibraryClient(base, "").pair(trimmed.replace("-", "").uppercase())
+                    }
+                } else {
+                    null
+                }
+            applySync(resolved?.second?.ifBlank { url } ?: url, resolved?.first ?: token)
+        }
+    }
+
+    private fun applySync(
         url: String,
         token: String,
     ) {
