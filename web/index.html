@@ -4,15 +4,21 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Penwise</title>
+    <style>
+      :root { color-scheme: light; }
+      html, body { margin: 0; height: 100%; background: #e8e8ea; font: 14px system-ui, sans-serif; }
+      #wrap { display: flex; align-items: center; justify-content: center; height: 100%; }
+      canvas { background: #fff; box-shadow: 0 2px 16px rgba(0, 0, 0, 0.18); }
+      #status {
+        position: fixed; left: 12px; bottom: 10px; padding: 4px 10px; border-radius: 999px;
+        background: rgba(0, 0, 0, 0.72); color: #fff; font-size: 12px;
+      }
+      #status.offline { background: #a3241e; }
+    </style>
   </head>
   <body>
-    <aside id="pages" aria-label="Notebooks and pages"></aside>
-    <main id="stage">
-      <canvas id="paper"></canvas>
-      <canvas id="ink"></canvas>
-      <canvas id="live"></canvas>
-    </main>
-    <section id="pairing" aria-label="Pairing" hidden></section>
-    <script type="module" src="/src/main.ts"></script>
+    <div id="wrap"><canvas id="page" width="1600" height="2560"></canvas></div>
+    <div id="status" class="offline">connecting…</div>
+    <script type="module" src="./app.js"></script>
   </body>
 </html>

@@ -8,11 +8,11 @@
 use std::collections::BTreeMap;
 
 use crate::error::ReplicaError;
+use crate::hlc::Hlc;
 use crate::ids::{NotebookId, PageId};
 use crate::lww::Register;
 use crate::notebook::{Background, Notebook, Page, PageKind};
 use crate::op::{NotebookOp, PageOp};
-use crate::hlc::Hlc;
 
 /// Notebook registers.
 #[derive(Debug, Clone, PartialEq)]

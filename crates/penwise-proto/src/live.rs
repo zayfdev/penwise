@@ -146,7 +146,11 @@ impl LiveStrokes {
     ///
     /// # Errors
     /// [`LiveError`]; on `OutOfOrder` the stroke's preview is removed, otherwise state is unchanged.
-    pub fn apply_delta(&mut self, device: DeviceId, delta: &StrokeDelta) -> Result<bool, LiveError> {
+    pub fn apply_delta(
+        &mut self,
+        device: DeviceId,
+        delta: &StrokeDelta,
+    ) -> Result<bool, LiveError> {
         todo!()
     }
 

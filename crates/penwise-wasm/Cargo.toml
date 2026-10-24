@@ -1,6 +1,6 @@
 [package]
 name = "penwise-wasm"
-description = "wasm-bindgen bindings of penwise-core + penwise-proto for the browser viewer (types and conversion only)."
+description = "Browser bindings: stroke geometry for the Canvas2D viewer (conversion only)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,14 +11,10 @@ publish.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-# Never enable `raster`: the browser rasterizes with Canvas2D. Build with `-p penwise-wasm` (never
-# `--workspace`) so feature unification with penwise-server cannot turn it on.
 penwise-core = { path = "../penwise-core" }
-penwise-proto = { path = "../penwise-proto" }
-wasm-bindgen.workspace = true
-
-[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
-wasm-bindgen-test.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+wasm-bindgen = "0.2.129"
 
 [lints]
 workspace = true

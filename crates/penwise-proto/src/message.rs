@@ -119,21 +119,33 @@ pub enum ClientMsg {
         client: ClientKind,
     },
     /// Upload new ops (the outbox), `1..=MAX_OPS_PER_FRAME`, in creation order. Answered by one `Ack`.
-    PushOps { ops: Vec<AnyOp> },
+    PushOps {
+        ops: Vec<AnyOp>,
+    },
     /// Live ink chunk.
     StrokeDelta(StrokeDelta),
     /// Live stroke abandoned.
     StrokeCancel(StrokeCancel),
     /// "I am now showing `page`": relayed to every other session (followers switch too).
-    SwitchPage { page: PageId },
+    SwitchPage {
+        page: PageId,
+    },
     /// Request a `NotebookList`.
     ListNotebooks,
     /// Request a `PageList` for `notebook`.
-    ListPages { notebook: NotebookId },
+    ListPages {
+        notebook: NotebookId,
+    },
     /// Client detected a gap (or lost local state): resend everything after `from_seq`.
-    Resync { from_seq: u64 },
-    Ping { nonce: u64 },
-    Pong { nonce: u64 },
+    Resync {
+        from_seq: u64,
+    },
+    Ping {
+        nonce: u64,
+    },
+    Pong {
+        nonce: u64,
+    },
 }
 
 /// Server → client. Variant order frozen; append only.
@@ -148,9 +160,14 @@ pub enum ServerMsg {
         current_page: Option<PageId>,
     },
     /// Handshake refused; the server closes right after.
-    Reject { reason: RejectReason },
+    Reject {
+        reason: RejectReason,
+    },
     /// Pairing accepted: store `token` (and pin `server`); continue with `Hello`.
-    Paired { token: AuthToken, server: ServerId },
+    Paired {
+        token: AuthToken,
+        server: ServerId,
+    },
     /// Answer to one `PushOps`: `op_ids[i]` is logged at `seqs[i]` (an already-logged op id reports its
     /// original seq), in push order; refused ops are listed in `rejected` and never logged. Every pushed op
     /// appears in exactly one of the two lists.
@@ -169,13 +186,24 @@ pub enum ServerMsg {
         more: bool,
     },
     /// Live ink from `device` (never echoed to its producer).
-    StrokeDelta { device: DeviceId, delta: StrokeDelta },
+    StrokeDelta {
+        device: DeviceId,
+        delta: StrokeDelta,
+    },
     /// Live stroke from `device` abandoned.
-    StrokeCancel { device: DeviceId, cancel: StrokeCancel },
+    StrokeCancel {
+        device: DeviceId,
+        cancel: StrokeCancel,
+    },
     /// `by` switched to `page`.
-    SwitchPage { page: PageId, by: DeviceId },
+    SwitchPage {
+        page: PageId,
+        by: DeviceId,
+    },
     /// Live notebooks, ascending id.
-    NotebookList { notebooks: Vec<NotebookInfo> },
+    NotebookList {
+        notebooks: Vec<NotebookInfo>,
+    },
     /// Live pages of `notebook`, ascending `(position, id)`.
     PageList {
         notebook: NotebookId,
@@ -183,9 +211,15 @@ pub enum ServerMsg {
     },
     /// The server dropped broadcasts for this session (lag) or honoured a client `Resync`: discard live
     /// strokes; `OpsSince` batches from `from_seq` follow.
-    Resync { from_seq: u64 },
-    Ping { nonce: u64 },
-    Pong { nonce: u64 },
+    Resync {
+        from_seq: u64,
+    },
+    Ping {
+        nonce: u64,
+    },
+    Pong {
+        nonce: u64,
+    },
 }
 
 impl fmt::Debug for AuthToken {

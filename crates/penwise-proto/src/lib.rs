@@ -47,8 +47,8 @@ pub use ids::{DeviceId, IdParseError, ItemRef, NotebookId, OpId, PageId, ServerI
 pub use live::{LiveError, LiveSample, LiveStroke, LiveStrokes, StrokeCancel, StrokeDelta};
 pub use lww::{FieldStamps, LwwError, MaterializedItem, Register};
 pub use message::{
-    AuthToken, ClientKind, ClientMsg, NotebookInfo, OpRejected, PageInfo, PairingCode, RejectReason,
-    ServerMsg,
+    AuthToken, ClientKind, ClientMsg, NotebookInfo, OpRejected, PageInfo, PairingCode,
+    RejectReason, ServerMsg,
 };
 pub use notebook::{
     Background, Notebook, NotebookChange, NotebookPatch, Page, PageChange, PageKind, PagePatch,
