@@ -23,3 +23,12 @@ wasm-bindgen-test.workspace = true
 
 [lints]
 workspace = true
+
+# PNG goldens and the brush sheet need the rasterizer.
+[[test]]
+name = "raster_golden"
+required-features = ["raster"]
+
+[[example]]
+name = "brush_sheet"
+required-features = ["raster"]

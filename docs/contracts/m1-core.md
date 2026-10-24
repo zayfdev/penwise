@@ -135,8 +135,9 @@ codec::stroke stores {params, seed, quantized samples}; geometry is always re-de
   `TiltResponse::side`, `TiltResponse::is_none`, `Dynamics::apply`
 - `builder.rs`: `StrokeBuilder::new`, `StrokeBuilder::push`, `StrokeBuilder::geometry`, `StrokeBuilder::finish`
 - Tests: `map` on `SM_X710` corners and tilt cases (upright → azimuth 0); One Euro rate independence and first
-  sample passthrough; `c(p)` table values from ink-rendering.md §5; builder chunk invariance with random chunkings
-  for one outline and one stamp preset (needs b and c landed; run after merge).
+  sample passthrough; windowed pen speed within ±10% of true speed at 125/250/482 Hz; `c(p)` table values from
+  ink-rendering.md §5; builder chunk invariance with random chunkings for one outline and one stamp preset (needs
+  b and c landed; run after merge).
 
 ### b — outline brushes
 - `outline/mod.rs`: `OutlineEngine::new`, `extend`, `update_tail`, `view`, `finish`

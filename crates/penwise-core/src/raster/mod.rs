@@ -14,7 +14,10 @@ pub mod stamps;
 /// Re-export so callers use the exact `tiny-skia` version core was built against.
 pub use tiny_skia;
 
-use crate::geometry::StrokeGeometry;
+use crate::bounds::Bounds;
+use crate::brush::BlendMode;
+use crate::float::clamp01;
+use crate::geometry::{StrokeGeometry, StrokeStyle};
 use ::tiny_skia::Pixmap;
 use stamps::CoverageBuffer;
 
@@ -34,6 +37,41 @@ impl Viewport {
         origin_y: 0.0,
         scale: 1.0,
     };
+
+    /// `Ok` when the mapping is usable (finite origin, finite positive scale).
+    pub(crate) fn check(&self) -> Result<(), RasterError> {
+        if self.scale.is_finite()
+            && self.scale > 0.0
+            && self.origin_x.is_finite()
+            && self.origin_y.is_finite()
+        {
+            Ok(())
+        } else {
+            Err(RasterError::InvalidViewport)
+        }
+    }
+
+    /// Page px → pixel coordinates.
+    pub(crate) fn map(&self, x: f32, y: f32) -> [f32; 2] {
+        [
+            (x - self.origin_x) * self.scale,
+            (y - self.origin_y) * self.scale,
+        ]
+    }
+
+    /// Page-space rectangle covered by a `width × height` pixmap.
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "pixmap dimensions are far below 2^24"
+    )]
+    fn page_rect(&self, width: u32, height: u32) -> Bounds {
+        Bounds {
+            min_x: self.origin_x,
+            min_y: self.origin_y,
+            max_x: self.origin_x + width as f32 / self.scale,
+            max_y: self.origin_y + height as f32 / self.scale,
+        }
+    }
 }
 
 /// Raster failures.
@@ -76,5 +114,42 @@ pub fn render_strokes(
     pixmap: &mut Pixmap,
     scratch: &mut CoverageBuffer,
 ) -> Result<(), RasterError> {
-    todo!()
+    viewport.check()?;
+    // Slack of 1 pixel + 1 page px covers anti-aliasing and the 1 px minimum dab fade.
+    let page = viewport
+        .page_rect(pixmap.width(), pixmap.height())
+        .inflate(1.0 + 1.0 / viewport.scale);
+    for multiply_band in [true, false] {
+        for stroke in strokes {
+            let is_multiply = stroke.style().blend == BlendMode::Multiply;
+            if is_multiply == multiply_band && stroke.bounds().intersects(&page) {
+                render_one(stroke, viewport, pixmap, scratch)?;
+            }
+        }
+    }
+    Ok(())
 }
+
+fn render_one(
+    stroke: &StrokeGeometry,
+    viewport: &Viewport,
+    pixmap: &mut Pixmap,
+    scratch: &mut CoverageBuffer,
+) -> Result<(), RasterError> {
+    match stroke {
+        StrokeGeometry::Outline { style, outline } => {
+            outline::fill_outline(pixmap, outline, style, viewport)
+        }
+        StrokeGeometry::Stamps { style, grain, dabs } => {
+            stamps::render_stamps(pixmap, dabs, grain.as_ref(), style, viewport, scratch)
+        }
+    }
+}
+
+/// Effective straight alpha `color.a/255 · opacity`, in `[0, 1]`.
+pub(crate) fn stroke_alpha(style: &StrokeStyle) -> f32 {
+    clamp01(f32::from(style.color.a) / 255.0 * clamp01(style.opacity))
+}
+
+#[cfg(test)]
+mod tests;

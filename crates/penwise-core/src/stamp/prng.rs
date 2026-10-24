@@ -41,25 +41,39 @@ pub mod channel {
 /// (wrapping multiplies).
 #[must_use]
 pub const fn mix64(z: u64) -> u64 {
-    todo!()
+    let z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    let z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
 }
 
 /// `mix64(seed + (dab_index·CHANNELS_PER_DAB + channel + 1)·GAMMA)`, all wrapping. `channel` must be
 /// `< CHANNELS_PER_DAB` (larger values alias the next dab's slots; callers use the [`channel`] constants).
 #[must_use]
+#[allow(clippy::cast_lossless, reason = "u64::from is not const")]
 pub const fn rand_u64(seed: u64, dab_index: u64, channel: u32) -> u64 {
-    todo!()
+    let slot = dab_index
+        .wrapping_mul(CHANNELS_PER_DAB)
+        .wrapping_add(channel as u64)
+        .wrapping_add(1);
+    mix64(seed.wrapping_add(slot.wrapping_mul(GAMMA)))
 }
 
 /// Uniform `[0, 1)`: `(rand_u64(..) >> 40) as f32 · 2⁻²⁴` (exact).
 #[must_use]
+#[allow(clippy::cast_precision_loss, reason = "24-bit integer, exact in f32")]
 pub fn rand_unit(seed: u64, dab_index: u64, channel: u32) -> f32 {
-    todo!()
+    (rand_u64(seed, dab_index, channel) >> 40) as f32 * (1.0 / 16_777_216.0)
 }
 
 /// Uniform `[0, 1)` for spray particle `particle` (`< MAX_PARTICLES`) of dab `dab_index`:
 /// `rand_unit(seed ^ PARTICLE_DOMAIN, dab_index·MAX_PARTICLES + particle, channel)` (wrapping).
 #[must_use]
 pub fn rand_particle_unit(seed: u64, dab_index: u64, particle: u32, channel: u32) -> f32 {
-    todo!()
+    let key = dab_index
+        .wrapping_mul(MAX_PARTICLES)
+        .wrapping_add(u64::from(particle));
+    rand_unit(seed ^ PARTICLE_DOMAIN, key, channel)
 }
+
+#[cfg(test)]
+mod tests;

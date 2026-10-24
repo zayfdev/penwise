@@ -16,9 +16,9 @@
 //! `new + push(S) + finish`. Engines must therefore keep all cross-push state (filters, arc length, dab phase,
 //! dab index, outline prefixes) in fields, never recompute from chunk boundaries.
 
-use crate::brush::BrushParams;
+use crate::brush::{BrushFamily, BrushParams};
 use crate::dynamics::{Dynamics, InkPoint};
-use crate::geometry::{GeometryView, StrokeGeometry};
+use crate::geometry::{GeometryView, StrokeGeometry, StrokeStyle};
 use crate::outline::OutlineEngine;
 use crate::sample::Sample;
 use crate::smoothing::Smoother;
@@ -51,7 +51,19 @@ impl StrokeBuilder {
     /// `BrushFamily::Outline` and [`StampEngine`] for `BrushFamily::Stamp`.
     #[must_use]
     pub fn new(params: &BrushParams, seed: u64) -> Self {
-        todo!()
+        let engine = match params.family {
+            BrushFamily::Outline(kind) => Engine::Outline(OutlineEngine::new(params, kind)),
+            BrushFamily::Stamp(kind) => Engine::Stamp(StampEngine::new(params, kind, seed)),
+        };
+        Self {
+            params: *params,
+            seed,
+            dynamics: params.dynamics,
+            smoother: Smoother::new(&params.smoothing),
+            engine,
+            tail: None,
+            committed: Vec::new(),
+        }
     }
 
     /// Appends samples in order. Each sample is quantized ([`Sample::quantize`]), filtered and run through the
@@ -59,14 +71,52 @@ impl StrokeBuilder {
     /// then the engine's tentative part is recomputed from the new tail (`update_tail`). Empty `samples` is a
     /// no-op. Timestamps are taken as given (non-increasing `t_us` is handled by the filter's Δt guard).
     pub fn push(&mut self, samples: &[Sample]) {
-        todo!()
+        if samples.is_empty() {
+            return;
+        }
+        self.committed.clear();
+        for sample in samples {
+            let filtered = self.smoother.filter(&sample.quantize());
+            let point = self.dynamics.apply(&filtered);
+            let raw = [filtered.raw_x, filtered.raw_y];
+            if let Some((previous, _)) = self.tail.replace((point, raw)) {
+                self.committed.push(previous);
+            }
+        }
+        let tail = self.tail.as_ref().map(|(point, _)| point);
+        match &mut self.engine {
+            Engine::Outline(engine) => {
+                if !self.committed.is_empty() {
+                    engine.extend(&self.committed);
+                }
+                engine.update_tail(tail);
+            }
+            Engine::Stamp(engine) => {
+                if !self.committed.is_empty() {
+                    engine.extend(&self.committed);
+                }
+                engine.update_tail(tail);
+            }
+        }
     }
 
     /// Current live geometry: committed (stable) parts plus the tentative tail. Before the first sample it is an
     /// empty view of the right family. Never allocates.
     #[must_use]
     pub fn geometry(&self) -> GeometryView<'_> {
-        todo!()
+        let style = self.style();
+        match &self.engine {
+            Engine::Outline(engine) => GeometryView::Outline {
+                style,
+                outline: engine.view(),
+            },
+            Engine::Stamp(engine) => GeometryView::Stamps {
+                style,
+                grain: self.params.stamp.grain,
+                stable: engine.stable(),
+                tentative: engine.tentative(),
+            },
+        }
     }
 
     /// Ends the stroke: the pending tail is committed with its raw position (see module docs) and the engine
@@ -75,7 +125,28 @@ impl StrokeBuilder {
     /// style. Style = `{ params.color, params.opacity, params.blend }`.
     #[must_use]
     pub fn finish(self) -> StrokeGeometry {
-        todo!()
+        let style = self.style();
+        let last = self.tail.map(|(point, [x, y])| InkPoint { x, y, ..point });
+        match self.engine {
+            Engine::Outline(engine) => StrokeGeometry::Outline {
+                style,
+                outline: engine.finish(last.as_ref()),
+            },
+            Engine::Stamp(engine) => StrokeGeometry::Stamps {
+                style,
+                grain: self.params.stamp.grain,
+                dabs: engine.finish(last.as_ref()),
+            },
+        }
+    }
+
+    /// Compositing style of this stroke's brush.
+    fn style(&self) -> StrokeStyle {
+        StrokeStyle {
+            color: self.params.color,
+            opacity: self.params.opacity,
+            blend: self.params.blend,
+        }
     }
 
     /// Batch convenience: `new(params, seed)`, one `push(samples)`, `finish()`.
@@ -98,3 +169,6 @@ impl StrokeBuilder {
         self.seed
     }
 }
+
+#[cfg(test)]
+mod tests;

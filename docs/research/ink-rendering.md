@@ -297,7 +297,11 @@ Crates exist ([`one-euro`](https://crates.io/crates/one-euro) 0.9.0 MIT, `one-eu
 the filter is ~25 lines — implement in core `smoothing` to control float ops for determinism.
 
 ### 4.2 Velocity response
-Speed `v = |(dx̂, dŷ)|` px/s from the filter. Thinning for ink-like brushes (fast strokes thinner):
+Speed `v` px/s = arc length of the quantized (unfiltered) sample positions over the last 10 ms of timestamps,
+divided by the elapsed time (window spans at least the last segment; timestamps made monotone; elapsed ≥ 0.5 ms).
+Not the One Euro derivative `|(dx̂, dŷ)|`: `(x − x̂_prev)/Δt` compares raw with lagged filtered positions and
+overestimates true speed 3–4× in a rate-dependent way (that derivative only drives the filter's own cutoff).
+Thinning for ink-like brushes (fast strokes thinner):
 ```
 P_v = P · (1 − k_v · smoothstep(v0, v1, v))     v0 = 300 px/s, v1 = 3000 px/s
 ```

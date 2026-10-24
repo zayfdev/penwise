@@ -5,6 +5,7 @@
 //! Turns a [`FilteredSample`] into an [`InkPoint`]: the per-point input both brush families consume.
 //! Transcendentals via `libm` only (`powf`).
 
+use crate::float::{clamp01, smoothstep};
 use crate::smoothing::FilteredSample;
 
 /// Pressure curve `c(p)`: `x = clamp((p − floor)/(saturation − floor), 0, 1)`, `c = x^gamma`.
@@ -39,8 +40,20 @@ impl PressureCurve {
     /// - otherwise `x = clamp01((p − floor)/(saturation − floor))`; `x == 0` → 0, `x == 1` → 1 (no `powf` call),
     ///   else `libm::powf(x, gamma)`.
     #[must_use]
+    #[allow(clippy::float_cmp, reason = "exact endpoints skip powf by contract")]
     pub fn eval(&self, p: f32) -> f32 {
-        todo!()
+        let p = if p.is_nan() { 0.0 } else { p };
+        if self.saturation <= self.floor {
+            return if p >= self.floor { 1.0 } else { 0.0 };
+        }
+        let x = clamp01((p - self.floor) / (self.saturation - self.floor));
+        if x == 0.0 {
+            0.0
+        } else if x == 1.0 {
+            1.0
+        } else {
+            libm::powf(x, self.gamma)
+        }
     }
 }
 
@@ -69,13 +82,13 @@ impl VelocityResponse {
     /// Size multiplier `1 − size·smoothstep(v0, v1, speed)` ([`crate::float::smoothstep`]).
     #[must_use]
     pub fn size_factor(&self, speed: f32) -> f32 {
-        todo!()
+        1.0 - self.size * smoothstep(self.v0, self.v1, speed)
     }
 
     /// Alpha multiplier `1 − opacity·smoothstep(v0, v1, speed)`.
     #[must_use]
     pub fn opacity_factor(&self, speed: f32) -> f32 {
-        todo!()
+        1.0 - self.opacity * smoothstep(self.v0, self.v1, speed)
     }
 }
 
@@ -110,14 +123,15 @@ impl TiltResponse {
     /// Side-contact amount `s = smoothstep(theta0, theta1, tilt)` in `0..=1`.
     #[must_use]
     pub fn side(&self, tilt: f32) -> f32 {
-        todo!()
+        smoothstep(self.theta0, self.theta1, tilt)
     }
 
     /// True when this response never changes a dab (`max_aspect == 1 && max_radius_scale == 1` and
     /// `side_alpha == 1`); lets the stamp engine skip the tilt path.
     #[must_use]
+    #[allow(clippy::float_cmp, reason = "neutral values are exact constants")]
     pub fn is_none(&self) -> bool {
-        todo!()
+        self.max_aspect == 1.0 && self.max_radius_scale == 1.0 && self.side_alpha == 1.0
     }
 }
 
@@ -146,7 +160,7 @@ pub struct InkPoint {
     pub size_pressure: f32,
     /// `velocity.opacity_factor(speed)`: multiplies stamp dab alpha (1 for outline brushes).
     pub alpha_factor: f32,
-    /// Filtered speed, px/s.
+    /// Pen speed, px/s ([`FilteredSample::speed`]: windowed, from quantized positions).
     pub speed: f32,
     /// Radians, as [`crate::Sample::tilt`].
     pub tilt: f32,
@@ -161,6 +175,20 @@ impl Dynamics {
     /// (filtered `x, y`, not `raw_x, raw_y`).
     #[must_use]
     pub fn apply(&self, f: &FilteredSample) -> InkPoint {
-        todo!()
+        let pressure = self.pressure.eval(f.pressure);
+        InkPoint {
+            x: f.x,
+            y: f.y,
+            t_us: f.t_us,
+            pressure,
+            size_pressure: pressure * self.velocity.size_factor(f.speed),
+            alpha_factor: self.velocity.opacity_factor(f.speed),
+            speed: f.speed,
+            tilt: f.tilt,
+            azimuth: f.azimuth,
+        }
     }
 }
+
+#[cfg(test)]
+mod tests;

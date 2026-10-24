@@ -1,0 +1,17 @@
+[package]
+name = "penwise-fixtures"
+description = "Dev tool: converts raw `getevent` pen captures into `.pwrec` fixtures for the core golden tests."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+penwise-core = { path = "../penwise-core" }
+anyhow.workspace = true
+flate2.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

@@ -201,7 +201,50 @@ impl DigitizerRanges {
     ///   `tx == 0 && ty == 0` (upright; avoids `atan2(0, −0) = π`). Device +X/+Y are taken as page +x/+y.
     /// - `t_us` is copied.
     #[must_use]
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "f64 → f32 at the end of the mapping is the documented output precision"
+    )]
     pub fn map(&self, raw: &RawSample) -> Sample {
-        todo!()
+        let pressure_span = f64::from(self.pressure.max) - f64::from(self.pressure.min);
+        let pressure = if pressure_span > 0.0 {
+            ((f64::from(raw.pressure) - f64::from(self.pressure.min)) / pressure_span)
+                .clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let (tilt, azimuth) = tilt_azimuth(raw.tilt_x_deg, raw.tilt_y_deg);
+        Sample {
+            x: axis_px(raw.x, self.x, self.x_scale) as f32 + 0.0,
+            y: axis_px(raw.y, self.y, self.y_scale) as f32 + 0.0,
+            pressure: pressure as f32 + 0.0,
+            tilt: tilt as f32 + 0.0,
+            azimuth: azimuth as f32 + 0.0,
+            t_us: raw.t_us,
+        }
     }
 }
+
+/// `(raw − min) · num / den` in `f64`; 0 for a zero `den`.
+fn axis_px(raw: i32, range: AxisRange, scale: PxScale) -> f64 {
+    if scale.den == 0 {
+        return 0.0;
+    }
+    (f64::from(raw) - f64::from(range.min)) * f64::from(scale.num) / f64::from(scale.den)
+}
+
+/// Device tilt X/Y degrees → (`AXIS_TILT`, `AXIS_ORIENTATION`) radians, `f64` via `libm`.
+fn tilt_azimuth(tilt_x_deg: i32, tilt_y_deg: i32) -> (f64, f64) {
+    const MAX_DEG: f64 = 89.0;
+    let to_rad = |deg: i32| f64::from(deg).clamp(-MAX_DEG, MAX_DEG) * core::f64::consts::PI / 180.0;
+    let tx = libm::tan(to_rad(tilt_x_deg));
+    let ty = libm::tan(to_rad(tilt_y_deg));
+    if tx == 0.0 && ty == 0.0 {
+        return (0.0, 0.0);
+    }
+    let tilt = libm::atan((tx * tx + ty * ty).sqrt()).clamp(0.0, core::f64::consts::FRAC_PI_2);
+    (tilt, libm::atan2(tx, -ty))
+}
+
+#[cfg(test)]
+mod tests;

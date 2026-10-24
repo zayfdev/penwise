@@ -88,8 +88,58 @@ impl OneEuro {
     /// - `d = (x − x̂_prev)/Δt`; `d̂ = d̂_prev + α(d_cutoff)·(d − d̂_prev)` per axis.
     /// - `speed = sqrt(d̂x² + d̂y²)`; `fc = min_cutoff + β·speed`; `x̂ = x̂_prev + α(fc)·(x − x̂_prev)` per axis.
     pub fn filter(&mut self, x: f32, y: f32, t_us: u32) -> (f32, f32, f32) {
-        todo!()
+        let Some(prev) = self.prev else {
+            self.prev = Some(OneEuroState {
+                x,
+                y,
+                dx: 0.0,
+                dy: 0.0,
+                t_us,
+                dt_s: MIN_DT_S,
+            });
+            return (x, y, 0.0);
+        };
+        let dt = next_dt(prev.t_us, prev.dt_s, t_us);
+        let a_d = alpha(self.params.d_cutoff_hz, dt);
+        let dx = prev.dx + a_d * ((x - prev.x) / dt - prev.dx);
+        let dy = prev.dy + a_d * ((y - prev.y) / dt - prev.dy);
+        let speed = (dx * dx + dy * dy).sqrt();
+        let a = alpha(self.params.min_cutoff_hz + self.params.beta * speed, dt);
+        let fx = prev.x + a * (x - prev.x);
+        let fy = prev.y + a * (y - prev.y);
+        self.prev = Some(OneEuroState {
+            x: fx,
+            y: fy,
+            dx,
+            dy,
+            t_us,
+            dt_s: dt,
+        });
+        (fx, fy, speed)
     }
+}
+
+/// Δt in seconds from sample timestamps: `t ≤ prev_t` reuses `prev_dt`; result is at least [`MIN_DT_S`].
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "Δt in seconds fits f32; computed in f64 for an exact µs → s product"
+)]
+fn next_dt(prev_t_us: u32, prev_dt_s: f32, t_us: u32) -> f32 {
+    let dt = if t_us > prev_t_us {
+        (f64::from(t_us - prev_t_us) * 1e-6) as f32
+    } else {
+        prev_dt_s
+    };
+    crate::float::max(dt, MIN_DT_S)
+}
+
+/// EMA weight `1 / (1 + τ/Δt)`, `τ = 1/(2π·fc)`. `fc ≤ 0` (or NaN) means `τ = ∞`: weight 0 (hold), never NaN.
+fn alpha(cutoff_hz: f32, dt_s: f32) -> f32 {
+    if cutoff_hz.is_nan() || cutoff_hz <= 0.0 {
+        return 0.0;
+    }
+    let tau = 1.0 / (2.0 * core::f32::consts::PI * cutoff_hz);
+    1.0 / (1.0 + tau / dt_s)
 }
 
 /// One Euro filter for a scalar signal (pressure); same equations as [`OneEuro`] with one axis and the
@@ -109,7 +159,86 @@ impl OneEuroScalar {
 
     /// Filters one value; first call returns `v` unchanged. Δt rules as in [`OneEuro::filter`].
     pub fn filter(&mut self, v: f32, t_us: u32) -> f32 {
-        todo!()
+        let Some((prev_v, prev_d, prev_t, prev_dt)) = self.prev else {
+            self.prev = Some((v, 0.0, t_us, MIN_DT_S));
+            return v;
+        };
+        let dt = next_dt(prev_t, prev_dt, t_us);
+        let d = prev_d + alpha(self.params.d_cutoff_hz, dt) * ((v - prev_v) / dt - prev_d);
+        let a = alpha(self.params.min_cutoff_hz + self.params.beta * d.abs(), dt);
+        let fv = prev_v + a * (v - prev_v);
+        self.prev = Some((fv, d, t_us, dt));
+        fv
+    }
+}
+
+/// Time window of the pen-speed estimate, µs (ink-rendering.md §4.2).
+pub const SPEED_WINDOW_US: u32 = 10_000;
+
+/// Samples kept for the speed window (covers 10 ms up to 1.5 kHz; faster input shortens the window).
+const SPEED_HISTORY: usize = 16;
+
+/// Pen speed from quantized sample positions, independent of the One Euro filter (whose derivative
+/// `(x − x̂_prev)/Δt` mixes filtered and raw positions and overestimates speed rate-dependently).
+///
+/// `speed = Σ|p_k − p_{k−1}| / (t_newest − t_oldest)` over the newest samples whose timestamp lies within
+/// [`SPEED_WINDOW_US`] of the newest one. The window always spans at least the last segment, and extends back
+/// further while the elapsed time is still 0 (repeated timestamps). Timestamps are made monotone
+/// (`t = max(t, t_prev)`); elapsed time is at least [`MIN_DT_S`]. Only `+ − × ÷ sqrt`, so bit-identical.
+#[derive(Debug, Clone, PartialEq)]
+struct SpeedEstimator {
+    /// Ring buffer of `(x, y, monotone t_us)`; `head` is the next write slot.
+    ring: [(f32, f32, u32); SPEED_HISTORY],
+    len: usize,
+    head: usize,
+}
+
+impl SpeedEstimator {
+    const fn new() -> Self {
+        Self {
+            ring: [(0.0, 0.0, 0); SPEED_HISTORY],
+            len: 0,
+            head: 0,
+        }
+    }
+
+    /// `k`-th newest stored sample (`k = 0` is the newest); `k < len`.
+    fn back(&self, k: usize) -> (f32, f32, u32) {
+        self.ring[(self.head + SPEED_HISTORY - 1 - k) % SPEED_HISTORY]
+    }
+
+    /// Records one quantized sample and returns the windowed speed, px/s (0 for the first sample).
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "elapsed seconds fit f32; computed in f64 for an exact µs → s product"
+    )]
+    fn push(&mut self, x: f32, y: f32, t_us: u32) -> f32 {
+        let t = if self.len == 0 {
+            t_us
+        } else {
+            u32::max(t_us, self.back(0).2)
+        };
+        self.ring[self.head] = (x, y, t);
+        self.head = (self.head + 1) % SPEED_HISTORY;
+        self.len = usize::min(self.len + 1, SPEED_HISTORY);
+        if self.len < 2 {
+            return 0.0;
+        }
+        let mut arc = 0.0_f32;
+        let mut elapsed_us = 0_u32;
+        let mut newer = (x, y);
+        for k in 1..self.len {
+            let (px, py, pt) = self.back(k);
+            let age = t - pt;
+            if k > 1 && age > SPEED_WINDOW_US && elapsed_us > 0 {
+                break;
+            }
+            let (dx, dy) = (newer.0 - px, newer.1 - py);
+            arc += (dx * dx + dy * dy).sqrt();
+            elapsed_us = age;
+            newer = (px, py);
+        }
+        arc / crate::float::max((f64::from(elapsed_us) * 1e-6) as f32, MIN_DT_S)
     }
 }
 
@@ -125,18 +254,20 @@ pub struct FilteredSample {
     pub tilt: f32,
     pub azimuth: f32,
     pub t_us: u32,
-    /// Filtered speed, px/s (from the position filter).
+    /// Pen speed, px/s, from the quantized positions over the last [`SPEED_WINDOW_US`] (not the One Euro
+    /// derivative).
     pub speed: f32,
     /// The unfiltered (quantized) position, used for the pen-up `last` point.
     pub raw_x: f32,
     pub raw_y: f32,
 }
 
-/// Position + pressure smoother for one stroke.
+/// Position + pressure smoother and pen-speed estimator for one stroke.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Smoother {
     position: OneEuro,
     pressure: OneEuroScalar,
+    speed: SpeedEstimator,
 }
 
 impl Smoother {
@@ -146,12 +277,30 @@ impl Smoother {
         Self {
             position: OneEuro::new(params.position),
             pressure: OneEuroScalar::new(params.pressure),
+            speed: SpeedEstimator::new(),
         }
     }
 
     /// Filters one already-quantized sample (position via [`OneEuro`], pressure via [`OneEuroScalar`] then
-    /// clamped to `0..=1`; tilt/azimuth/t copied; `raw_x/raw_y` = input position).
+    /// clamped to `0..=1`; tilt/azimuth/t copied; `raw_x/raw_y` = input position). `speed` is the windowed
+    /// pen speed of the quantized positions (see [`SPEED_WINDOW_US`]); the One Euro derivative only drives
+    /// the filter's own adaptive cutoff.
     pub fn filter(&mut self, s: &Sample) -> FilteredSample {
-        todo!()
+        let (x, y, _) = self.position.filter(s.x, s.y, s.t_us);
+        let pressure = crate::float::clamp01(self.pressure.filter(s.pressure, s.t_us));
+        FilteredSample {
+            x,
+            y,
+            pressure,
+            tilt: s.tilt,
+            azimuth: s.azimuth,
+            t_us: s.t_us,
+            speed: self.speed.push(s.x, s.y, s.t_us),
+            raw_x: s.x,
+            raw_y: s.y,
+        }
     }
 }
+
+#[cfg(test)]
+mod tests;

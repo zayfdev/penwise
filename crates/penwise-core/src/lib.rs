@@ -7,18 +7,6 @@
 //!
 //! Data flow: [`Sample`] → [`Sample::quantize`] → [`smoothing`] → [`dynamics`] → [`outline`] | [`stamp`]
 //! → [`StrokeGeometry`] → `raster` (feature `raster`) / [`codec`].
-// M1 contract stage: slices replace the `todo!()` bodies. The orchestrator removes this allow-list once every
-// slice has landed; implementers must not rely on it for finished code.
-#![allow(
-    clippy::todo,
-    unused_variables,
-    dead_code,
-    clippy::missing_panics_doc,
-    clippy::unused_self,
-    clippy::needless_pass_by_value,
-    reason = "M1 contract stubs: removed when the last slice lands"
-)]
-
 pub mod bounds;
 pub mod brush;
 pub mod builder;
