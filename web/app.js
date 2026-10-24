@@ -1,18 +1,29 @@
-// Live mirror of the tablet page. Read-only: the server sends the page on connect, then every new stroke.
-// Geometry comes from the same Rust engine the tablet uses (wasm), so strokes look identical.
+// Live mirror of the tablet page. Geometry comes from the same Rust engine the tablet uses (wasm), so strokes
+// look identical. Pages come from the server's library: the sidebar lists notebooks and pages, and the canvas
+// shows the active one with its paper background.
 
 import init, { geometry } from "./pkg/penwise_wasm.js";
 
 const PAGE_WIDTH = 1600;
 const PAGE_HEIGHT = 2560;
 const DAB_STRIDE = 9;
+const BACKGROUND_SPACING = 93.7;
+const BACKGROUND_COLORS = { ruled: "#C9D6E8", grid: "#DCE3EC", dots: "#C6CEDA" };
+const MIN_INFINITE = { width: 1200, height: 900 };
+const INFINITE_PADDING = 200;
 
 const canvas = document.getElementById("page");
 const status = document.getElementById("status");
+const sidebar = document.getElementById("sidebar");
+const library = document.getElementById("library");
+const newPageForm = document.getElementById("new-page");
 const ctx = canvas.getContext("2d");
 
 /** @type {Array<{json: object, argb: number}>} */
 let strokes = [];
+/** @type {{version: number, active: string, notebooks: Array<{id: string, title: string, pages: Array<object>}>} | null} */
+let meta = null;
+let activePage = null;
 
 /** In-progress strokes from the tablet, keyed `${session}:${id}`; dropped when the stroke commits. */
 const live = new Map();
@@ -26,22 +37,189 @@ window.addEventListener("resize", () => {
   render();
 });
 
-/** Fits the page into the window, keeping its aspect ratio and wasting no pixels. */
-function resize() {
-  const scale = Math.min(
-    (window.innerWidth - 32) / PAGE_WIDTH,
-    (window.innerHeight - 32) / PAGE_HEIGHT,
-  );
-  const dpr = window.devicePixelRatio || 1;
-  canvas.style.width = `${Math.round(PAGE_WIDTH * scale)}px`;
-  canvas.style.height = `${Math.round(PAGE_HEIGHT * scale)}px`;
-  canvas.width = Math.round(PAGE_WIDTH * scale * dpr);
-  canvas.height = Math.round(PAGE_HEIGHT * scale * dpr);
-  ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
-}
-
 /** Access token from the page URL (`/?token=…`); empty when the server runs without one. */
 const TOKEN = new URLSearchParams(location.search).get("token") ?? "";
+
+// ---------------------------------------------------------------- library state
+
+/** Applies an index snapshot from the server and repaints the sidebar. */
+function applyMeta(next) {
+  meta = next;
+  if (!activePage || !pageById(activePage.id)) activePage = pageById(next.active);
+  renderSidebar();
+  resize();
+  render();
+}
+
+/** A page record anywhere in the library. */
+function pageById(id) {
+  if (!meta) return null;
+  for (const notebook of meta.notebooks) {
+    for (const page of notebook.pages) if (page.id === id) return page;
+  }
+  return null;
+}
+
+const GLYPHS = { blank: "▢", ruled: "☰", grid: "▦", dots: "⋯" };
+
+/** Rebuilds the sidebar list, keeping it in sync with `meta`. */
+function renderSidebar() {
+  library.textContent = "";
+  if (!meta) return;
+  for (const notebook of meta.notebooks) {
+    const heading = document.createElement("div");
+    heading.className = "notebook";
+    heading.textContent = notebook.title;
+    library.append(heading);
+    for (const page of notebook.pages) {
+      const row = document.createElement("div");
+      row.className = `page${activePage && page.id === activePage.id ? " active" : ""}`;
+      row.dataset.page = page.id;
+
+      const glyph = document.createElement("span");
+      glyph.className = "glyph";
+      glyph.textContent = page.kind?.t === "infinite" ? "∞" : (GLYPHS[page.background] ?? "▢");
+      const title = document.createElement("span");
+      title.className = "title";
+      title.textContent = page.title;
+      row.append(glyph, title);
+
+      const tools = document.createElement("span");
+      tools.className = "tools";
+      const rename = document.createElement("button");
+      rename.textContent = "✎";
+      rename.title = "Rename";
+      rename.addEventListener("click", (event) => {
+        event.stopPropagation();
+        renamePage(page);
+      });
+      const remove = document.createElement("button");
+      remove.textContent = "×";
+      remove.title = "Delete";
+      remove.disabled = totalPages() <= 1;
+      remove.addEventListener("click", (event) => {
+        event.stopPropagation();
+        deletePage(page);
+      });
+      tools.append(rename, remove);
+      row.append(tools);
+      row.addEventListener("click", () => selectPage(page.id));
+      library.append(row);
+    }
+  }
+}
+
+function totalPages() {
+  if (!meta) return 0;
+  return meta.notebooks.reduce((sum, notebook) => sum + notebook.pages.length, 0);
+}
+
+/** Asks the server to make `id` the active page; the server then sends the snapshot. */
+function selectPage(id) {
+  if (activePage && activePage.id === id) return;
+  client.send({ t: "select", page: id });
+}
+
+function renamePage(page) {
+  const name = window.prompt("Page title", page.title);
+  if (!name || name === page.title) return;
+  void mutate(`/pages/${page.id}`, "PATCH", { title: name });
+}
+
+function deletePage(page) {
+  if (!window.confirm(`Delete "${page.title}"?`)) return;
+  void mutate(`/pages/${page.id}`, "DELETE");
+}
+
+/** Sends one library mutation and applies the index it returns. */
+async function mutate(path, method, body) {
+  const response = await fetch(`${path}?token=${encodeURIComponent(TOKEN)}`, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!response.ok) {
+    status.textContent = `library: ${await response.text()}`;
+    return;
+  }
+  const result = await response.json();
+  if (result.meta) applyMeta(result.meta);
+  return result;
+}
+
+newPageForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const data = new FormData(newPageForm);
+  const title = String(data.get("title") ?? "").trim();
+  const template = String(data.get("template") ?? "blank");
+  const payload = {
+    background: template === "infinite" ? "blank" : template,
+    kind: template === "infinite" ? { t: "infinite" } : undefined,
+  };
+  if (title) payload.title = title;
+  const result = await mutate("/pages", "POST", payload);
+  newPageForm.reset();
+  newPageForm.classList.remove("open");
+  if (result?.page) selectPage(result.page.id);
+});
+
+document.getElementById("add-page").addEventListener("click", () => {
+  newPageForm.classList.toggle("open");
+});
+
+// ---------------------------------------------------------------- page geometry
+
+/** Page origin and size in page px; infinite pages wrap their content. */
+function pageExtent() {
+  const kind = activePage?.kind ?? { t: "fixed", width: PAGE_WIDTH, height: PAGE_HEIGHT };
+  if (kind.t !== "infinite") {
+    return { originX: 0, originY: 0, width: kind.width, height: kind.height };
+  }
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const stroke of strokes) extendFromJson(stroke.json);
+  for (const entry of live.values()) if (entry.json) extendFromJson(entry.json);
+
+  function extendFromJson(json) {
+    const points = json?.outline ?? json?.dabs ?? [];
+    const stride = json?.outline ? 2 : DAB_STRIDE;
+    for (let i = 0; i + 1 < points.length; i += stride) {
+      if (points[i] < minX) minX = points[i];
+      if (points[i] > maxX) maxX = points[i];
+      if (points[i + 1] < minY) minY = points[i + 1];
+      if (points[i + 1] > maxY) maxY = points[i + 1];
+    }
+  }
+  if (!Number.isFinite(minX)) return { originX: 0, originY: 0, width: MIN_INFINITE.width, height: MIN_INFINITE.height };
+  const originX = minX - INFINITE_PADDING;
+  const originY = minY - INFINITE_PADDING;
+  return {
+    originX,
+    originY,
+    width: Math.max(maxX - originX + INFINITE_PADDING, MIN_INFINITE.width),
+    height: Math.max(maxY - originY + INFINITE_PADDING, MIN_INFINITE.height),
+  };
+}
+
+/** Fits the page into the space beside the sidebar, keeping its aspect ratio. */
+function resize() {
+  const extent = pageExtent();
+  const availableWidth = window.innerWidth - sidebar.offsetWidth - 32;
+  const availableHeight = window.innerHeight - 32;
+  const scale = Math.min(availableWidth / extent.width, availableHeight / extent.height);
+  const dpr = window.devicePixelRatio || 1;
+  canvas.style.width = `${Math.round(extent.width * scale)}px`;
+  canvas.style.height = `${Math.round(extent.height * scale)}px`;
+  canvas.width = Math.round(extent.width * scale * dpr);
+  canvas.height = Math.round(extent.height * scale * dpr);
+  ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+  ctx.translate(-extent.originX, -extent.originY);
+  canvas.dataset.scale = String(scale * dpr);
+}
+
+// ---------------------------------------------------------------- transport
 
 class WebSocketClient {
   start() {
@@ -57,6 +235,10 @@ class WebSocketClient {
     socket.addEventListener("message", (event) => this.onFrame(event.data));
   }
 
+  send(frame) {
+    if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify(frame));
+  }
+
   setState(text, offline) {
     status.textContent = text;
     status.classList.toggle("offline", offline);
@@ -69,15 +251,33 @@ class WebSocketClient {
     } catch {
       return;
     }
-    if (frame.t === "page" && Array.isArray(frame.strokes)) {
-      strokes = frame.strokes.map(rebuild);
+    if (frame.t === "meta" && frame.meta) {
+      applyMeta(frame.meta);
+    } else if (frame.t === "active" && frame.page) {
+      const page = pageById(frame.page);
+      if (page) {
+        activePage = page;
+        live.clear();
+        renderSidebar();
+        resize();
+        render();
+      }
+    } else if (frame.t === "page" && Array.isArray(frame.strokes)) {
+      const page = pageById(frame.page);
+      if (!page) return;
+      activePage = page;
+      strokes = frame.strokes.map(rebuild).filter(Boolean);
+      live.clear();
+      renderSidebar();
+      resize();
+      render();
+      this.setState(`mirroring · ${strokes.length} strokes`, false);
+    } else if (frame.t === "stroke" && frame.stroke && frame.page === activePage?.id) {
+      const rebuilt = rebuild(frame.stroke);
+      if (rebuilt) strokes.push(rebuilt);
       this.setState(`mirroring · ${strokes.length} strokes`, false);
       render();
-    } else if (frame.t === "stroke" && frame.stroke) {
-      strokes.push(rebuild(frame.stroke));
-      this.setState(`mirroring · ${strokes.length} strokes`, false);
-      render();
-    } else if (frame.t === "live" && Array.isArray(frame.samples)) {
+    } else if (frame.t === "live" && Array.isArray(frame.samples) && frame.page === activePage?.id) {
       accumulateLive(frame);
       render();
     } else if (frame.t === "live_end") {
@@ -92,7 +292,7 @@ class WebSocketClient {
 /** Rebuilds one stroke's geometry through the wasm engine; malformed strokes are dropped. */
 function rebuild(wire) {
   const json = buildJson(wire.preset, wire.seed, wire.argb, wire.scale, wire.samples, wire.times);
-  return { json, argb: wire.argb };
+  return json ? { json, argb: wire.argb } : null;
 }
 
 /** Runs a stroke through the engine; returns parsed geometry or null when it is not renderable. */
@@ -110,7 +310,16 @@ function accumulateLive(frame) {
   let entry = live.get(key);
   if (!entry) {
     if (!frame.first) return; // missed the opening frame: wait for the next stroke
-    entry = { preset: frame.preset, argb: frame.argb, scale: frame.scale, seed: frame.seed, samples: [], times: [], json: null, builtAt: 0 };
+    entry = {
+      preset: frame.preset,
+      argb: frame.argb,
+      scale: frame.scale,
+      seed: frame.seed,
+      samples: [],
+      times: [],
+      json: null,
+      builtAt: 0,
+    };
     live.set(key, entry);
   }
   entry.samples.push(...frame.samples);
@@ -122,6 +331,8 @@ function accumulateLive(frame) {
   if (!entry.json) live.delete(key);
 }
 
+// ---------------------------------------------------------------- drawing
+
 function rgba(argb, alpha) {
   const a = ((argb >>> 24) & 255) / 255;
   const r = (argb >>> 16) & 255;
@@ -130,11 +341,40 @@ function rgba(argb, alpha) {
   return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, a * alpha))})`;
 }
 
+/** Horizontal rules, a square grid or a dot grid, in page pixels. */
+function drawBackground(extent, background) {
+  const color = BACKGROUND_COLORS[background];
+  if (!color) return;
+  ctx.fillStyle = color;
+  if (background === "ruled" || background === "grid") {
+    for (let y = extent.originY + BACKGROUND_SPACING; y < extent.originY + extent.height; y += BACKGROUND_SPACING) {
+      ctx.fillRect(extent.originX, y, extent.width, 1);
+    }
+  }
+  if (background === "grid" || background === "dots") {
+    for (let x = extent.originX + BACKGROUND_SPACING; x < extent.originX + extent.width; x += BACKGROUND_SPACING) {
+      if (background === "grid") ctx.fillRect(x, extent.originY, 1, extent.height);
+      else {
+        for (let y = extent.originY + BACKGROUND_SPACING; y < extent.originY + extent.height; y += BACKGROUND_SPACING) {
+          ctx.beginPath();
+          ctx.arc(x, y, 1.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+  }
+}
+
 function render() {
+  const extent = pageExtent();
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.restore();
+
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(extent.originX, extent.originY, extent.width, extent.height);
+  drawBackground(extent, activePage?.background ?? "blank");
 
   // Under-ink band first: multiply strokes (highlighter) then everything else.
   for (const pass of [true, false]) {
@@ -195,4 +435,5 @@ function drawDabs(json, argb) {
 }
 
 // Startup last: class declarations are not initialised before this point (TDZ).
-new WebSocketClient().start();
+const client = new WebSocketClient();
+client.start();

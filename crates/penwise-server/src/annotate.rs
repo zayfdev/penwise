@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::Deserialize;
 
-use crate::state::{AGENT_LAYER, StrokeMsg};
+use crate::library::{AGENT_LAYER, StrokeMsg};
 
 /// Distance between synthesised samples along a segment, page px.
 const STEP_PX: f32 = 4.0;
@@ -28,6 +28,9 @@ static SEEDS: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Deserialize)]
 pub struct AnnotateRequest {
+    /// Target page; defaults to the active one.
+    #[serde(default)]
+    pub page: Option<String>,
     pub strokes: Vec<AnnotatedStroke>,
 }
 
@@ -141,6 +144,7 @@ mod tests {
 
     fn request(stroke: AnnotatedStroke) -> AnnotateRequest {
         AnnotateRequest {
+            page: None,
             strokes: vec![stroke],
         }
     }

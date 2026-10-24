@@ -124,14 +124,20 @@ fn tools_list() -> serde_json::Value {
                         "scale": {
                             "type": "number",
                             "description": "Pixels per page pixel, 0.05–4 (default 1; use 0.5 for a smaller image)."
-                        }
+                        },
+                        "page": { "type": "string", "description": "Page id; defaults to the active page." }
                     }
                 }
             },
             {
                 "name": "penwise_page_status",
-                "description": "Number of strokes currently on the Penwise page.",
-                "inputSchema": { "type": "object", "properties": {} }
+                "description": "Stroke and page counts for the active page.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "page": { "type": "string", "description": "Page id; defaults to the active page." }
+                    }
+                }
             },
             {
                 "name": "penwise_annotate",
@@ -139,6 +145,7 @@ fn tools_list() -> serde_json::Value {
                 "inputSchema": {
                     "type": "object",
                     "properties": {
+                        "page": { "type": "string", "description": "Page id; defaults to the active page." },
                         "strokes": {
                             "type": "array",
                             "items": {
@@ -162,7 +169,42 @@ fn tools_list() -> serde_json::Value {
             {
                 "name": "penwise_clear_agent_marks",
                 "description": "Remove every mark this or another agent drew on the page (the user's own ink is untouched).",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "page": { "type": "string", "description": "Page id; defaults to the active page." }
+                    }
+                }
+            },
+            {
+                "name": "penwise_list_pages",
+                "description": "List notebooks and their pages, with the active page id.",
                 "inputSchema": { "type": "object", "properties": {} }
+            },
+            {
+                "name": "penwise_create_page",
+                "description": "Create a page (defaults: next free title, A4 portrait, blank).",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "title": { "type": "string" },
+                        "background": { "type": "string", "enum": ["blank", "ruled", "grid", "dots"] },
+                        "kind": {
+                            "type": "object",
+                            "description": "{\"t\":\"fixed\",\"width\":W,\"height\":H} or {\"t\":\"infinite\"}"
+                        },
+                        "notebook": { "type": "string" }
+                    }
+                }
+            },
+            {
+                "name": "penwise_switch_page",
+                "description": "Make a page the active one (what other tools address by default).",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": { "page": { "type": "string" } },
+                    "required": ["page"]
+                }
             }
         ]
     })
@@ -182,8 +224,14 @@ fn call_tool(
                 .pointer("/params/arguments/scale")
                 .and_then(serde_json::Value::as_f64)
                 .unwrap_or(1.0);
+            let arguments = arguments(request);
+            let page = arguments
+                .get("page")
+                .and_then(serde_json::Value::as_str)
+                .map(|page| format!("&page={page}"))
+                .unwrap_or_default();
             let png = endpoint
-                .get(&format!("/page.png?scale={scale}"))
+                .get(&format!("/page.png?scale={scale}{page}"))
                 .map_err(|failure| error(-32603, &failure))?;
             Ok(serde_json::json!({
                 "content": [
@@ -194,7 +242,7 @@ fn call_tool(
         }
         "penwise_page_status" => {
             let body = endpoint
-                .get("/health")
+                .get(&page_path("/health", request))
                 .map_err(|failure| error(-32603, &failure))?;
             let text = String::from_utf8_lossy(&body).to_string();
             Ok(serde_json::json!({ "content": [{ "type": "text", "text": text }] }))
@@ -211,7 +259,31 @@ fn call_tool(
         }
         "penwise_clear_agent_marks" => {
             let reply = endpoint
-                .post("/annotate/clear", "{}")
+                .post(&page_path("/annotate/clear", request), "{}")
+                .map_err(|failure| error(-32603, &failure))?;
+            Ok(text_content(&String::from_utf8_lossy(&reply)))
+        }
+        "penwise_list_pages" => {
+            let body = endpoint
+                .get("/pages")
+                .map_err(|failure| error(-32603, &failure))?;
+            Ok(text_content(&String::from_utf8_lossy(&body)))
+        }
+        "penwise_create_page" => {
+            let body = arguments(request).to_string();
+            let reply = endpoint
+                .post("/pages", &body)
+                .map_err(|failure| error(-32603, &failure))?;
+            Ok(text_content(&String::from_utf8_lossy(&reply)))
+        }
+        "penwise_switch_page" => {
+            let arguments = arguments(request);
+            let page = arguments
+                .get("page")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| error(-32602, "missing page"))?;
+            let reply = endpoint
+                .post(&format!("/pages/{page}/select"), "{}")
                 .map_err(|failure| error(-32603, &failure))?;
             Ok(text_content(&String::from_utf8_lossy(&reply)))
         }
@@ -273,6 +345,25 @@ impl Endpoint {
             ));
         }
         Ok(raw[split + 4..].to_vec())
+    }
+}
+
+/// The tool call's `arguments` object, empty when the client sent none.
+fn arguments(request: &serde_json::Value) -> serde_json::Value {
+    request
+        .pointer("/params/arguments")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}))
+}
+
+/// `path`, plus `?page=<id>` when the arguments name one.
+fn page_path(path: &str, request: &serde_json::Value) -> String {
+    match arguments(request)
+        .get("page")
+        .and_then(serde_json::Value::as_str)
+    {
+        Some(page) => format!("{path}?page={page}"),
+        None => path.to_owned(),
     }
 }
 
