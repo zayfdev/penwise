@@ -2,6 +2,24 @@ package dev.penwise.ink
 
 import dev.penwise.core.InkGeometry
 
+/** An edit that arrived from elsewhere; applied without history. */
+sealed interface RemoteOp {
+    data class Remove(
+        val seeds: Set<Long>,
+    ) : RemoteOp
+
+    data object Clear : RemoteOp
+
+    data class Replace(
+        val seeds: Set<Long>,
+        val fragments: List<SavedStroke>,
+    ) : RemoteOp
+
+    data class Add(
+        val strokes: List<SavedStroke>,
+    ) : RemoteOp
+}
+
 /**
  * Finished strokes of the page, in drawing order, with the data needed to save them.
  *
@@ -78,6 +96,60 @@ class StrokeStore {
         publish()
         onPageChanged?.invoke()
         return true
+    }
+
+    /**
+     * Applies an edit made elsewhere (another client, or the server restoring an archive).
+     *
+     * Remote edits are not ours to undo: they never enter the history and never echo back as ops, or a
+     * two-client page would ping-pong the same removal forever.
+     */
+    fun applyRemote(op: RemoteOp): Boolean {
+        val before = entries.size
+        when (op) {
+            is RemoteOp.Remove -> {
+                entries.removeAll { it.seed in op.seeds }
+            }
+
+            is RemoteOp.Clear -> {
+                entries.clear()
+            }
+
+            is RemoteOp.Replace -> {
+                entries.removeAll { it.seed in op.seeds }
+                entries.addAll(op.fragments)
+            }
+
+            is RemoteOp.Add -> {
+                val known = entries.mapTo(HashSet()) { it.seed }
+                entries.addAll(op.strokes.filter { it.seed !in known })
+            }
+        }
+        if (entries.size == before && op !is RemoteOp.Replace) return false
+        publish()
+        onPageChanged?.invoke()
+        persist()
+        return true
+    }
+
+    /**
+     * Gives every stroke that has no seed a fresh one and returns the strokes that changed.
+     *
+     * Strokes imported from the oldest page files had no seed at all, so several shared seed `0`. Identity is the
+     * seed, which made those strokes mutually indistinguishable: one removal deleted all of them, and clients
+     * collapsed them into one. Seeds are only ever compared for identity, so rewriting them is safe.
+     */
+    fun assignMissingSeeds(): List<SavedStroke> {
+        val changed = entries.filter { it.seed == 0L }
+        if (changed.isEmpty()) return emptyList()
+        var next = System.currentTimeMillis()
+        for (stroke in changed) {
+            stroke.reseed(next++)
+        }
+        publish()
+        onPageChanged?.invoke()
+        onRewrite?.invoke(snapshot())
+        return changed
     }
 
     fun canUndo(): Boolean = undoStack.isNotEmpty()

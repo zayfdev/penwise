@@ -351,10 +351,10 @@ pub(super) fn read_objects(conn: &Connection, page: &str) -> Result<PageContent,
         })
         .map_err(|error| error.to_string())?;
     for row in rows {
-        let (_, kind, layer, codec, payload) = row.map_err(|error| error.to_string())?;
+        let (id, kind, layer, codec, payload) = row.map_err(|error| error.to_string())?;
         match (kind.as_str(), codec.as_str()) {
             ("stroke", "stroke_v1") => {
-                if let Some(stroke) = stroke_codec::decode(&payload, &layer) {
+                if let Some(stroke) = stroke_codec::decode(&payload, &layer, &id) {
                     content.strokes.push(stroke);
                 } else {
                     tracing::warn!(page = %page, "stroke blob undecodable");

@@ -54,6 +54,7 @@ pub async fn handle(socket: WebSocket, library: Arc<Library>) {
                 Ok(frame) => {
                     let wanted = frame.page.as_deref();
                     if wanted.is_some_and(|wanted| wanted != page) {
+                        tracing::debug!(session, watching = %page, wanted = ?wanted, "frame for another page");
                         continue;
                     }
                     if sink.send(Message::Text(frame.text.into())).await.is_err() {
@@ -123,6 +124,7 @@ async fn on_text(library: &Library, session: u64, page: &mut String, text: &str)
             if !library.select(target).await {
                 return Some(error_frame("unknown page"));
             }
+            tracing::info!(session, page = target, "session selected a page");
             target.clone_into(page);
             Some(library.snapshot_frame(target).await)
         }

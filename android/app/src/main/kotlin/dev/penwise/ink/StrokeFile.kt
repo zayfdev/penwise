@@ -20,7 +20,7 @@ class SavedStroke(
     val presetIndex: Int,
     val argb: Int,
     val sizeScale: Float,
-    val seed: Long,
+    var seed: Long,
     val samples: FloatArray,
     val times: IntArray,
     val count: Int,
@@ -29,6 +29,11 @@ class SavedStroke(
     @Volatile
     var geometry: InkGeometry? = null
         private set
+
+    /** Gives a stroke without one a fresh identity; see [StrokeStore.assignMissingSeeds]. */
+    fun reseed(value: Long) {
+        seed = value
+    }
 
     /** Records geometry that was just built for this stroke (freshly drawn, not reloaded). */
     fun attachGeometry(built: InkGeometry) {

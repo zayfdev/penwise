@@ -44,14 +44,17 @@ pub(crate) fn encode(stroke: &StrokeMsg) -> Vec<u8> {
 }
 
 /// Decodes a `stroke_v1` blob; `None` when it is not one or is truncated.
-pub(crate) fn decode(bytes: &[u8], layer: &str) -> Option<StrokeMsg> {
+///
+/// `seed` is the row id, which *is* the stroke's identity: the blob's copy is a `u64` and cannot hold the
+/// signed decimal strings a Kotlin tablet sends for seeds above 2^63 (those were stored as 0, which made every
+/// such stroke look like the same stroke to clients).
+pub(crate) fn decode(bytes: &[u8], layer: &str, seed: &str) -> Option<StrokeMsg> {
     if bytes.len() < HEADER_BYTES || bytes[0] != VERSION {
         return None;
     }
     let preset = u32::from_le_bytes(bytes[1..5].try_into().ok()?);
     let argb = i32::from_le_bytes(bytes[5..9].try_into().ok()?);
     let scale = f32::from_le_bytes(bytes[9..13].try_into().ok()?);
-    let seed = u64::from_le_bytes(bytes[13..21].try_into().ok()?);
     let count = u32::from_le_bytes(bytes[21..25].try_into().ok()?) as usize;
     if bytes.len() != HEADER_BYTES + count * 24 {
         return None;
@@ -80,7 +83,7 @@ pub(crate) fn decode(bytes: &[u8], layer: &str) -> Option<StrokeMsg> {
         preset,
         argb,
         scale,
-        seed: seed.to_string(),
+        seed: seed.to_owned(),
         samples,
         times,
     })
@@ -105,8 +108,17 @@ mod tests {
     #[test]
     fn a_stroke_round_trips_exactly() {
         let original = stroke();
-        let decoded = decode(&encode(&original), "ink").expect("decodes");
+        let decoded = decode(&encode(&original), "ink", &original.seed).expect("decodes");
         assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn a_signed_seed_survives_because_the_row_id_carries_it() {
+        // Kotlin sends `Long.toString()`: seeds above 2^63 arrive negative.
+        let mut original = stroke();
+        "-2520638596094309648".clone_into(&mut original.seed);
+        let decoded = decode(&encode(&original), "ink", &original.seed).expect("decodes");
+        assert_eq!(original.seed, decoded.seed);
     }
 
     #[test]
@@ -125,8 +137,8 @@ mod tests {
     #[test]
     fn a_truncated_blob_is_rejected() {
         let blob = encode(&stroke());
-        assert!(decode(&blob[..blob.len() - 1], "ink").is_none());
-        assert!(decode(&[], "ink").is_none());
+        assert!(decode(&blob[..blob.len() - 1], "ink", "1").is_none());
+        assert!(decode(&[], "ink", "1").is_none());
     }
 
     #[test]
@@ -136,7 +148,7 @@ mod tests {
             times: Vec::new(),
             ..stroke()
         };
-        let decoded = decode(&encode(&original), "ink").expect("decodes");
+        let decoded = decode(&encode(&original), "ink", &original.seed).expect("decodes");
         assert_eq!(decoded, original);
     }
 }

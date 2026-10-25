@@ -29,6 +29,19 @@ impl Library {
             .unwrap_or_default()
     }
 
+    /// Re-reads a page from the store and replaces the cached copy; returns the fresh content.
+    ///
+    /// Batch writes go through here because the store has the final say on what a page holds (it ignores a
+    /// stroke whose seed is already there); extending the cache blindly would list duplicates to clients.
+    pub(super) async fn refresh(&self, page: &str) -> PageContent {
+        let fresh = self.store.content(page).unwrap_or_default();
+        self.pages
+            .write()
+            .await
+            .insert(page.to_owned(), fresh.clone());
+        fresh
+    }
+
     /// A copy of everything on one page.
     pub async fn content(&self, page: &str) -> Option<PageContent> {
         self.pages.read().await.get(page).cloned()
@@ -103,12 +116,9 @@ impl Library {
                 return 0;
             }
         };
-        let all = {
-            let mut pages = self.pages.write().await;
-            let current = pages.entry(page.to_owned()).or_default();
-            current.strokes.extend(strokes);
-            current.clone()
-        };
+        // The database is authoritative: it ignored strokes the page already had, so the cache is rebuilt from
+        // it rather than extended blindly (which would list duplicates to every client).
+        let all = self.refresh(page).await;
         self.fan_out(Some(page.to_owned()), page_frame(page, &all));
         self.resolve_anchors(page).await;
         added

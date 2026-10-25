@@ -112,3 +112,92 @@ class StrokeStoreTest {
         assertTrue("only the add was recorded, so one undo empties the page", store.snapshot().isEmpty())
     }
 }
+
+/** Edits from other clients must land on screen without becoming this device's undo history. */
+class RemoteEditTest {
+    /** A stroke with geometry already built: `merge` only accepts strokes it could paint. */
+    private fun stroke(seed: Long): SavedStroke =
+        SavedStroke(
+            0,
+            -16_777_216,
+            1f,
+            seed,
+            floatArrayOf(0f, 0f, 0.5f, 0f, 0f, 1f, 1f, 0.5f, 0f, 0f),
+            intArrayOf(0, 8_000),
+            2,
+        ).apply {
+            attachGeometry(
+                dev.penwise.core.InkGeometry(
+                    isStamps = false,
+                    outline = floatArrayOf(0f, 0f, 1f, 1f),
+                    contourEnds = intArrayOf(2),
+                    dabs = FloatArray(0),
+                    argb = -16_777_216,
+                    opacity = 1f,
+                    multiply = false,
+                ),
+            )
+        }
+
+    @Test
+    fun a_remote_stroke_is_merged_and_cannot_be_undone_here() {
+        val store = StrokeStore()
+        assertTrue(store.merge(listOf(stroke(1L))))
+        assertFalse("a remote stroke is not this device's step", store.canUndo())
+    }
+
+    @Test
+    fun a_remote_removal_takes_the_stroke_away() {
+        val store = StrokeStore()
+        store.merge(listOf(stroke(1L), stroke(2L)))
+        assertTrue(store.applyRemote(RemoteOp.Remove(setOf(1L))))
+        assertFalse("nothing to remove", store.applyRemote(RemoteOp.Remove(setOf(99L))))
+    }
+
+    @Test
+    fun a_remote_clear_empties_the_page_without_a_local_undo_step() {
+        val store = StrokeStore()
+        store.merge(listOf(stroke(1L), stroke(2L)))
+        assertTrue(store.applyRemote(RemoteOp.Clear))
+        assertFalse(store.canUndo())
+    }
+}
+
+/** Legacy strokes arrived without a seed; every stroke must be individually addressable. */
+class LegacySeedTest {
+    private fun stroke(
+        seed: Long,
+        samples: FloatArray = floatArrayOf(0f, 0f, 0.5f, 0f, 0f),
+    ): SavedStroke =
+        SavedStroke(0, -16_777_216, 1f, seed, samples, intArrayOf(0), 1).apply {
+            attachGeometry(
+                dev.penwise.core.InkGeometry(
+                    isStamps = false,
+                    outline = floatArrayOf(0f, 0f, 1f, 1f),
+                    contourEnds = intArrayOf(2),
+                    dabs = FloatArray(0),
+                    argb = -16_777_216,
+                    opacity = 1f,
+                    multiply = false,
+                ),
+            )
+        }
+
+    @Test
+    fun strokes_without_a_seed_get_distinct_ones() {
+        val store = StrokeStore()
+        store.merge(listOf(stroke(0L), stroke(0L, floatArrayOf(5f, 5f, 0.5f, 0f, 0f))))
+        val changed = store.assignMissingSeeds()
+        assertEquals(2, changed.size)
+        val seeds = store.snapshot().map { it.seed }
+        assertEquals("seeds must differ: $seeds", 2, seeds.toSet().size)
+        assertTrue(store.snapshot().none { it.seed == 0L })
+    }
+
+    @Test
+    fun a_second_pass_finds_nothing_to_fix() {
+        val store = StrokeStore()
+        store.merge(listOf(stroke(7L)))
+        assertTrue(store.assignMissingSeeds().isEmpty())
+    }
+}

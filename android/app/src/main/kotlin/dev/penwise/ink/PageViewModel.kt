@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 
 private const val HISTORY_SAVE_DELAY_MS = 400L
@@ -161,6 +162,18 @@ class PageViewModel(
             "image" -> {
                 if (frame.optString("page") == activePageId) {
                     frame.optJSONObject("image")?.let(PageImage::read)?.let(images::add)
+                }
+            }
+
+            "stroke" -> {
+                if (frame.optString("page") == activePageId) {
+                    RemoteEdits.applyStroke(store, viewModelScope, frame)
+                }
+            }
+
+            "op" -> {
+                if (frame.optString("page") == activePageId) {
+                    RemoteEdits.applyOp(store, viewModelScope, frame.optJSONObject("op"))
                 }
             }
         }
@@ -456,35 +469,16 @@ class PageViewModel(
         withContext(Dispatchers.Default) { saved.forEach { it.rebuild() } }
         store.restore(saved)
         val (undo, redo) = withContext(Dispatchers.IO) { undoFile.load() }
-        withContext(Dispatchers.Default) { rebuildHistory(undo + redo) }
+        withContext(Dispatchers.Default) { HistoryGeometry.rebuild(undo + redo) }
         store.restoreHistory(undo, redo)
+        // Strokes from the oldest files have no seed; give them one so each can be addressed and removed.
+        val reseeded = store.assignMissingSeeds()
+        if (reseeded.isNotEmpty()) {
+            Log.i("PenwiseSync", "gave ${reseeded.size} legacy strokes a seed")
+            reseeded.forEach(sync::sendStroke)
+        }
         store.onPageChanged?.invoke()
         Log.i("PenwiseSync", "page $id loaded: ${saved.size} strokes, ${undo.size} undo steps")
-    }
-
-    /** Every stroke a persisted step refers to needs its geometry before undo can paint it. */
-    private fun rebuildHistory(steps: List<HistoryStep>) {
-        steps.forEach { step ->
-            when (step) {
-                is HistoryStep.Added -> {
-                    if (step.stroke.geometry == null) step.stroke.rebuild()
-                }
-
-                is HistoryStep.Removed -> {
-                    step.removed.forEach { (_, stroke) ->
-                        if (stroke.geometry ==
-                            null
-                        ) {
-                            stroke.rebuild()
-                        }
-                    }
-                }
-
-                is HistoryStep.Replaced -> {
-                    (step.removed + step.added).forEach { if (it.geometry == null) it.rebuild() }
-                }
-            }
-        }
     }
 
     /** Writes the undo history after a short quiet period: drawing must never wait on a file. */

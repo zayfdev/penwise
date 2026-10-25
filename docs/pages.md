@@ -31,6 +31,13 @@ state(key, value)                                       -- e.g. the active page
 - The index (`kind`, titles, background, active page) upserts rather than replace-all, because deleting a
   `pages` row cascades to its objects.
 
+### Stroke identity (seeds)
+
+A stroke's seed is an opaque **string**: the tablet sends `Long.toString()`, so seeds above 2^63 arrive negative.
+The server stores the seed as the object id and reads it back from there — the `stroke_v1` blob's `u64` copy
+cannot represent those, and using it collapsed every such stroke to seed `0` (127 strokes looked like one, and
+removals hit all of them). Old strokes with no seed are given one by the tablet on open.
+
 ### The tablet's stroke files
 
 `SavedStrokeCodec` (Android) reads two on-disk layouts, both under the same version byte: the current one (five

@@ -42,14 +42,15 @@ bless:
 # Android (android/): the SDK comes from ANDROID_HOME, defaulting to ~/Android/Sdk.
 export ANDROID_HOME := env_var_or_default("ANDROID_HOME", home_directory() / "Android/Sdk")
 
+# ANDROID_HOME defaults to the usual SDK location so a bare `just android` works.
 android:
-    cd android && ./gradlew :app:assembleDebug
+    cd android && ANDROID_HOME=${ANDROID_HOME:-$HOME/Android/Sdk} ./gradlew :app:assembleDebug
 
 android-check:
-    cd android && ./gradlew :app:lintDebug ktlintCheck detekt :app:testDebugUnitTest
+    cd android && ANDROID_HOME=${ANDROID_HOME:-$HOME/Android/Sdk} ./gradlew :app:lintDebug ktlintCheck detekt :app:testDebugUnitTest
 
 install:
-    cd android && ./gradlew :app:installDebug
+    cd android && ANDROID_HOME=${ANDROID_HOME:-$HOME/Android/Sdk} ./gradlew :app:installDebug
 
 # Build, install and smoke-check the tablet: crash buffer, page load, local files, sync, screenshot.
 device-check:
