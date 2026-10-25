@@ -70,7 +70,14 @@ internal object SavedStrokeCodec {
         }
     }
 
-    /** Next record, or `null` at a clean end of stream. Throws [IllegalStateException] on a malformed record. */
+    /**
+     * Next record, or `null` at a clean end of stream. Throws [IllegalStateException] on a malformed record.
+     *
+     * Two layouts exist in the wild, both under the same file version: the current one stores each sample's five
+     * floats and then the time array, while builds before 2026-10-25 interleaved the time into the sample record.
+     * Reading an old file with the new layout silently turns ink into noise (and made a page look empty after a
+     * clear), so the layout is detected from the data: recorded times only ever increase.
+     */
     fun read(input: DataInputStream): SavedStroke? {
         val tag =
             try {
@@ -85,6 +92,41 @@ internal object SavedStrokeCodec {
         val seed = input.readLong()
         val count = input.readInt()
         check(count in 0..MAX_SAMPLES) { "bad sample count $count" }
+        input.mark(count * RECORD_BYTES + BYTE_MARGIN)
+        val split = readSplit(input, preset, argb, scale, seed, count)
+        if (split.times.areOrdered()) return split
+        input.reset()
+        val interleaved = readInterleaved(input, preset, argb, scale, seed, count)
+        return interleaved
+    }
+
+    private fun readSplit(
+        input: DataInputStream,
+        preset: Int,
+        argb: Int,
+        scale: Float,
+        seed: Long,
+        count: Int,
+    ): SavedStroke {
+        val samples = FloatArray(count * STRIDE)
+        val times = IntArray(count)
+        // Every sample's floats first (the block the current writer emits), then every time.
+        for (i in 0 until count) {
+            for (k in 0 until STRIDE) samples[i * STRIDE + k] = input.readFloat()
+        }
+        for (i in 0 until count) times[i] = input.readInt()
+        return SavedStroke(preset, argb, scale, seed, samples, times, count)
+    }
+
+    /** The pre-2026-10-25 layout: `x, y, pressure, tilt, azimuth, time` per sample. */
+    private fun readInterleaved(
+        input: DataInputStream,
+        preset: Int,
+        argb: Int,
+        scale: Float,
+        seed: Long,
+        count: Int,
+    ): SavedStroke {
         val samples = FloatArray(count * STRIDE)
         val times = IntArray(count)
         for (i in 0 until count) {
@@ -93,6 +135,16 @@ internal object SavedStrokeCodec {
         }
         return SavedStroke(preset, argb, scale, seed, samples, times, count)
     }
+
+    /** Bytes per sample on disk, for both layouts: five floats and one time. */
+    private const val RECORD_BYTES = 24
+    private const val BYTE_MARGIN = 8
+}
+
+/** True when the recorded times never go backwards, which is what a correctly read stroke looks like. */
+private fun IntArray.areOrdered(): Boolean {
+    for (index in 1 until size) if (this[index] < this[index - 1]) return false
+    return size == 0 || this[0] >= 0
 }
 
 /** Page file: every stroke of one page, in drawing order. */

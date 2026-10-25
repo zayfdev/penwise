@@ -31,6 +31,13 @@ state(key, value)                                       -- e.g. the active page
 - The index (`kind`, titles, background, active page) upserts rather than replace-all, because deleting a
   `pages` row cascades to its objects.
 
+### The tablet's stroke files
+
+`SavedStrokeCodec` (Android) reads two on-disk layouts, both under the same version byte: the current one (five
+floats per sample, then the time array) and the pre-2026-10-25 one (time interleaved per sample). It detects them
+from the data — recorded times only increase — because reading a legacy file with the current layout turns ink
+into noise and silently empties the history.
+
 ### Pictures
 
 `assets/<sha256>.png`, content-addressed: the same screenshot placed twice is one file. Ids are 64 hex

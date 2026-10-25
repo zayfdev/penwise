@@ -107,3 +107,57 @@ class StrokeFileCodecTest {
         const val SEED_C = 33L
     }
 }
+
+/** Files written before 2026-10-25 interleaved each sample's time; reading them with the current layout loses ink. */
+class LegacyStrokeLayoutTest {
+    /** Writes one record the way the old builds did: `x, y, pressure, tilt, azimuth, time` per sample. */
+    private fun legacyRecord(
+        preset: Int,
+        seed: Long,
+        samples: FloatArray,
+        times: IntArray,
+    ): ByteArray {
+        val buffer = ByteArrayOutputStream()
+        DataOutputStream(buffer).use { out ->
+            out.writeByte(1)
+            out.writeInt(preset)
+            out.writeInt(-16_777_216)
+            out.writeFloat(1f)
+            out.writeLong(seed)
+            out.writeInt(times.size)
+            for (i in times.indices) {
+                for (k in 0 until 5) out.writeFloat(samples[i * 5 + k])
+                out.writeInt(times[i])
+            }
+        }
+        return buffer.toByteArray()
+    }
+
+    private val samples = floatArrayOf(10f, 20f, 0.5f, 0.1f, -1f, 12f, 24f, 0.6f, 0.2f, -1f)
+    private val times = intArrayOf(0, 8_333)
+
+    @Test
+    fun an_interleaved_record_reads_back_exactly() {
+        val bytes = legacyRecord(4, 7L, samples, times)
+        val stroke = DataInputStream(ByteArrayInputStream(bytes)).use { SavedStrokeCodec.read(it) }
+        assertNotNull(stroke)
+        requireNotNull(stroke)
+        assertEquals(4, stroke.presetIndex)
+        assertEquals(samples.toList(), stroke.samples.take(10))
+        assertEquals(times.toList(), stroke.times.toList())
+    }
+
+    @Test
+    fun the_current_layout_still_reads() {
+        val buffer = ByteArrayOutputStream()
+        DataOutputStream(buffer).use { out ->
+            SavedStrokeCodec.write(out, SavedStroke(2, -16_777_216, 1f, 9L, samples, times, times.size))
+        }
+        val stroke =
+            DataInputStream(ByteArrayInputStream(buffer.toByteArray())).use { SavedStrokeCodec.read(it) }
+        assertNotNull(stroke)
+        requireNotNull(stroke)
+        assertEquals(samples.toList(), stroke.samples.take(10))
+        assertEquals(times.toList(), stroke.times.toList())
+    }
+}

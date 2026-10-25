@@ -106,6 +106,21 @@ Remaining for the two agentic workflows:
 3. **Anchoring resolution.** `anchors` is created but unused: strokes need a commit-time lookup (which selector
    contains the stroke's centroid) and a re-resolve pass when the element map is refreshed.
 
+## 1e. The lost ink, recovered (and the format bug that hid it)
+
+On 2026-10-25 the Ruled-notes page was wiped on both the tablet and the server. The tablet's undo history
+survived, and it held the ink — but the app could not read it: files written before that day store each sample as
+`x, y, pressure, tilt, azimuth, time` (24 bytes, time interleaved), while the reader expected all five floats and
+*then* the time array. Reading a legacy file produced noise, so the history silently loaded as empty (`199 undo
+steps` became `0`), and a clear looked unrecoverable.
+
+Recovered by decoding the legacy layout directly: **275 strokes / 37,562 samples**, restored to their page and
+merged back onto the tablet (`merged 286 remote strokes`). The reader now detects the layout from the data —
+recorded times only ever increase — with a unit test per layout (`LegacyStrokeLayoutTest`).
+
+Lesson for the next format change: the file has a version byte, so **bump it** and keep a reader for the old
+version; do not rely on the shape staying compatible.
+
 ## 2. Toolbar should collapse
 
 The app's toolbar is permanently pinned across the top: 13 brush previews, colours, size, shapes, eraser,
