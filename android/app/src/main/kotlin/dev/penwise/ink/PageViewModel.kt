@@ -130,8 +130,9 @@ class PageViewModel(
         SyncClient(settings.endpoints()).also { client ->
             client.onFrame = ::onRemoteFrame
             client.onConnect = {
+                // Ask for the server's page and diff against it; sending our whole page here would wipe
+                // whatever the server gained while we were away (agent marks, other devices).
                 sync.sendSelect(activePageId)
-                sync.sendPage(store.snapshot())
                 SyncService.start(
                     getApplication(),
                     getApplication<Application>().getString(R.string.sync_connected, settings.displayedUrl()),
@@ -191,7 +192,12 @@ class PageViewModel(
         }
     }
 
-    /** Merges a server page snapshot into the store (agent marks, other devices). */
+    /**
+     * Applies a server page snapshot: merge what we lack, then offer the server whatever it lacks.
+     *
+     * The second half is what makes offline drawing work without ever replacing the server's page — a stroke
+     * the tablet has and the server does not is sent once, by seed.
+     */
     private fun applyRemotePage(frame: JSONObject) {
         val incoming = Wire.parsePage(frame.toString()) ?: return
         viewModelScope.launch {
@@ -203,6 +209,15 @@ class PageViewModel(
             if (store.merge(ready)) {
                 Log.i("PenwiseSync", "merged ${ready.size} remote strokes")
                 store.persist()
+            }
+            val serverSeeds = ready.mapTo(HashSet()) { it.seed }
+            val missing =
+                store
+                    .snapshot()
+                    .filter { it.seed !in serverSeeds && pushedSeeds.add(it.seed) }
+            if (missing.isNotEmpty()) {
+                Log.i("PenwiseSync", "pushing ${missing.size} local strokes the server lacks")
+                missing.forEach(sync::sendStroke)
             }
         }
     }
@@ -238,6 +253,7 @@ class PageViewModel(
     ) {
         settings.overrideUrl = url
         settings.token = token
+        pushedSeeds.clear()
         sync.stop()
         sync = newClient()
         sync.start()
@@ -303,6 +319,9 @@ class PageViewModel(
         }
         return page.id
     }
+
+    /** Seeds already offered to the server for the open page, so a reconnect does not resend them. */
+    private val pushedSeeds = HashSet<Long>()
 
     /** Pending debug replay, run once the page has finished loading. */
     private var pendingFixture: String? = null
@@ -406,6 +425,7 @@ class PageViewModel(
     private suspend fun openPage(id: String) {
         file = library.strokes(id)
         undoFile = UndoHistoryFile(getApplication<Application>().filesDir, id)
+        pushedSeeds.clear()
         sync.pageId = id
         val saved = withContext(Dispatchers.IO) { file.load() }
         withContext(Dispatchers.Default) { saved.forEach { it.rebuild() } }

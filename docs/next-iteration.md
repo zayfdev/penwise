@@ -39,6 +39,24 @@ canvas". Nothing had been drawn yet, so this is layout, not ink.
 **Decide:** page orientation should follow the device at creation time (and be switchable), plus a visible page
 edge or a background that makes the sheet obvious on the tablet.
 
+## 1b. Latency (deferred by the user, but diagnosed)
+
+Measured: the **server relay is 0–1 ms** (p50 0 ms, p95 1 ms over 40 frames), so the delay is not the server. It
+was **queueing**: every motion event became its own WebSocket frame, so a 120 Hz pen queued frames faster than
+the link drained them and the mirror replayed the backlog (same failure as the shape previews, which visibly
+"kept growing after the pen lifted").
+
+Landed in the hardening pass: live samples are batched into one frame per 16 ms tick (`LiveBatcher`), shape
+previews keep only the newest frame, and the viewer coalesces geometry rebuilds. Remaining levers, in order of
+expected gain:
+
+1. Viewer `LIVE_REBUILD_MS = 50` — rebuilding the preview at ~20 Hz caps how fresh the mirror can look; drop to
+   ~16 ms and measure the wasm rebuild cost per frame.
+2. Rebuild cost grows with stroke length (the engine re-runs the whole stroke). Incremental geometry, or
+   rebuilding only the tail, would let the mirror run at 60 Hz on long strokes.
+3. JSON per frame is heavy for 5 floats × samples; a binary frame (postcard) would cut bytes and allocation.
+4. Browser draw path: `drawDabs` iterates every dab per frame; cache to an offscreen canvas between commits.
+
 ## 2. Toolbar should collapse
 
 The app's toolbar is permanently pinned across the top: 13 brush previews, colours, size, shapes, eraser,

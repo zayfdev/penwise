@@ -34,6 +34,12 @@ class SyncClient(
      * Only the latest survives, and it is sent ahead of the queue so a commit never overtakes it.
      */
     private var pendingShape: String? = null
+
+    /** Live samples wait here between ticks; one merged frame goes out instead of one per motion event. */
+    private val liveBatch = LiveBatcher()
+    private var liveOutSamples = FloatArray(0)
+    private var liveOutTimes = IntArray(0)
+    private val liveFlushQueued = AtomicBoolean(false)
     private val connecting = AtomicBoolean(false)
     private val retry: ScheduledExecutorService =
         Executors.newSingleThreadScheduledExecutor { runnable ->
@@ -73,6 +79,8 @@ class SyncClient(
     }
 
     fun sendStroke(stroke: SavedStroke) {
+        // Any samples still buffered belong to this stroke and must land before the committed stroke does.
+        flushLive()
         enqueue(Wire.strokeFrame(stroke, pageId))
     }
 
@@ -88,6 +96,8 @@ class SyncClient(
         scale: Float,
         seed: Long,
     ) {
+        flushLive()
+        synchronized(liveBatch) { liveBatch.reset() }
         liveId++
         enqueue(Wire.liveBegin(liveId, preset, argb, scale, seed, pageId))
     }
@@ -98,18 +108,47 @@ class SyncClient(
         times: IntArray,
         count: Int,
     ) {
-        if (count > 0) enqueue(Wire.liveSamples(liveId, samples, times, count, pageId))
+        if (count == 0) return
+        synchronized(liveBatch) { liveBatch.add(liveId, samples, times, count) }
+        if (liveFlushQueued.compareAndSet(false, true)) {
+            retry.schedule({ flushLive() }, LIVE_FLUSH_MS, TimeUnit.MILLISECONDS)
+        }
+    }
+
+    /**
+     * Sends whatever live samples are buffered, if any.
+     *
+     * One frame per tick merges every motion event in between: a pen reporting 120 Hz would otherwise queue
+     * frames faster than the link drains them and the mirror would replay the backlog.
+     */
+    private fun flushLive() {
+        liveFlushQueued.set(false)
+        if (!liveBatch.pending) return
+        synchronized(liveBatch) {
+            val needed = liveBatch.pendingSamples
+            if (liveOutTimes.size < needed) {
+                liveOutSamples = FloatArray(needed * LIVE_STRIDE)
+                liveOutTimes = IntArray(needed)
+            }
+            val id = liveBatch.strokeId
+            val take = liveBatch.take(liveOutSamples, liveOutTimes)
+            if (take == 0 || id < 0) return
+            enqueue(Wire.liveSamples(id, liveOutSamples, liveOutTimes, take, pageId))
+        }
     }
 
     /** Withdraws the preview (committed strokes end it server-side). */
     fun sendLiveCancel() {
         if (liveId == 0) return
+        // The stroke is gone: its buffered samples are worthless, so they are dropped rather than sent late.
+        synchronized(liveBatch) { liveBatch.reset() }
         enqueue(Wire.liveCancel(liveId, pageId))
         liveId = 0
     }
 
     /** Replaces the server's page; used on connect, undo, clear and erase. */
     fun sendPage(strokes: List<SavedStroke>) {
+        flushLive()
         enqueue(Wire.page(strokes, pageId))
     }
 
@@ -142,6 +181,7 @@ class SyncClient(
         count: Int,
     ) {
         shapeId++
+        flushLive()
         synchronized(pending) {
             pendingShape = Wire.shapePreview(shapeId, preset, argb, scale, seed, samples, times, count, pageId)
         }
@@ -232,6 +272,10 @@ class SyncClient(
         const val PING_SECONDS = 20L
         const val RETRY_SECONDS = 3L
         const val MAX_PENDING = 64
+
+        /** Delay before a buffered live batch is sent; one or two display frames. */
+        const val LIVE_FLUSH_MS = 16L
+        const val LIVE_STRIDE = 5
         const val NORMAL_CLOSURE = 1000
     }
 }
