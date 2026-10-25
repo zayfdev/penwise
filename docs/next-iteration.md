@@ -72,6 +72,24 @@ hard numbers instead of guesses.
 If it still stutters, the next step is true incremental ink: bake the head of the live stroke into the page layer
 and preview only the tail, instead of rebuilding the whole preview each frame.
 
+## 1d. Pictures and the design surface (landed)
+
+The canvas now carries pictures as first-class page objects: `assets/<sha256>.png` + an object row with a page
+rectangle, synced to the tablet, drawn in the browser mirror, and composited under the ink in `GET /page.png`.
+MCP gained `penwise_place_image` / `penwise_list_images` / `penwise_remove_image`.
+
+Remaining for the two agentic workflows:
+
+1. **Chrome extension (annotate a real page).** `chrome.tabs.captureVisibleTab` + element picker, POSTing the
+   capture and an element map (`selector, rect, role, text`) to the server, which creates a page sized to the
+   image, places the picture, and stores the map in `anchors`. Then drawing on the tablet produces annotations
+   whose positions resolve to selectors for the agent.
+2. **Grabber CLI (component cut-outs).** Drive a dev server with Playwright, screenshot each component by
+   selector, upload and place them in a grid on one page with `label = component name`, so a layout can be
+   composed from real components and finished with ink.
+3. **Anchoring resolution.** `anchors` is created but unused: strokes need a commit-time lookup (which selector
+   contains the stroke's centroid) and a re-resolve pass when the element map is refreshed.
+
 ## 2. Toolbar should collapse
 
 The app's toolbar is permanently pinned across the top: 13 brush previews, colours, size, shapes, eraser,
