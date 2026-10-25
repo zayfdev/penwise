@@ -5,6 +5,7 @@
 
 mod disk;
 mod model;
+mod text;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -438,26 +439,12 @@ impl Library {
 
     /// The recognised text for `page`, when it has been read before.
     pub async fn text(&self, page: &str) -> Option<String> {
-        let path = self.data_dir.join("pages").join(format!("{page}.txt"));
-        match tokio::fs::read_to_string(path).await {
-            Ok(text) => Some(text),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-            Err(error) => {
-                tracing::warn!(page, %error, "text cache read failed");
-                None
-            }
-        }
+        text::read(&self.data_dir, page).await
     }
 
     /// Stores the recognised text beside the page.
     pub async fn put_text(&self, page: &str, text: &str) {
-        let path = self.data_dir.join("pages").join(format!("{page}.txt"));
-        if let Some(parent) = path.parent() {
-            let _ = tokio::fs::create_dir_all(parent).await;
-        }
-        if let Err(error) = tokio::fs::write(&path, text).await {
-            tracing::warn!(page, %error, "text cache write failed");
-        }
+        text::write(&self.data_dir, page, text).await;
     }
 
     async fn has_page(&self, id: &str) -> bool {
