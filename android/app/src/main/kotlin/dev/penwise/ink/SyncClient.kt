@@ -27,6 +27,13 @@ class SyncClient(
             .pingInterval(PING_SECONDS, TimeUnit.SECONDS)
             .build()
     private val pending = ArrayDeque<String>()
+
+    /**
+     * The newest shape preview, kept out of [pending]: a drag produces one whole-shape frame per motion event,
+     * and queueing them all makes the mirror replay a backlog (the shape keeps growing after the pen lifts).
+     * Only the latest survives, and it is sent ahead of the queue so a commit never overtakes it.
+     */
+    private var pendingShape: String? = null
     private val connecting = AtomicBoolean(false)
     private val retry: ScheduledExecutorService =
         Executors.newSingleThreadScheduledExecutor { runnable ->
@@ -59,7 +66,10 @@ class SyncClient(
         socket?.close(NORMAL_CLOSURE, "reconfigured")
         socket = null
         connecting.set(false)
-        synchronized(pending) { pending.clear() }
+        synchronized(pending) {
+            pending.clear()
+            pendingShape = null
+        }
     }
 
     fun sendStroke(stroke: SavedStroke) {
@@ -132,7 +142,10 @@ class SyncClient(
         count: Int,
     ) {
         shapeId++
-        enqueue(Wire.shapePreview(shapeId, preset, argb, scale, seed, samples, times, count, pageId))
+        synchronized(pending) {
+            pendingShape = Wire.shapePreview(shapeId, preset, argb, scale, seed, samples, times, count, pageId)
+        }
+        flush()
     }
 
     /** Where the eraser is, so the mirror can show the sweep. */
@@ -154,6 +167,10 @@ class SyncClient(
 
     private fun flush() {
         val open = socket ?: return
+        // Freshest preview first, then commits and strokes in order.
+        synchronized(pending) { pendingShape }?.let { frame ->
+            if (open.send(frame)) synchronized(pending) { if (pendingShape == frame) pendingShape = null }
+        }
         while (true) {
             val frame = synchronized(pending) { pending.removeFirstOrNull() } ?: return
             if (!open.send(frame)) return

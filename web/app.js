@@ -31,6 +31,8 @@ const LIVE_REBUILD_MS = 50;
 /** Eraser positions relayed from the tablet, shown briefly so an erase sweep is visible live. */
 const eraseMarks = [];
 const ERASE_MARK_MS = 700;
+/** Longest a shape preview waits for the next animation frame. */
+const SHAPE_FLUSH_FALLBACK_MS = 50;
 
 await init();
 resize();
@@ -445,12 +447,35 @@ function applyOp(op) {
   }
 }
 
-/** A shape drag replaces its whole preview each frame, so the entry is rebuilt, not appended to. */
+/**
+ * A shape drag replaces its whole preview each frame; rebuilds are coalesced to at most one per tick.
+ *
+ * `requestAnimationFrame` alone is not enough: browsers suppress it in a hidden tab, which would freeze the
+ * preview of a page nobody is looking at until the tab is visible again. A timer backs it up.
+ */
+let shapeFlushScheduled = false;
+let shapeFlushTimer = 0;
+
 function accumulateShape(frame) {
   const key = `${frame.session}:${frame.id}`;
-  const json = buildJson(frame.preset, frame.seed, frame.argb, frame.scale, frame.samples, frame.times);
-  if (!json) return;
-  live.set(key, { preset: frame.preset, argb: frame.argb, scale: frame.scale, seed: frame.seed, json });
+  live.set(key, { ...frame, key, json: null, pending: true });
+  if (shapeFlushScheduled) return;
+  shapeFlushScheduled = true;
+  requestAnimationFrame(flushShapePreviews);
+  shapeFlushTimer = setTimeout(flushShapePreviews, SHAPE_FLUSH_FALLBACK_MS);
+}
+
+function flushShapePreviews() {
+  if (!shapeFlushScheduled) return;
+  shapeFlushScheduled = false;
+  clearTimeout(shapeFlushTimer);
+  for (const entry of live.values()) {
+    if (!entry.pending) continue;
+    entry.pending = false;
+    entry.json = buildJson(entry.preset, entry.seed, entry.argb, entry.scale, entry.samples, entry.times);
+    if (!entry.json) live.delete(entry.key);
+  }
+  render();
 }
 
 /** Rebuilds one stroke's geometry through the wasm engine; malformed strokes are dropped. */
@@ -615,6 +640,24 @@ function drawDabs(json, argb) {
     ctx.restore();
   }
 }
+
+// Read-only handle for tests and debugging (`window.__penwise.live.size`).
+window.__penwise = {
+  get strokes() {
+    return strokes.length;
+  },
+  get previews() {
+    return [...live.values()].filter((entry) => entry.json).length;
+  },
+  get debug() {
+    return [...live.values()].map((entry) => ({
+      kind: entry.kind ?? "stroke",
+      built: Boolean(entry.json),
+      pending: Boolean(entry.pending),
+      samples: entry.samples ? entry.samples.length : 0,
+    }));
+  },
+};
 
 // Startup last: class declarations are not initialised before this point (TDZ).
 const client = new WebSocketClient();

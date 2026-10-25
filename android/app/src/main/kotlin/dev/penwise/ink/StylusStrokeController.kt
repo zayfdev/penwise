@@ -40,6 +40,8 @@ internal class StylusStrokeController(
     private var startNanos = 0L
     private var strokeId = 0L
 
+    /** Shape previews go to the mirror at most this often; the tablet itself still redraws every event. */
+    private val previewGate = PreviewGate(PREVIEW_MIN_INTERVAL_MS)
     private var shapeStart: FloatArray? = null
     private var shapeTemp: InkStroke? = null
     private var erasing = false
@@ -84,6 +86,7 @@ internal class StylusStrokeController(
         }
         val brush = brushes.current()
         if (brushes.shapeMode != null) {
+            previewGate.reset()
             shapeStart = floatArrayOf(event.getX(index), event.getY(index))
             publishShapePreview(event.getX(index), event.getY(index))
             return
@@ -226,15 +229,17 @@ internal class StylusStrokeController(
         shapeTemp = preview
         live.reset()
         live.publish(LiveFrame(++strokeId, preview.snapshot()))
-        liveOut?.shape(
-            brush.presetIndex,
-            brush.argb,
-            brush.sizeScale,
-            PREVIEW_SEED,
-            built.first,
-            built.second,
-            built.second.size,
-        )
+        if (previewGate.allow(android.os.SystemClock.uptimeMillis())) {
+            liveOut?.shape(
+                brush.presetIndex,
+                brush.argb,
+                brush.sizeScale,
+                PREVIEW_SEED,
+                built.first,
+                built.second,
+                built.second.size,
+            )
+        }
         sink.requestFrontFrame()
     }
 
@@ -318,6 +323,7 @@ internal class StylusStrokeController(
 
     private companion object {
         const val NO_POINTER = -1
+        const val PREVIEW_MIN_INTERVAL_MS = 40L
         const val SAMPLE_STRIDE = 5
         const val INITIAL_ERASE_POINTS = 64
 
