@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <title>Penwise · draw</title>
+    <style>
+      :root { color-scheme: light; }
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #e9ecf1;
+        font: 13px/1.4 system-ui, sans-serif; -webkit-user-select: none; user-select: none; }
+      canvas { position: fixed; inset: 0; touch-action: none; display: block; }
+      #bar { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); display: flex; gap: 10px;
+        align-items: center; padding: 8px 12px; border-radius: 12px; background: #ffffffee;
+        box-shadow: 0 6px 24px rgba(16,24,40,.18); }
+      #bar button { width: 34px; height: 34px; border-radius: 9px; border: 1px solid #d6dae2; background: #fff;
+        cursor: pointer; font-size: 16px; }
+      #bar button.on { border-color: #4f46e5; box-shadow: 0 0 0 2px #4f46e533; }
+      #bar input[type="color"] { width: 34px; height: 34px; padding: 0; border: 1px solid #d6dae2;
+        border-radius: 9px; background: #fff; }
+      #bar input[type="range"] { width: 110px; }
+      #status { position: fixed; top: 12px; left: 12px; padding: 4px 8px; border-radius: 8px;
+        background: #ffffffee; color: #475467; }
+      #status.offline { color: #b42318; }
+    </style>
+  </head>
+  <body>
+    <canvas id="page"></canvas>
+    <div id="status">connecting…</div>
+    <div id="bar">
+      <button data-preset="0" class="on" title="Pen">✒️</button>
+      <button data-preset="1" title="Marker">🖊️</button>
+      <button data-preset="2" title="Pencil">✏️</button>
+      <input id="color" type="color" value="#111827" title="Colour" />
+      <input id="size" type="range" min="1" max="40" value="4" title="Size" />
+      <button id="undo" title="Undo (two-finger tap also works)">↶</button>
+    </div>
+    <script type="module" src="./draw.js"></script>
+  </body>
+</html>

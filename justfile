@@ -63,6 +63,10 @@ ffi:
 extension-check:
     bun test extension
 
+# Browser drawing client: check the module bundles.
+draw-check:
+    bun build web/draw.js --target browser --outfile /tmp/penwise-draw-check.js
+
 # Components from a running page onto one Penwise page (needs Chrome/Chromium; CHROME= overrides).
 grab *ARGS:
     bun scripts/grab.mjs {{ARGS}}
