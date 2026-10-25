@@ -8,7 +8,7 @@ use penwise_core::raster::{CoverageBuffer, Viewport, render_strokes};
 use penwise_core::sample::Sample;
 use tiny_skia::Pixmap;
 
-use crate::library::{BACKGROUND_SPACING_PX, Background, PageKind, PageMeta, StrokeMsg};
+use crate::library::{BACKGROUND_SPACING_PX, Background, ImageMsg, PageKind, PageMeta, StrokeMsg};
 
 /// Smallest infinite-page render, in page px.
 const MIN_INFINITE_WIDTH: f32 = 1200.0;
@@ -26,14 +26,19 @@ const SAMPLE_STRIDE: usize = 5;
 const MIN_SCALE: f32 = 0.05;
 const MAX_SCALE: f32 = 4.0;
 
-/// Renders one page at `scale` pixels per page px, background first.
-pub fn page_png(strokes: &[StrokeMsg], scale: f32, page: &PageMeta) -> Result<Vec<u8>, String> {
+/// Renders one page at `scale` pixels per page px: paper, then pictures, then ink.
+pub fn page_png(
+    strokes: &[StrokeMsg],
+    images: &[(ImageMsg, Vec<u8>)],
+    scale: f32,
+    page: &PageMeta,
+) -> Result<Vec<u8>, String> {
     let mut scale = if scale.is_finite() && scale > 0.0 {
         scale.clamp(MIN_SCALE, MAX_SCALE)
     } else {
         1.0
     };
-    let (origin_x, origin_y, page_width, page_height) = extent(strokes, page.kind);
+    let (origin_x, origin_y, page_width, page_height) = extent(strokes, images, page.kind);
     let longest = page_width.max(page_height);
     if longest * scale > MAX_SIDE_PX {
         scale = MAX_SIDE_PX / longest;
@@ -43,6 +48,7 @@ pub fn page_png(strokes: &[StrokeMsg], scale: f32, page: &PageMeta) -> Result<Ve
     let mut pixmap = Pixmap::new(width, height).ok_or("page size out of range")?;
     pixmap.fill(tiny_skia::Color::WHITE);
     draw_background(&mut pixmap, page.background, scale);
+    draw_images(&mut pixmap, images, scale, origin_x, origin_y);
 
     let geometries: Vec<StrokeGeometry> = strokes.iter().map(geometry_of).collect();
     let mut scratch = CoverageBuffer::default();
@@ -66,7 +72,11 @@ pub fn page_png(strokes: &[StrokeMsg], scale: f32, page: &PageMeta) -> Result<Ve
     clippy::cast_precision_loss,
     reason = "sample coordinates are finite page px; the bounds are only used to size a buffer"
 )]
-fn extent(strokes: &[StrokeMsg], kind: PageKind) -> (f32, f32, f32, f32) {
+fn extent(
+    strokes: &[StrokeMsg],
+    images: &[(ImageMsg, Vec<u8>)],
+    kind: PageKind,
+) -> (f32, f32, f32, f32) {
     match kind {
         PageKind::Fixed { width, height } => (0.0, 0.0, width, height),
         PageKind::Infinite => {
@@ -84,6 +94,19 @@ fn extent(strokes: &[StrokeMsg], kind: PageKind) -> (f32, f32, f32, f32) {
                         }
                     });
                 }
+            }
+            for (image, _) in images {
+                let (left, top) = (image.x, image.y);
+                let (right, bottom) = (image.x + image.w, image.y + image.h);
+                bounds = Some(match bounds {
+                    None => (left, top, right, bottom),
+                    Some((min_x, min_y, max_x, max_y)) => (
+                        min_x.min(left),
+                        min_y.min(top),
+                        max_x.max(right),
+                        max_y.max(bottom),
+                    ),
+                });
             }
             let (min_x, min_y, max_x, max_y) = bounds.unwrap_or((0.0, 0.0, 0.0, 0.0));
             let origin_x = min_x - INFINITE_PADDING;
@@ -168,6 +191,47 @@ fn ink_bounds(strokes: &[StrokeMsg]) -> Option<(f32, f32, f32, f32)> {
     clippy::cast_precision_loss,
     clippy::cast_sign_loss,
     reason = "pixel positions come from a clamped scale and a positive canvas size"
+)]
+/// Draws each picture into its page rectangle, before any ink.
+///
+/// A picture that fails to decode is skipped with a warning: one broken asset must not fail a page render an
+/// agent asked for.
+fn draw_images(
+    pixmap: &mut Pixmap,
+    images: &[(ImageMsg, Vec<u8>)],
+    scale: f32,
+    origin_x: f32,
+    origin_y: f32,
+) {
+    for (image, bytes) in images {
+        let Ok(source) = Pixmap::decode_png(bytes) else {
+            tracing::warn!(asset = %image.asset, "picture could not be decoded");
+            continue;
+        };
+        let width = image.w * scale;
+        let height = image.h * scale;
+        if width < 1.0 || height < 1.0 {
+            continue;
+        }
+        let transform = tiny_skia::Transform::from_scale(
+            width / source.width() as f32,
+            height / source.height() as f32,
+        )
+        .post_translate((image.x - origin_x) * scale, (image.y - origin_y) * scale);
+        pixmap.draw_pixmap(
+            0,
+            0,
+            source.as_ref(),
+            &tiny_skia::PixmapPaint::default(),
+            transform,
+            None,
+        );
+    }
+}
+
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "a pixmap side is a pixel count; the pattern only needs it approximately"
 )]
 fn draw_background(pixmap: &mut Pixmap, background: Background, scale: f32) {
     let spacing = BACKGROUND_SPACING_PX * scale;
@@ -320,7 +384,7 @@ mod tests {
     fn an_ink_crop_is_smaller_than_the_page_and_keeps_margins() {
         let strokes = vec![stroke(400.0, 300.0), stroke(420.0, 700.0)];
         let png = ink_png(&strokes, 1.0, 48.0).unwrap().unwrap();
-        let full = page_png(&strokes, 1.0, &page_fixture()).unwrap();
+        let full = page_png(&strokes, &[], 1.0, &page_fixture()).unwrap();
         assert!(png.len() < full.len(), "the crop is the smaller image");
         assert!(png.starts_with(&[0x89, b'P', b'N', b'G']), "a real PNG");
     }

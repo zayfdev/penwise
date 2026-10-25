@@ -17,7 +17,7 @@ pub const MAX_TITLE_BYTES: usize = 256;
 
 /// One finished stroke as the tablet sends it. The seed is a decimal string because JS numbers cannot hold a
 /// 64-bit value exactly; the server treats it as opaque.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct StrokeMsg {
     /// `ink` for the user's own strokes, `agent` for marks an assistant added (cleared as a set).
     #[serde(default = "default_layer")]
@@ -34,6 +34,51 @@ pub struct StrokeMsg {
 
 fn default_layer() -> String {
     "ink".to_owned()
+}
+
+/// One placed picture: a PNG asset mapped onto the page at `x, y` with size `w × h` (page px).
+///
+/// Pictures are what make the canvas a design surface: a webpage screenshot, a component cut out of a running
+/// app, a reference image. Ink draws over them, and agents see them composited into the page PNG.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ImageMsg {
+    /// Stable identity, like a stroke's seed: re-placing the same picture does not duplicate it. The server
+    /// assigns one when the caller leaves it empty.
+    #[serde(default)]
+    pub id: String,
+    /// Content hash from [`crate::assets`], served at `GET /assets/<id>`.
+    pub asset: String,
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    /// `ink` or `agent`, like [`StrokeMsg::layer`].
+    #[serde(default = "default_layer")]
+    pub layer: String,
+    /// What the picture stands for: a component name, a URL, a section title.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+impl ImageMsg {
+    /// Rejects pictures that cannot be drawn: empty ids, non-finite geometry, nothing to show.
+    #[must_use]
+    pub fn is_well_formed(&self) -> bool {
+        !self.id.is_empty()
+            && !self.asset.is_empty()
+            && [self.x, self.y, self.w, self.h]
+                .iter()
+                .all(|value| value.is_finite())
+            && self.w > 0.0
+            && self.h > 0.0
+    }
+}
+
+/// Everything one page holds.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PageContent {
+    pub strokes: Vec<StrokeMsg>,
+    pub images: Vec<ImageMsg>,
 }
 
 /// Page extent. Immutable after creation.
@@ -187,8 +232,18 @@ pub(crate) fn stroke_frame(page: &str, stroke: &StrokeMsg) -> String {
     serde_json::json!({ "t": "stroke", "page": page, "stroke": stroke }).to_string()
 }
 
-pub(crate) fn page_frame(page: &str, strokes: &[StrokeMsg]) -> String {
-    serde_json::json!({ "t": "page", "page": page, "strokes": strokes }).to_string()
+pub(crate) fn page_frame(page: &str, content: &PageContent) -> String {
+    serde_json::json!({
+        "t": "page",
+        "page": page,
+        "strokes": content.strokes,
+        "images": content.images,
+    })
+    .to_string()
+}
+
+pub(crate) fn image_frame(page: &str, image: &ImageMsg) -> String {
+    serde_json::json!({ "t": "image", "page": page, "image": image }).to_string()
 }
 
 pub(crate) fn meta_frame_of(meta: &Meta) -> String {

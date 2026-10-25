@@ -16,6 +16,7 @@ internal class InkRenderCallback(
     private val store: StrokeStore,
     private val live: LiveStroke,
     private val style: () -> PageStyle,
+    private val images: () -> PageImages? = { null },
 ) : CanvasFrontBufferedRenderer.Callback<Unit> {
     private val grain = GrainMasks()
     private val frontPainter = GeometryPainter(grain)
@@ -52,10 +53,24 @@ internal class InkRenderCallback(
         params: Collection<Unit>,
     ) {
         PaperPainter.draw(canvas, style(), bufferWidth, bufferHeight)
+        drawPictures(canvas)
         val strokes = store.strokes
         for (g in strokes) if (g.multiply) pagePainter.draw(canvas, g)
         for (g in strokes) if (!g.multiply) pagePainter.draw(canvas, g)
     }
+
+    /** Pictures sit on the paper, under every stroke: a screenshot is the page you are marking up. */
+    private fun drawPictures(canvas: Canvas) {
+        val page = images() ?: return
+        for (image in page.all()) {
+            val bitmap = page.bitmap(image.asset) ?: continue
+            rect.set(image.x, image.y, image.x + image.w, image.y + image.h)
+            canvas.drawBitmap(bitmap, null, rect, picturePaint)
+        }
+    }
+
+    private val rect = RectF()
+    private val picturePaint = android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG)
 
     private companion object {
         const val NO_STROKE = -1L

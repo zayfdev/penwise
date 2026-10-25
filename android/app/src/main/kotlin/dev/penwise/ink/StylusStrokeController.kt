@@ -201,7 +201,9 @@ internal class StylusStrokeController(
         current.push(buffer.samples, buffer.times, buffer.count)
         liveOut?.samples(buffer.samples, buffer.times, buffer.count)
         pushPreview(brush)
-        if (live.claimFrame() && previewReady()) {
+        // Order matters: `claimFrame` marks a render as in flight, and only a render clears it. Claiming a frame
+        // the gate then declines leaves the flag stuck, and nothing is drawn again until the stroke ends.
+        if (previewReady() && live.claimFrame()) {
             val started = android.os.SystemClock.uptimeMillis()
             live.publish(LiveFrame(strokeId, livePreviewGeometry(brush)))
             val took = android.os.SystemClock.uptimeMillis() - started

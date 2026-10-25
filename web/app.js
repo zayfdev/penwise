@@ -21,6 +21,8 @@ const ctx = canvas.getContext("2d");
 
 /** @type {Array<{json: object, argb: number}>} */
 let strokes = [];
+/** Pictures on the page, drawn under the ink: `{id, asset, x, y, w, h}` in page px. */
+let images = [];
 /** @type {{version: number, active: string, notebooks: Array<{id: string, title: string, pages: Array<object>}>} | null} */
 let meta = null;
 let activePage = null;
@@ -302,6 +304,12 @@ function pageExtent() {
   let maxY = -Infinity;
   for (const stroke of strokes) extendFromJson(stroke.json);
   for (const entry of live.values()) if (entry.json) extendFromJson(entry.json);
+  for (const image of images) {
+    if (image.x < minX) minX = image.x;
+    if (image.y < minY) minY = image.y;
+    if (image.x + image.w > maxX) maxX = image.x + image.w;
+    if (image.y + image.h > maxY) maxY = image.y + image.h;
+  }
 
   function extendFromJson(json) {
     const points = json?.outline ?? json?.dabs ?? [];
@@ -380,6 +388,7 @@ class WebSocketClient {
         activePage = page;
         // The previous page's strokes are not this page's: drop them and ask for the new snapshot.
         strokes = [];
+        images = [];
         live.clear();
         eraseMarks.length = 0;
         client.send({ t: "select", page: page.id });
@@ -393,11 +402,18 @@ class WebSocketClient {
       if (!page) return;
       activePage = page;
       strokes = frame.strokes.map(rebuild).filter(Boolean);
+      images = Array.isArray(frame.images) ? frame.images : [];
+      for (const image of images) imageFor(image.asset);
       live.clear();
       renderSidebar();
       resize();
       render();
       this.setState(`mirroring · ${strokes.length} strokes`, false);
+    } else if (frame.t === "image" && frame.image && frame.page === activePage?.id) {
+      images = [...images.filter((image) => image.id !== frame.image.id), frame.image];
+      imageFor(frame.image.asset);
+      this.setState(`mirroring · ${strokes.length} strokes`, false);
+      render();
     } else if (frame.t === "op" && frame.op && frame.page === activePage?.id) {
       applyOp(frame.op);
       this.setState(`mirroring · ${strokes.length} strokes`, false);
@@ -433,6 +449,7 @@ function applyOp(op) {
     strokes = strokes.filter((stroke) => !gone.has(stroke.seed));
   } else if (op.k === "clear") {
     strokes = [];
+    images = [];
     live.clear();
   } else if (op.k === "replace" && Array.isArray(op.strokes)) {
     const gone = new Set(op.seeds ?? []);
@@ -564,6 +581,7 @@ function render() {
   ctx.fillStyle = "#fff";
   ctx.fillRect(extent.originX, extent.originY, extent.width, extent.height);
   drawBackground(extent, activePage?.background ?? "blank");
+  drawImages();
 
   // Under-ink band first: multiply strokes (highlighter) then everything else.
   for (const pass of [true, false]) {
@@ -575,6 +593,32 @@ function render() {
     if (entry.json) drawStroke({ json: entry.json, argb: entry.argb });
   }
   drawEraseMarks();
+}
+
+/**
+ * Decoded pictures, by asset id. Served immutable, so one entry lasts the whole session; a picture that is
+ * still loading simply draws next frame.
+ */
+const imageCache = new Map();
+
+function imageFor(asset) {
+  let entry = imageCache.get(asset);
+  if (!entry) {
+    entry = new Image();
+    entry.decoding = "async";
+    entry.addEventListener("load", () => render());
+    entry.src = `/assets/${asset}?token=${encodeURIComponent(TOKEN)}`;
+    imageCache.set(asset, entry);
+  }
+  return entry;
+}
+
+function drawImages() {
+  for (const image of images) {
+    const entry = imageCache.get(image.asset) ?? imageFor(image.asset);
+    if (!entry.complete || entry.naturalWidth === 0) continue;
+    ctx.drawImage(entry, image.x, image.y, image.w, image.h);
+  }
 }
 
 /** The eraser sweep, fading out so it reads as a gesture rather than ink. */
@@ -645,6 +689,13 @@ function drawDabs(json, argb) {
 window.__penwise = {
   get strokes() {
     return strokes.length;
+  },
+  get images() {
+    return images.map((image) => ({
+      id: image.id,
+      asset: image.asset,
+      loaded: Boolean(imageCache.get(image.asset)?.complete),
+    }));
   },
   get previews() {
     return [...live.values()].filter((entry) => entry.json).length;

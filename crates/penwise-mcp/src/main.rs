@@ -11,15 +11,17 @@
 )]
 
 use std::fmt::Write as _;
-use std::io::{BufRead, Read, Write};
-use std::net::TcpStream;
-use std::time::Duration;
+use std::io::{BufRead, Write};
 
 const SERVER_NAME: &str = "penwise";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const DEFAULT_PROTOCOL: &str = "2024-11-05";
-const DEFAULT_HOST: &str = "127.0.0.1";
-const DEFAULT_PORT: u16 = 7420;
+mod endpoint;
+mod pictures;
+mod tools;
+
+use endpoint::resolve_token;
+use endpoint::{DEFAULT_HOST, DEFAULT_PORT, Endpoint};
 
 fn main() {
     let host = std::env::var("PENWISE_HOST").unwrap_or_else(|_| DEFAULT_HOST.to_owned());
@@ -56,30 +58,6 @@ fn main() {
 }
 
 /// Where the Penwise server lives.
-struct Endpoint {
-    host: String,
-    port: u16,
-    token: String,
-}
-
-/// `PENWISE_TOKEN`, else `$XDG_DATA_HOME/penwise/token` (where the server writes it). Empty = no auth.
-fn resolve_token() -> String {
-    if let Ok(token) = std::env::var("PENWISE_TOKEN")
-        && !token.is_empty()
-    {
-        return token;
-    }
-    let base = std::env::var("XDG_DATA_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(|_| {
-            std::env::var("HOME").map(|home| std::path::PathBuf::from(home).join(".local/share"))
-        })
-        .unwrap_or_default();
-    std::fs::read_to_string(base.join("penwise/token"))
-        .map(|token| token.trim().to_owned())
-        .unwrap_or_default()
-}
-
 fn handle(request: &serde_json::Value, endpoint: &Endpoint) -> Option<serde_json::Value> {
     let id = request.get("id")?.clone();
     let method = request
@@ -88,7 +66,7 @@ fn handle(request: &serde_json::Value, endpoint: &Endpoint) -> Option<serde_json
         .unwrap_or("");
     let result = match method {
         "initialize" => Ok(initialize(request)),
-        "tools/list" => Ok(tools_list()),
+        "tools/list" => Ok(tools::tools_list()),
         "tools/call" => call_tool(request, endpoint),
         "ping" => Ok(serde_json::json!({})),
         other => Err(error(-32601, &format!("unknown method {other}"))),
@@ -112,127 +90,6 @@ fn initialize(request: &serde_json::Value) -> serde_json::Value {
     })
 }
 
-fn tools_list() -> serde_json::Value {
-    serde_json::from_str::<serde_json::Value>(TOOLS)
-        .unwrap_or_else(|_| serde_json::json!({ "tools": [] }))
-}
-
-/// Tool definitions, kept as JSON so the schemas read like the protocol docs.
-const TOOLS: &str = r##"{
-  "tools": [
-    {
-      "name": "penwise_page_png",
-      "description": "Render a Penwise page (the user's handwriting/drawing) as a PNG image.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "scale": { "type": "number", "description": "Pixels per page pixel, 0.05–4 (default 1; 0.5 for a smaller image)." },
-          "page": { "type": "string", "description": "Page id; defaults to the active page." }
-        }
-      }
-    },
-    {
-      "name": "penwise_page_status",
-      "description": "Stroke and page counts for the active page.",
-      "inputSchema": {
-        "type": "object",
-        "properties": { "page": { "type": "string", "description": "Page id; defaults to the active page." } }
-      }
-    },
-    {
-      "name": "penwise_annotate",
-      "description": "Draw polylines on the user's page (marks appear as a separate agent layer and can be cleared).",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "page": { "type": "string", "description": "Page id; defaults to the active page." },
-          "strokes": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "points": {
-                  "type": "array",
-                  "description": "Page-pixel points [[x, y], …]; two or more make a line.",
-                  "items": { "type": "array", "items": { "type": "number" } }
-                },
-                "color": { "type": "string", "description": "#RRGGBB or #AARRGGBB (default red)" },
-                "width": { "type": "number", "description": "Stroke width in page px (default 3)" }
-              },
-              "required": ["points"]
-            }
-          }
-        },
-        "required": ["strokes"]
-      }
-    },
-    {
-      "name": "penwise_clear_agent_marks",
-      "description": "Remove every mark this or another agent drew on the page (the user's own ink is untouched).",
-      "inputSchema": {
-        "type": "object",
-        "properties": { "page": { "type": "string", "description": "Page id; defaults to the active page." } }
-      }
-    },
-    {
-      "name": "penwise_list_pages",
-      "description": "List notebooks and their pages, with the active page id.",
-      "inputSchema": { "type": "object", "properties": {} }
-    },
-    {
-      "name": "penwise_create_page",
-      "description": "Create a page (defaults: next free title, A4 portrait, blank).",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "title": { "type": "string" },
-          "background": { "type": "string", "enum": ["blank", "ruled", "grid", "dots"] },
-          "kind": { "type": "object", "description": "{\"t\":\"fixed\",\"width\":W,\"height\":H} or {\"t\":\"infinite\"}" },
-          "notebook": { "type": "string" }
-        }
-      }
-    },
-    {
-      "name": "penwise_page_text",
-      "description": "Handwriting on a page as text, read by a local vision model (cached until refresh).",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "page": { "type": "string", "description": "Page id; defaults to the active page." },
-          "refresh": { "type": "boolean", "description": "Re-read the page instead of returning the cache." }
-        }
-      }
-    },
-    {
-      "name": "penwise_search",
-      "description": "Search the handwriting of every page already read as text.",
-      "inputSchema": {
-        "type": "object",
-        "properties": { "query": { "type": "string", "description": "Words to look for, case-insensitive." } },
-        "required": ["query"]
-      }
-    },
-    {
-      "name": "penwise_create_notebook",
-      "description": "Create an empty notebook to group pages.",
-      "inputSchema": {
-        "type": "object",
-        "properties": { "title": { "type": "string" } },
-        "required": ["title"]
-      }
-    },
-    {
-      "name": "penwise_switch_page",
-      "description": "Make a page the active one (what other tools address by default).",
-      "inputSchema": {
-        "type": "object",
-        "properties": { "page": { "type": "string" } },
-        "required": ["page"]
-      }
-    }
-  ]
-}"##;
-
 fn call_tool(
     request: &serde_json::Value,
     endpoint: &Endpoint,
@@ -241,6 +98,12 @@ fn call_tool(
         .pointer("/params/name")
         .and_then(serde_json::Value::as_str)
         .unwrap_or("");
+    if matches!(
+        name,
+        "penwise_place_image" | "penwise_list_images" | "penwise_remove_image"
+    ) {
+        return pictures::picture_tool(name, request, endpoint);
+    }
     match name {
         "penwise_page_png" => {
             let scale = request
@@ -309,64 +172,6 @@ fn call_tool(
     }
 }
 
-impl Endpoint {
-    /// Minimal HTTP/1.1 GET with `Connection: close`; returns the body.
-    fn get(&self, path: &str) -> Result<Vec<u8>, String> {
-        self.request("GET", path, None)
-    }
-
-    /// Minimal HTTP/1.1 POST with a JSON body; returns the response body.
-    fn post(&self, path: &str, body: &str) -> Result<Vec<u8>, String> {
-        self.request("POST", path, Some(body))
-    }
-
-    fn request(&self, method: &str, path: &str, body: Option<&str>) -> Result<Vec<u8>, String> {
-        let mut stream = TcpStream::connect((self.host.as_str(), self.port))
-            .map_err(|e| format!("connect: {e}"))?;
-        stream
-            .set_read_timeout(Some(Duration::from_secs(30)))
-            .map_err(|e| e.to_string())?;
-        let mut request = format!(
-            "{method} {path} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n",
-            self.host
-        );
-        if !self.token.is_empty() {
-            request.push_str("X-Penwise-Token: ");
-            request.push_str(&self.token);
-            request.push_str("\r\n");
-        }
-        if let Some(body) = body {
-            let _ = write!(
-                request,
-                "Content-Type: application/json\r\nContent-Length: {}\r\n",
-                body.len()
-            );
-        }
-        request.push_str("\r\n");
-        if let Some(body) = body {
-            request.push_str(body);
-        }
-        stream
-            .write_all(request.as_bytes())
-            .map_err(|e| e.to_string())?;
-        let mut raw = Vec::new();
-        stream.read_to_end(&mut raw).map_err(|e| e.to_string())?;
-        let split = raw
-            .windows(4)
-            .position(|w| w == b"\r\n\r\n")
-            .ok_or("malformed HTTP response")?;
-        let head = String::from_utf8_lossy(&raw[..split]);
-        if !head.starts_with("HTTP/1.1 200") && !head.starts_with("HTTP/1.0 200") {
-            return Err(format!(
-                "server replied: {}",
-                head.lines().next().unwrap_or("")
-            ));
-        }
-        Ok(raw[split + 4..].to_vec())
-    }
-}
-
-/// Percent-encodes a query value, with spaces as `+` (form style, which the URL parser accepts).
 fn encode_query(value: &str) -> String {
     value
         .bytes()
@@ -381,7 +186,10 @@ fn encode_query(value: &str) -> String {
 }
 
 /// `GET path`, returned as a text content block.
-fn get_text(endpoint: &Endpoint, path: &str) -> Result<serde_json::Value, serde_json::Value> {
+pub(crate) fn get_text(
+    endpoint: &Endpoint,
+    path: &str,
+) -> Result<serde_json::Value, serde_json::Value> {
     let body = endpoint
         .get(path)
         .map_err(|failure| error(-32603, &failure))?;
@@ -410,7 +218,7 @@ fn post_text(
 }
 
 /// The tool call's `arguments` object, empty when the client sent none.
-fn arguments(request: &serde_json::Value) -> serde_json::Value {
+pub(crate) fn arguments(request: &serde_json::Value) -> serde_json::Value {
     request
         .pointer("/params/arguments")
         .cloned()
@@ -428,11 +236,11 @@ fn page_path(path: &str, request: &serde_json::Value) -> String {
     }
 }
 
-fn text_content(text: &str) -> serde_json::Value {
+pub(crate) fn text_content(text: &str) -> serde_json::Value {
     serde_json::json!({ "content": [{ "type": "text", "text": text }] })
 }
 
-fn error(code: i32, message: &str) -> serde_json::Value {
+pub(crate) fn error(code: i32, message: &str) -> serde_json::Value {
     serde_json::json!({ "code": code, "message": message })
 }
 

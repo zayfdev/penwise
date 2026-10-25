@@ -27,6 +27,8 @@ rstar = "0.13.0"
 # i_float/i_shape/i_tree/i_key_sort, all MIT). Default features off: no rayon (`allow_multithreading`).
 i_overlay = { version = "9.1.0", default-features = false }
 # Server-only raster; enabled through penwise-core's `raster` feature, never on wasm.
+sha2 = "0.11"
+rusqlite = { version = "0.40", features = ["bundled"] }
 tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd", "png-format"] }
 wasm-bindgen-test = "0.3.79"
 # Dev tool only (`penwise-fixtures`): gzip input and CLI error reporting for the fixture converter.

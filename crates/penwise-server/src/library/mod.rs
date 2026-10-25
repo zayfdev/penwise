@@ -3,27 +3,29 @@
 //!
 //! See `docs/pages.md` for the wire and disk contract this implements.
 
-mod disk;
+mod archive;
+mod legacy;
 mod model;
+mod pictures;
+mod store;
+mod stroke_codec;
+mod strokes;
 mod text;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use tokio::sync::{RwLock, broadcast};
 
-use disk::{
-    is_well_formed, load_or_create_meta, read_strokes, write_atomic, write_atomic_blocking,
-};
 pub use model::{
-    AGENT_LAYER, BACKGROUND_SPACING_PX, Background, Frame, Meta, NewPage, Notebook, PageKind,
-    PageMeta, PagePatch, StrokeMsg,
+    AGENT_LAYER, BACKGROUND_SPACING_PX, Background, Frame, ImageMsg, Meta, NewPage, Notebook,
+    PageContent, PageKind, PageMeta, PagePatch, StrokeMsg,
 };
-use model::{
-    active_frame, check_title, is_page_id, meta_frame_of, new_id, op_frame, page_frame, remove_op,
-    replace_op, stroke_frame, title_or,
-};
+use model::{active_frame, check_title, is_page_id, meta_frame_of, new_id, page_frame, title_or};
+use pictures::import_json_library;
+pub use pictures::new_image_id;
+use store::Store;
 
 /// The library: index plus stroke lists, all shared behind one `Arc`.
 #[allow(
@@ -32,24 +34,35 @@ use model::{
 )]
 pub struct Library {
     meta: RwLock<Meta>,
-    pages: RwLock<HashMap<String, Vec<StrokeMsg>>>,
+    /// Every page's objects, decoded. One user's library is a few MB, so it is all resident; the database is
+    /// the source of truth and each mutation writes only the rows it touched.
+    pages: RwLock<HashMap<String, PageContent>>,
     tx: broadcast::Sender<Frame>,
+    store: Store,
     data_dir: PathBuf,
 }
 
 impl Library {
     /// Loads `meta.json` (migrating a legacy `page.json` on first run) and every page's strokes.
-    pub async fn load(data_dir: PathBuf) -> Arc<Self> {
-        let meta = load_or_create_meta(&data_dir).await;
-        let mut pages = HashMap::new();
-        for page in meta.all_pages() {
-            match read_strokes(&data_dir, &page.id).await {
-                Ok(strokes) => {
-                    pages.insert(page.id.clone(), strokes);
-                }
-                Err(error) => tracing::warn!(page = %page.id, %error, "page load failed"),
+    pub fn load(data_dir: PathBuf) -> Arc<Self> {
+        let store = match Store::open(&data_dir.join("penwise.db")) {
+            Ok(store) => store,
+            Err(error) => {
+                tracing::error!(%error, "cannot open the library database");
+                std::process::exit(1);
             }
+        };
+        let empty = store.is_empty().unwrap_or(false);
+        if empty {
+            import_json_library(&store, &data_dir);
         }
+        let (meta, pages) = match store.load() {
+            Ok(loaded) => loaded,
+            Err(error) => {
+                tracing::error!(%error, "cannot read the library database");
+                std::process::exit(1);
+            }
+        };
         tracing::info!(
             notebooks = meta.notebooks.len(),
             pages = pages.len(),
@@ -61,6 +74,7 @@ impl Library {
             meta: RwLock::new(meta),
             pages: RwLock::new(pages),
             tx,
+            store,
             data_dir,
         })
     }
@@ -114,180 +128,6 @@ impl Library {
         true
     }
 
-    /// A copy of one page's strokes (empty for an unknown page).
-    pub async fn strokes(&self, page: &str) -> Vec<StrokeMsg> {
-        self.pages
-            .read()
-            .await
-            .get(page)
-            .cloned()
-            .unwrap_or_default()
-    }
-
-    /// `{"t":"page","page":…,"strokes":[…]}`.
-    pub async fn snapshot_frame(&self, page: &str) -> String {
-        let strokes = self.strokes(page).await;
-        page_frame(page, &strokes)
-    }
-
-    /// Appends a stroke to `page`, persists, and fans it out. False for a malformed stroke or unknown page.
-    pub async fn append(&self, page: &str, stroke: StrokeMsg) -> bool {
-        if !is_well_formed(&stroke) || !self.has_page(page).await {
-            return false;
-        }
-        {
-            let mut pages = self.pages.write().await;
-            let strokes = pages.entry(page.to_owned()).or_default();
-            // Seeds are stroke identity: a client resending its page (reconnect, offline queue) must not
-            // duplicate ink.
-            if strokes.iter().any(|existing| existing.seed == stroke.seed) {
-                return true;
-            }
-            strokes.push(stroke.clone());
-        }
-        let all = self.strokes(page).await;
-        self.save_page(page, &all).await;
-        self.fan_out(Some(page.to_owned()), stroke_frame(page, &stroke));
-        true
-    }
-
-    /// Appends several strokes with one save and one snapshot broadcast (agent annotations).
-    pub async fn append_many(&self, page: &str, strokes: Vec<StrokeMsg>) -> usize {
-        let strokes: Vec<StrokeMsg> = strokes.into_iter().filter(is_well_formed).collect();
-        if strokes.is_empty() || !self.has_page(page).await {
-            return 0;
-        }
-        // Skip strokes the page already has (and repeats inside the batch), so an annotation sent twice
-        // does not stack copies.
-        let strokes: Vec<StrokeMsg> = {
-            let pages = self.pages.read().await;
-            let mut seen: HashSet<String> = pages
-                .get(page)
-                .map(|current| current.iter().map(|stroke| stroke.seed.clone()).collect())
-                .unwrap_or_default();
-            strokes
-                .into_iter()
-                .filter(|stroke| seen.insert(stroke.seed.clone()))
-                .collect()
-        };
-        if strokes.is_empty() {
-            return 0;
-        }
-        let added = strokes.len();
-        let all = {
-            let mut pages = self.pages.write().await;
-            let current = pages.entry(page.to_owned()).or_default();
-            current.extend(strokes);
-            let all = current.clone();
-            drop(pages);
-            self.save_page(page, &all).await;
-            all
-        };
-        self.fan_out(Some(page.to_owned()), page_frame(page, &all));
-        added
-    }
-
-    /// Removes every agent-authored stroke from `page`; returns how many were removed.
-    pub async fn clear_agent(&self, page: &str) -> usize {
-        let (all, removed) = {
-            let mut pages = self.pages.write().await;
-            let Some(current) = pages.get_mut(page) else {
-                return 0;
-            };
-            let before = current.len();
-            current.retain(|stroke| stroke.layer != AGENT_LAYER);
-            (current.clone(), before - current.len())
-        };
-        if removed > 0 {
-            self.save_page(page, &all).await;
-            self.fan_out(Some(page.to_owned()), page_frame(page, &all));
-        }
-        removed
-    }
-
-    /// Removes the strokes whose seeds are listed; broadcasts the removal, not the whole page.
-    pub async fn remove_strokes(&self, page: &str, seeds: &[String]) -> usize {
-        if seeds.is_empty() {
-            return 0;
-        }
-        let (all, removed) = {
-            let mut pages = self.pages.write().await;
-            let Some(current) = pages.get_mut(page) else {
-                return 0;
-            };
-            let before = current.len();
-            current.retain(|stroke| !seeds.iter().any(|seed| seed == &stroke.seed));
-            (current.clone(), before - current.len())
-        };
-        if removed == 0 {
-            return 0;
-        }
-        self.save_page(page, &all).await;
-        self.fan_out(Some(page.to_owned()), op_frame(page, &remove_op(seeds)));
-        removed
-    }
-
-    /// Replaces the given strokes with `strokes` (a split erase); broadcasts the replacement.
-    pub async fn replace_strokes(
-        &self,
-        page: &str,
-        seeds: &[String],
-        strokes: Vec<StrokeMsg>,
-    ) -> usize {
-        let strokes: Vec<StrokeMsg> = strokes.into_iter().filter(is_well_formed).collect();
-        let all = {
-            let mut pages = self.pages.write().await;
-            let Some(current) = pages.get_mut(page) else {
-                return 0;
-            };
-            if !seeds.is_empty() {
-                current.retain(|stroke| !seeds.iter().any(|seed| seed == &stroke.seed));
-            }
-            current.extend(strokes.clone());
-            current.clone()
-        };
-        self.save_page(page, &all).await;
-        self.fan_out(
-            Some(page.to_owned()),
-            op_frame(page, &replace_op(seeds, &strokes)),
-        );
-        all.len()
-    }
-
-    /// Empties one page (the tablet's clear).
-    pub async fn clear_page(&self, page: &str) -> usize {
-        let removed = {
-            let mut pages = self.pages.write().await;
-            let Some(current) = pages.get_mut(page) else {
-                return 0;
-            };
-            let before = current.len();
-            current.clear();
-            before
-        };
-        if removed > 0 {
-            self.save_page(page, &[]).await;
-            self.fan_out(
-                Some(page.to_owned()),
-                op_frame(page, &serde_json::json!({ "k": "clear" })),
-            );
-        }
-        removed
-    }
-
-    /// Replaces every stroke on `page` (tablet undo, clear or erase) and fans the snapshot out.
-    pub async fn replace(&self, page: &str, strokes: Vec<StrokeMsg>) -> usize {
-        let strokes: Vec<StrokeMsg> = strokes.into_iter().filter(is_well_formed).collect();
-        let count = strokes.len();
-        {
-            let mut pages = self.pages.write().await;
-            pages.insert(page.to_owned(), strokes.clone());
-        }
-        self.save_page(page, &strokes).await;
-        self.fan_out(Some(page.to_owned()), page_frame(page, &strokes));
-        count
-    }
-
     /// Creates a page from `request`; `Err` carries a message for the client.
     pub async fn create_page(&self, request: NewPage) -> Result<PageMeta, String> {
         let mut meta = self.meta.write().await;
@@ -319,9 +159,11 @@ impl Library {
         notebook.pages.push(page.clone());
         let index = meta.clone();
         drop(meta);
-        self.pages.write().await.insert(page.id.clone(), Vec::new());
+        self.pages
+            .write()
+            .await
+            .insert(page.id.clone(), PageContent::default());
         self.save_meta(&index).await;
-        self.save_page(&page.id, &[]).await;
         self.fan_out(None, meta_frame_of(&index));
         Ok(page)
     }
@@ -346,7 +188,8 @@ impl Library {
         drop(meta);
         self.save_meta(&index).await;
         self.fan_out(None, meta_frame_of(&index));
-        self.fan_out(Some(page.id.clone()), page_frame(&page.id, &[]));
+        let content = self.content(&page.id).await.unwrap_or_default();
+        self.fan_out(Some(page.id.clone()), page_frame(&page.id, &content));
         Ok(page)
     }
 
@@ -377,7 +220,6 @@ impl Library {
         let index = meta.clone();
         drop(meta);
         self.pages.write().await.remove(id);
-        let _ = tokio::fs::remove_file(self.page_path(id)).await;
         let _ = tokio::fs::remove_file(self.data_dir.join("pages").join(format!("{id}.txt"))).await;
         self.save_meta(&index).await;
         self.fan_out(None, meta_frame_of(&index));
@@ -451,47 +293,19 @@ impl Library {
         self.meta.read().await.page(id).is_some()
     }
 
-    fn page_path(&self, id: &str) -> PathBuf {
-        self.data_dir.join("pages").join(format!("{id}.json"))
-    }
-
     /// Fans one frame out; `page` decides which sessions receive it.
     pub fn fan_out(&self, page: Option<String>, text: String) {
         let _ = self.tx.send(Frame { page, text });
     }
 
     async fn save_meta(&self, meta: &Meta) {
-        let body = match serde_json::to_vec_pretty(meta) {
-            Ok(body) => body,
-            Err(error) => {
-                tracing::error!(%error, "meta serialize failed");
-                return;
-            }
-        };
-        write_atomic(&self.data_dir.join("meta.json"), body, "meta").await;
-    }
-
-    async fn save_page(&self, page: &str, strokes: &[StrokeMsg]) {
-        let body = match disk::page_body(strokes) {
-            Ok(body) => body,
-            Err(error) => {
-                tracing::error!(%error, "page serialize failed");
-                return;
-            }
-        };
-        let path = self.page_path(page);
-        if let Some(parent) = path.parent() {
-            let _ = tokio::fs::create_dir_all(parent).await;
-        }
-        let body_for_write = body.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            write_atomic_blocking(&path, &body_for_write).map_err(|error| error.to_string())
-        })
-        .await;
+        let meta = meta.clone();
+        let store = self.store.clone();
+        let result = tokio::task::spawn_blocking(move || store.write_meta(&meta)).await;
         match result {
-            Ok(Ok(())) => tracing::debug!(page, strokes = strokes.len(), "page saved"),
-            Ok(Err(error)) => tracing::error!(page, %error, "page save failed"),
-            Err(error) => tracing::error!(page, %error, "page save task failed"),
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => tracing::error!(%error, "index write failed"),
+            Err(error) => tracing::error!(%error, "index write task failed"),
         }
     }
 }

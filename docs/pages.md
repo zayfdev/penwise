@@ -4,40 +4,44 @@ The long-term model lives in `crates/penwise-proto/src/notebook.rs` (op log, HLC
 implements the same *shapes* in the running server's plain-JSON style, so the surfaces agree today and the
 op log can replace the transport later without changing the wire shapes.
 
-## On disk (`$PENWISE_DATA`)
+## State on disk (`$PENWISE_DATA`)
 
-`meta.json`:
+Pages live in **SQLite** (`penwise.db`), one row per object, so an append writes a row instead of rewriting a
+page. The old `meta.json` + `pages/<id>.json` layout is read once and imported.
 
-```json
-{
-  "version": 1,
-  "active": "pg_0123456789abcdef",
-  "notebooks": [
-    {
-      "id": "nb_0123456789abcdef",
-      "title": "Notebook 1",
-      "pages": [
-        {
-          "id": "pg_0123456789abcdef",
-          "title": "Page 1",
-          "kind": { "t": "fixed", "width": 1600.0, "height": 2560.0 },
-          "background": "blank"
-        }
-      ]
-    }
-  ]
-}
+Why: the JSON layout stored a stroke as raw float arrays (**11 bytes per stored float**, measured: 0.41 MB for
+110 strokes) and rewrote the whole page file on every pen stroke, which is quadratic over a session and cannot
+carry pictures.
+
+```
+notebooks(id, title, position, deleted)
+pages(id, notebook, title, kind, background, position, deleted)
+objects(page, id, kind, layer, z, codec, payload)   PRIMARY KEY (page, id), INDEX (page, z, id)
+anchors(page, selector, rect, role, text, url, stale)   -- DOM map, for anchoring annotations
+state(key, value)                                       -- e.g. the active page
 ```
 
-- `kind`: `{"t":"fixed","width":W,"height":H}` or `{"t":"infinite"}`. Default `fixed 1600×2560` (A4 portrait at
-  the current render scale).
-- `background`: `"blank" | "ruled" | "grid" | "dots"`.
-- IDs: `nb_` / `pg_` plus 16 lowercase hex characters.
-- Strokes stay per page in `pages/<page id>.json`, existing shape: `{"version":1,"strokes":[…]}`.
-- Migration: if `meta.json` is missing and the old `page.json` exists, create `Notebook 1 / Page 1` (fixed A4,
-  blank), move its strokes to `pages/<id>.json`, write `meta.json`, keep `page.json` untouched.
+- `kind`: `"stroke"` or `"image"`; ordering is `(z, id)` ascending (bottom → top).
+- `codec`: `"stroke_v1"` ([`library::stroke_codec`]) or `"image_v1"` (JSON: `asset, x, y, w, h, label`).
+- `stroke_v1` carries the same numbers losslessly: header (`preset, argb, scale, seed, count`) then x/y, then
+  pressure/tilt/azimuth, then times — 24 bytes per sample instead of ~56 in JSON. Quantizing to 16-bit was
+  considered and rejected: it buys ~2× more and costs exactness.
+- Pictures are never stored in the database: `image_v1` names an asset in `assets/<sha256>.png`.
+- The in-memory copy of every page is decoded at startup (a few MB); the database is the source of truth.
+- The index (`kind`, titles, background, active page) upserts rather than replace-all, because deleting a
+  `pages` row cascades to its objects.
 
-## Backgrounds
+### Pictures
+
+`assets/<sha256>.png`, content-addressed: the same screenshot placed twice is one file. Ids are 64 hex
+characters; anything else is refused (no traversal). PNG only, up to 24 MB and 10 000 px a side, never
+re-encoded.
+
+### Export
+
+`GET /page.png` draws paper, then pictures, then ink, so an agent sees exactly what the page looks like.
+
+## Backgrounds## Backgrounds
 
 Drawn under the strokes, identical in the browser and in the PNG:
 
@@ -64,7 +68,14 @@ canvas shadow.
 | `DELETE /notebooks/<id>` | — | `{"ok":true,"meta":{…}}`; `400` when it holds pages or is the last one |
 | `POST /pages/<id>/select` | — | `{"active":"pg_…"}` |
 | `GET /page?page=<id>` | — | `{"version":1,"strokes":[…]}` for that page |
-| `GET /page.png?page=<id>&scale=<n>` | — | PNG of that page; `page` defaults to active |
+| `GET /page.png?page=<id>&scale=<n>` | — | PNG of that page (paper, pictures, ink); `page` defaults to active |
+| `POST /assets` | PNG bytes | `{"asset":"<sha256>","width":W,"height":H}` |
+| `GET /assets/<id>` | — | the PNG, immutable (long cache) |
+| `GET /pages/<id>/images` | — | `{"page":"pg_…","images":[…]}` |
+| `POST /pages/<id>/images` | `{"asset","x","y","w","h","label"?,"id"?,"layer"?}` | the placed picture, with its id |
+| `DELETE /pages/<id>/images` | `{"ids":[…]}` | `{"removed":n}` |
+| `GET /pages/<id>/history` | — | `{"page":"pg_…","archives":[{"at":MS,"objects":n}]}`, newest first |
+| `POST /pages/<id>/restore` | `{"at"?}` | `{"restored":n}`; newest archive when `at` is absent, `404` when none |
 
 `POST /pages` defaults: title `Page N` (N = notebook page count + 1), `kind` fixed A4, `background` `blank`,
 `notebook` = the notebook holding `active`.
@@ -82,7 +93,8 @@ Server → client:
 |---|---|
 | `{"t":"meta","meta":{…}}` | sent on connect and whenever pages/notebooks change |
 | `{"t":"active","page":"pg_…"}` | the active page changed |
-| `{"t":"page","page":"pg_…","strokes":[…]}` | full snapshot, sent on select/connect and after bulk edits |
+| `{"t":"page","page":"pg_…","strokes":[…],"images":[…]}` | full snapshot, sent on select/connect and after bulk edits |
+| `{"t":"image","page":"pg_…","image":{…}}` | a picture was placed on that page |
 | `{"t":"stroke",…,"page":"pg_…"}` | committed stroke on that page |
 | `{"t":"live",…,"page":"pg_…"}` | in-progress stroke sample batch on that page |
 
@@ -114,6 +126,28 @@ The server replies `{"t":"ack",…}` to the sender and fans the op to the other 
 A frame naming a page the server does not know is refused (`{"t":"error"}`), so a stale client can never write to
 another page.
 Frames without a page are applied to the sender's selected page (back-compat with the current app build).
+
+### Server-side archives (the safety net)
+
+Every destructive edit — clear, erase, stroke replace, picture delete — first copies the page's objects into
+`object_history`, keeping the newest 10 archives per page. `POST /pages/<id>/restore` puts one back and pushes a
+fresh page frame to every client.
+
+This exists because a client can lose ink the server never had a copy of: on 2026-10-25 a page's saved strokes
+were wiped on both the tablet and the server while only the tablet's undo history survived. A destructive frame
+is now always reversible from the server, independently of any client's undo stack.
+
+## Pictures and the design surface
+
+Pictures are what turn the page into a design surface: a webpage screenshot to mark up, a component cut out of
+a running app, a reference image. They sit on the paper under every stroke, so ink annotates them and the page
+PNG an agent receives shows both.
+
+- **Sources:** a Chrome extension captures the visible tab or a chosen element (with its selector and rect); a
+  grabber CLI renders components from a dev server; agents place pictures with `penwise_place_image`.
+- **Anchoring (planned):** pictures carry the page they came from (URL, selector). The `anchors` table stores
+  the element map, so a stroke's position can resolve to "inside `.hero__cta`" and survive layout changes;
+  stale selectors are marked rather than dropped.
 
 ## MCP
 

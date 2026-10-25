@@ -24,6 +24,7 @@ class InkSurfaceView
         SurfaceHolder.Callback {
         private val live = LiveStroke()
         private var store: StrokeStore? = null
+        private var images: PageImages? = null
         private var controller: StylusStrokeController? = null
         private var renderer: CanvasFrontBufferedRenderer<Unit>? = null
 
@@ -36,9 +37,11 @@ class InkSurfaceView
         fun bind(
             store: StrokeStore,
             brushes: BrushSource,
+            images: PageImages? = null,
             liveOut: LiveOut? = null,
         ) {
             this.store = store
+            this.images = images
             controller = StylusStrokeController(store, brushes, live, this, liveOut)
         }
 
@@ -56,14 +59,16 @@ class InkSurfaceView
             renderer =
                 CanvasFrontBufferedRenderer(
                     this,
-                    InkRenderCallback(pageStore, live) { pageStyle },
+                    InkRenderCallback(pageStore, live, { pageStyle }, { images }),
                 )
             holder.addCallback(this)
             pageStore.onPageChanged = ::redrawPage
+            images?.onChanged = ::redrawPage
         }
 
         override fun onDetachedFromWindow() {
             store?.onPageChanged = null
+            images?.onChanged = null
             holder.removeCallback(this)
             controller?.release()
             renderer?.release(true)

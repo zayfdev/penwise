@@ -4,11 +4,14 @@
 //! or mDNS yet (see `docs/contracts/m3-server.md` for the full design).
 
 mod annotate;
+mod archive;
+mod assets;
 mod auth;
 mod http;
 mod library;
 mod ocr;
 mod pairing;
+mod pictures;
 mod qr;
 mod render;
 mod search;
@@ -24,6 +27,7 @@ use axum::extract::{Path, Query, State, WebSocketUpgrade};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post};
 
+use assets::Assets;
 use library::Library;
 
 /// Port from the contract; sync, viewer and (later) the API share it.
@@ -46,7 +50,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let token = auth::load_or_create(&data);
-    let library = Library::load(data.clone()).await;
+    let library = Library::load(data.clone());
+    let assets = Assets::load(data.join("assets"));
     let pairing = Arc::new(pairing::Pairing::new());
     let urls = urls::platform_urls(port);
     let router = Router::new()
@@ -69,12 +74,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/text", get(ocr::page_text))
         .route("/search", get(search::search))
         .route("/page.png", get(page_png))
+        .route("/pages/{id}/history", get(archive::page_history))
+        .route("/pages/{id}/restore", post(archive::page_restore))
         .route("/health", get(health))
         .route("/annotate", post(annotate))
         .route("/annotate/clear", post(clear_annotations))
+        .merge(pictures::routes())
         .fallback(get(file))
         .with_state(AppState {
             library,
+            assets,
             web: Arc::new(web.clone()),
             token: Arc::new(token.clone()),
             pairing: Arc::clone(&pairing),
@@ -104,6 +113,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[derive(Clone)]
 pub struct AppState {
     pub library: Arc<Library>,
+    pub assets: Arc<Assets>,
     pub web: Arc<PathBuf>,
     pub token: Arc<String>,
     pub pairing: Arc<pairing::Pairing>,
@@ -137,8 +147,9 @@ async fn page_png(
         Err(response) => return response,
     };
     let strokes = app.library.strokes(&page.id).await;
+    let images = pictures::load_images(&app, &page.id).await;
     let scale = query.scale.unwrap_or(1.0);
-    match render::page_png(&strokes, scale, &page) {
+    match render::page_png(&strokes, &images, scale, &page) {
         Ok(png) => (
             [
                 (axum::http::header::CONTENT_TYPE, "image/png"),

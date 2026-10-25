@@ -43,6 +43,12 @@ class PageViewModel(
 ) : AndroidViewModel(application) {
     val store = StrokeStore()
     val tools = ToolState()
+
+    /** Pictures placed on the open page (screenshots, component cut-outs); drawn under the ink. */
+    val images =
+        PageImages { asset ->
+            LibraryClient(settings.endpoints().firstOrNull().orEmpty(), settings.token).asset(asset)
+        }
     private val settings = SyncSettings(application)
     private val library = PageLibrary(application.filesDir, settings)
 
@@ -144,8 +150,19 @@ class PageViewModel(
     private fun onRemoteFrame(text: String) {
         val frame = runCatching { JSONObject(text) }.getOrNull() ?: return
         when (frame.optString("t")) {
-            "meta" -> adoptMeta(frame.optJSONObject("meta"))
-            "page" -> if (frame.optString("page") == activePageId) applyRemotePage(frame)
+            "meta" -> {
+                adoptMeta(frame.optJSONObject("meta"))
+            }
+
+            "page" -> {
+                if (frame.optString("page") == activePageId) applyRemotePage(frame)
+            }
+
+            "image" -> {
+                if (frame.optString("page") == activePageId) {
+                    frame.optJSONObject("image")?.let(PageImage::read)?.let(images::add)
+                }
+            }
         }
     }
 
@@ -200,6 +217,13 @@ class PageViewModel(
      */
     private fun applyRemotePage(frame: JSONObject) {
         val incoming = Wire.parsePage(frame.toString()) ?: return
+        frame.optJSONArray("images")?.let { array ->
+            images.replace(
+                (0 until array.length()).mapNotNull { index ->
+                    array.optJSONObject(index)?.let(PageImage::read)
+                },
+            )
+        }
         viewModelScope.launch {
             val ready =
                 withContext(Dispatchers.Default) {
@@ -423,6 +447,7 @@ class PageViewModel(
 
     /** Loads `id`'s strokes and saved undo history. */
     private suspend fun openPage(id: String) {
+        images.clear()
         file = library.strokes(id)
         undoFile = UndoHistoryFile(getApplication<Application>().filesDir, id)
         pushedSeeds.clear()

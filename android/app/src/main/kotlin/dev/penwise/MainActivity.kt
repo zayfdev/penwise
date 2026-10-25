@@ -137,6 +137,7 @@ private fun CanvasScreen(
             store = store,
             brushes = tools,
             style = PageStyle.of(pages.page(pages.active)),
+            images = page.images,
             liveOut = page.liveOut,
             modifier = Modifier.fillMaxSize(),
         )

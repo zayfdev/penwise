@@ -27,12 +27,18 @@ fn temp_dir(name: &str) -> PathBuf {
 #[tokio::test]
 async fn first_run_creates_one_notebook_and_one_page() {
     let dir = temp_dir("fresh");
-    let library = Library::load(dir.clone()).await;
+    let library = Library::load(dir.clone());
     let meta = library.meta().await;
     assert_eq!(1, meta.notebooks.len());
     assert_eq!(1, meta.notebooks[0].pages.len());
     assert_eq!(meta.notebooks[0].pages[0].id, meta.active);
-    assert!(dir.join("meta.json").is_file());
+    assert!(dir.join("penwise.db").is_file(), "state lives in SQLite");
+    let reloaded = Library::load(dir.clone());
+    assert_eq!(
+        meta.active,
+        reloaded.active().await,
+        "the page survives a reload"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -42,7 +48,7 @@ async fn a_legacy_page_json_migrates_into_page_one() {
     std::fs::create_dir_all(&dir).unwrap();
     let legacy = serde_json::json!({ "version": 1, "strokes": [stroke()] });
     std::fs::write(dir.join("page.json"), legacy.to_string()).unwrap();
-    let library = Library::load(dir.clone()).await;
+    let library = Library::load(dir.clone());
     let active = library.active().await;
     assert_eq!(1, library.strokes(&active).await.len(), "strokes moved");
     assert!(dir.join("page.json").is_file(), "legacy file left in place");
@@ -52,7 +58,7 @@ async fn a_legacy_page_json_migrates_into_page_one() {
 #[tokio::test]
 async fn pages_created_after_the_first_are_numbered_and_persisted() {
     let dir = temp_dir("create");
-    let library = Library::load(dir.clone()).await;
+    let library = Library::load(dir.clone());
     let page = library
         .create_page(NewPage {
             background: Some(Background::Grid),
@@ -66,7 +72,7 @@ async fn pages_created_after_the_first_are_numbered_and_persisted() {
     assert!(library.strokes(&page.id).await.is_empty());
     // A fresh load sees both pages and the stored background.
     drop(library);
-    let reloaded = Library::load(dir.clone()).await;
+    let reloaded = Library::load(dir.clone());
     let meta = reloaded.meta().await;
     assert_eq!(2, meta.notebooks[0].pages.len());
     assert_eq!(
@@ -79,14 +85,14 @@ async fn pages_created_after_the_first_are_numbered_and_persisted() {
 #[tokio::test]
 async fn strokes_survive_a_reload_per_page() {
     let dir = temp_dir("strokes");
-    let library = Library::load(dir.clone()).await;
+    let library = Library::load(dir.clone());
     let first = library.active().await;
     let second = library.create_page(NewPage::default()).await.unwrap();
     assert!(library.append(&first, stroke()).await);
     assert!(library.append(&second.id, stroke()).await);
     assert!(library.append(&second.id, stroke()).await);
     drop(library);
-    let reloaded = Library::load(dir.clone()).await;
+    let reloaded = Library::load(dir.clone());
     assert_eq!(1, reloaded.strokes(&first).await.len());
     assert_eq!(2, reloaded.strokes(&second.id).await.len());
     let _ = std::fs::remove_dir_all(&dir);
@@ -95,7 +101,7 @@ async fn strokes_survive_a_reload_per_page() {
 #[tokio::test]
 async fn the_last_page_cannot_be_deleted() {
     let dir = temp_dir("delete");
-    let library = Library::load(dir.clone()).await;
+    let library = Library::load(dir.clone());
     let only = library.active().await;
     assert!(library.delete_page(&only).await.is_err());
     let second = library.create_page(NewPage::default()).await.unwrap();
@@ -108,7 +114,7 @@ async fn the_last_page_cannot_be_deleted() {
 #[tokio::test]
 async fn deleting_the_active_page_moves_active_to_a_survivor() {
     let dir = temp_dir("delete-active");
-    let library = Library::load(dir.clone()).await;
+    let library = Library::load(dir.clone());
     let second = library.create_page(NewPage::default()).await.unwrap();
     assert!(library.select(&second.id).await);
     let meta = library.delete_page(&second.id).await.unwrap();
@@ -120,7 +126,7 @@ async fn deleting_the_active_page_moves_active_to_a_survivor() {
 #[tokio::test]
 async fn a_patch_updates_title_and_background() {
     let dir = temp_dir("patch");
-    let library = Library::load(dir.clone()).await;
+    let library = Library::load(dir.clone());
     let active = library.active().await;
     let page = library
         .patch_page(
@@ -146,7 +152,7 @@ async fn a_patch_updates_title_and_background() {
 #[tokio::test]
 async fn agent_marks_are_cleared_without_touching_ink() {
     let dir = temp_dir("agent");
-    let library = Library::load(dir.clone()).await;
+    let library = Library::load(dir.clone());
     let page = library.active().await;
     library.append(&page, stroke()).await;
     let mut mark = stroke();
@@ -161,7 +167,7 @@ async fn agent_marks_are_cleared_without_touching_ink() {
 #[tokio::test]
 async fn a_stroke_resend_does_not_duplicate_ink() {
     let dir = temp_dir("dedupe");
-    let library = Library::load(dir.clone()).await;
+    let library = Library::load(dir.clone());
     let page = library.active().await;
     let mut first = stroke();
     first.seed = "abc".to_owned();
@@ -186,7 +192,7 @@ async fn a_stroke_resend_does_not_duplicate_ink() {
 #[tokio::test]
 async fn removing_strokes_by_seed_broadcasts_only_the_removal() {
     let dir = temp_dir("op-remove");
-    let library = Library::load(dir.clone()).await;
+    let library = Library::load(dir.clone());
     let page = library.active().await;
     let mut first = stroke();
     let mut second = stroke();
@@ -208,7 +214,7 @@ async fn removing_strokes_by_seed_broadcasts_only_the_removal() {
 #[tokio::test]
 async fn clearing_a_page_empties_it_and_broadcasts_a_clear() {
     let dir = temp_dir("op-clear");
-    let library = Library::load(dir.clone()).await;
+    let library = Library::load(dir.clone());
     let page = library.active().await;
     library.append_many(&page, vec![stroke(), stroke()]).await;
     let mut events = library.subscribe();
@@ -222,7 +228,7 @@ async fn clearing_a_page_empties_it_and_broadcasts_a_clear() {
 #[tokio::test]
 async fn replacing_a_stroke_swaps_it_for_the_fragments() {
     let dir = temp_dir("op-replace");
-    let library = Library::load(dir.clone()).await;
+    let library = Library::load(dir.clone());
     let page = library.active().await;
     let mut original = stroke();
     original.seed = "5".to_owned();
@@ -247,7 +253,7 @@ async fn replacing_a_stroke_swaps_it_for_the_fragments() {
 #[tokio::test]
 async fn frames_carry_the_page_they_belong_to() {
     let dir = temp_dir("frames");
-    let library = Library::load(dir.clone()).await;
+    let library = Library::load(dir.clone());
     let page = library.active().await;
     let mut events = library.subscribe();
     library.append(&page, stroke()).await;
@@ -265,7 +271,7 @@ async fn frames_carry_the_page_they_belong_to() {
 #[tokio::test]
 async fn malformed_strokes_and_unknown_pages_are_refused() {
     let dir = temp_dir("refuse");
-    let library = Library::load(dir.clone()).await;
+    let library = Library::load(dir.clone());
     let page = library.active().await;
     let mut broken = stroke();
     broken.times.clear();
@@ -294,7 +300,7 @@ fn client_ids_are_accepted_only_in_the_expected_shape() {
 #[tokio::test]
 async fn a_client_supplied_id_is_kept_and_is_idempotent() {
     let dir = temp_dir("client-id");
-    let library = Library::load(dir.clone()).await;
+    let library = Library::load(dir.clone());
     let request = || NewPage {
         id: Some("pg_00000000deadbeef".to_owned()),
         ..NewPage::default()
@@ -310,7 +316,7 @@ async fn a_client_supplied_id_is_kept_and_is_idempotent() {
 #[tokio::test]
 async fn notebooks_can_be_created_renamed_and_emptied() {
     let dir = temp_dir("notebooks");
-    let library = Library::load(dir.clone()).await;
+    let library = Library::load(dir.clone());
     let (book, meta) = library.create_notebook("Recipes".to_owned()).await.unwrap();
     assert_eq!(2, meta.notebooks.len());
     assert!(book.pages.is_empty());
@@ -339,7 +345,7 @@ async fn notebooks_can_be_created_renamed_and_emptied() {
 #[tokio::test]
 async fn the_last_notebook_cannot_be_deleted() {
     let dir = temp_dir("last-notebook");
-    let library = Library::load(dir.clone()).await;
+    let library = Library::load(dir.clone());
     let only = library.meta().await.notebooks[0].id.clone();
     assert!(library.delete_notebook(&only).await.is_err());
     let _ = std::fs::remove_dir_all(&dir);
@@ -350,4 +356,63 @@ fn titles_are_bounded() {
     assert!(check_title("ok").is_ok());
     assert!(check_title("   ").is_err());
     assert!(check_title(&"x".repeat(MAX_TITLE_BYTES + 1)).is_err());
+}
+
+#[tokio::test]
+async fn a_cleared_page_can_be_restored_from_the_server() {
+    let dir = temp_dir("restore");
+    let library = Library::load(dir.clone());
+    let page = library.active().await;
+    library.append(&page, stroke()).await;
+    library.append(&page, stroke()).await;
+    assert_eq!(2, library.strokes(&page).await.len(), "two strokes to lose");
+
+    // The destructive path: a client clears the page (clear button, erase-everything, a bad replace).
+    library.clear_page(&page).await;
+    assert!(library.strokes(&page).await.is_empty());
+
+    let history = library.history(&page).expect("history reads");
+    assert_eq!(1, history.len(), "one archive with the two strokes");
+    assert_eq!(2, history[0].1);
+
+    let restored = library
+        .restore(&page, None)
+        .await
+        .expect("restore runs")
+        .expect("an archive exists");
+    assert_eq!(2, restored);
+    assert_eq!(2, library.strokes(&page).await.len(), "ink is back");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn restoring_a_page_without_archives_reports_nothing_to_restore() {
+    let dir = temp_dir("restore-empty");
+    let library = Library::load(dir.clone());
+    let page = library.active().await;
+    assert!(library.history(&page).expect("reads").is_empty());
+    assert!(
+        library
+            .restore(&library.active().await, None)
+            .await
+            .expect("runs")
+            .is_none()
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn old_archives_are_pruned() {
+    let dir = temp_dir("restore-prune");
+    let library = Library::load(dir.clone());
+    let page = library.active().await;
+    library.append(&page, stroke()).await;
+    // Eleven destructive edits: only the newest ten archives may survive.
+    for _ in 0..11 {
+        library.clear_page(&page).await;
+    }
+    let history = library.history(&page).expect("reads");
+    assert!(history.len() <= 10, "kept {} archives", history.len());
+    let _ = std::fs::remove_dir_all(&dir);
 }

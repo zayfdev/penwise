@@ -13,7 +13,7 @@ use axum::extract::ws::{Message, WebSocket};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 
-use crate::library::{Library, StrokeMsg};
+use crate::library::{ImageMsg, Library, StrokeMsg};
 
 static SESSIONS: AtomicU64 = AtomicU64::new(1);
 
@@ -73,6 +73,38 @@ pub async fn handle(socket: WebSocket, library: Arc<Library>) {
     library.fan_out(None, live_end(session));
 }
 
+/// Applies a `stroke` frame: a committed stroke from the tablet.
+async fn append_stroke(library: &Library, target: &str, frame: &Value) -> Option<String> {
+    match frame.get("stroke").cloned() {
+        Some(stroke) => match serde_json::from_value::<StrokeMsg>(stroke) {
+            Ok(stroke) => {
+                if library.append(target, stroke).await {
+                    None
+                } else {
+                    Some(error_frame("malformed stroke"))
+                }
+            }
+            Err(error) => Some(error_frame(&error.to_string())),
+        },
+        None => Some(error_frame("missing stroke")),
+    }
+}
+
+/// Applies an `image` frame: a picture placed by the tablet or an agent.
+async fn place_image(library: &Library, target: &str, frame: &Value) -> String {
+    let Some(image) = frame
+        .get("image")
+        .and_then(|image| serde_json::from_value::<ImageMsg>(image.clone()).ok())
+    else {
+        return error_frame("malformed picture");
+    };
+    if library.add_image(target, image).await {
+        String::new()
+    } else {
+        error_frame("malformed picture")
+    }
+}
+
 /// Applies one client frame; `page` is the session's followed page and changes on `select`.
 async fn on_text(library: &Library, session: u64, page: &mut String, text: &str) -> Option<String> {
     let frame: Value = match serde_json::from_str(text) {
@@ -109,22 +141,17 @@ async fn on_text(library: &Library, session: u64, page: &mut String, text: &str)
                 Ok(target) => target,
                 Err(reply) => return Some(reply),
             };
-            let reply = match frame.get("stroke").cloned() {
-                Some(stroke) => match serde_json::from_value::<StrokeMsg>(stroke) {
-                    Ok(stroke) => {
-                        if library.append(&target, stroke).await {
-                            None
-                        } else {
-                            Some(error_frame("malformed stroke"))
-                        }
-                    }
-                    Err(error) => Some(error_frame(&error.to_string())),
-                },
-                None => Some(error_frame("missing stroke")),
-            };
+            let reply = append_stroke(library, &target, &frame).await;
             // The stroke itself arrives as a normal frame; viewers drop the preview now.
             library.fan_out(None, live_end(session));
             reply
+        }
+        Some("image") => {
+            let target = match frame_page(library, &frame, page).await {
+                Ok(target) => target,
+                Err(reply) => return Some(reply),
+            };
+            Some(place_image(library, &target, &frame).await)
         }
         Some("op") => {
             let target = match frame_page(library, &frame, page).await {

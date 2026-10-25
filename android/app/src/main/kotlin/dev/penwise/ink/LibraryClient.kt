@@ -43,6 +43,30 @@ class LibraryClient(
         return token to url
     }
 
+    /** `GET /assets/<id>` decoded as a bitmap; `null` when the server is away or the asset is gone. */
+    fun asset(asset: String): android.graphics.Bitmap? {
+        val url = URL(base(httpBase(baseUrl), "/assets/$asset"))
+        val connection =
+            runCatching { url.openConnection() as HttpURLConnection }.getOrNull() ?: return null
+        return try {
+            connection.requestMethod = "GET"
+            connection.connectTimeout = TIMEOUT_MS
+            connection.readTimeout = TIMEOUT_MS
+            if (token.isNotEmpty()) connection.setRequestProperty("X-Penwise-Token", token)
+            if (connection.responseCode !in HTTP_OK_FIRST..HTTP_OK_LAST) {
+                Log.w(TAG, "GET /assets/$asset -> ${connection.responseCode}")
+                null
+            } else {
+                android.graphics.BitmapFactory.decodeStream(connection.inputStream)
+            }
+        } catch (error: IOException) {
+            Log.w(TAG, "GET /assets/$asset failed: ${error.message}")
+            null
+        } finally {
+            connection.disconnect()
+        }
+    }
+
     /** One library call; `null` on any failure. */
     fun request(
         method: String,

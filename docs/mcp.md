@@ -36,11 +36,18 @@ Build it with `cargo build -p penwise-mcp` (or `just mcp` to run it by hand).
 | `penwise_page_text` | `{page?, refresh?}` | `{"page":…,"text":"…","cached":bool}` — handwriting as text |
 | `penwise_search` | `{query}` | `{"query":…,"hits":[{page,title,snippet}]}` over pages already read |
 | `penwise_switch_page` | `{page}` | `{"active":"pg_…"}` |
+| `penwise_place_image` | `{path? \| asset?, x, y, w?, h?, label?, page?}` | the placed picture `{id, asset, x, y, w, h, label}` |
+| `penwise_list_images` | `{page?}` | `{"page":"pg_…","images":[…]}` |
+| `penwise_remove_image` | `{id, page?}` | `{"removed":1}` |
 
 The MCP server finds the access token itself: `PENWISE_TOKEN`, else `~/.local/share/penwise/token` (where the
 server writes it). Set `PENWISE_TOKEN` explicitly if the server uses a different data directory.
 
-`penwise_annotate` is the only write path: polylines in page pixels (0–1600 × 0–2560) become ordinary strokes on a
+`penwise_place_image` puts a picture on the page — the reference an agent draws or writes about. Give it a local
+`path` (uploaded, so the same file twice costs one asset) or an existing `asset`, plus the page rectangle. With
+`path`, `w`/`h` default to the picture's own pixel size.
+
+`penwise_annotate` is the other write path: polylines in page pixels (0–1600 × 0–2560) become ordinary strokes on a
 separate `agent` layer, so they render in the browser and in the PNG, persist with the page, and clear as a set.
 There is no text extraction yet: an agent that needs handwriting as text
 should look at the PNG with a vision model.
@@ -49,7 +56,10 @@ should look at the PNG with a vision model.
 
 | Route | Purpose |
 |---|---|
-| `GET /page.png?scale=…` | The page rendered through the same engine the tablet uses |
+| `GET /page.png?scale=…` | The page rendered through the same engine the tablet uses, pictures included |
+| `POST /assets` | Upload a PNG; returns its digest, which becomes the page object's `asset` |
+| `POST /pages/<id>/images` | Place a picture at `x, y, w, h` in page px |
+| `GET/DELETE /pages/<id>/images` | List or remove placed pictures |
 | `GET /health` | Stroke count |
 | `POST /annotate` | Draw polylines on the agent layer (`{"strokes":[…]}`) |
 | `POST /annotate/clear` | Remove every agent mark |

@@ -11,12 +11,13 @@ fun InkCanvas(
     brushes: BrushSource,
     style: PageStyle,
     modifier: Modifier = Modifier,
+    images: PageImages? = null,
     liveOut: LiveOut? = null,
 ) {
     AndroidView(
         factory = { context ->
             InkSurfaceView(context).apply {
-                bind(store, brushes, liveOut)
+                bind(store, brushes, images, liveOut)
                 setPageStyle(style)
             }
         },
