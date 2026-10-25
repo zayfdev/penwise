@@ -350,7 +350,7 @@ mod tests {
         PageMeta {
             id: "pg_test".to_owned(),
             title: "Test".to_owned(),
-            kind: PageKind::a4(),
+            kind: PageKind::landscape(),
             background: Background::Blank,
         }
     }

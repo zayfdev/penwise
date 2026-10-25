@@ -4,10 +4,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-/// A4 portrait at the current render scale, in page px.
-pub const PAGE_WIDTH: f32 = 1600.0;
-/// A4 portrait at the current render scale, in page px.
-pub const PAGE_HEIGHT: f32 = 2560.0;
+/// Default sheet width, in page px: the tablet's landscape screen, so ink maps 1:1.
+pub const PAGE_WIDTH: f32 = 2560.0;
+/// Default sheet height, in page px: the tablet's landscape screen, so ink maps 1:1.
+pub const PAGE_HEIGHT: f32 = 1600.0;
 /// Ruling / grid / dot pitch of every non-blank background (7 mm at 340 dpi).
 pub const BACKGROUND_SPACING_PX: f32 = 93.7;
 /// Marks a stroke as assistant-authored; cleared as a set.
@@ -47,9 +47,9 @@ pub enum PageKind {
 }
 
 impl PageKind {
-    /// A4 portrait at the current scale.
+    /// The default sheet: landscape, matching how the tablet is held, so ink maps 1:1.
     #[must_use]
-    pub fn a4() -> Self {
+    pub fn landscape() -> Self {
         Self::Fixed {
             width: PAGE_WIDTH,
             height: PAGE_HEIGHT,

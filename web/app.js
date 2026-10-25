@@ -4,8 +4,8 @@
 
 import init, { geometry } from "./pkg/penwise_wasm.js";
 
-const PAGE_WIDTH = 1600;
-const PAGE_HEIGHT = 2560;
+const PAGE_WIDTH = 2560;
+const PAGE_HEIGHT = 1600;
 const DAB_STRIDE = 9;
 const BACKGROUND_SPACING = 93.7;
 const BACKGROUND_COLORS = { ruled: "#C9D6E8", grid: "#DCE3EC", dots: "#C6CEDA" };

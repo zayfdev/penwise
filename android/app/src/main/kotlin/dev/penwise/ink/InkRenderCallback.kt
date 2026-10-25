@@ -15,6 +15,7 @@ import androidx.graphics.lowlatency.CanvasFrontBufferedRenderer
 internal class InkRenderCallback(
     private val store: StrokeStore,
     private val live: LiveStroke,
+    private val style: () -> PageStyle,
 ) : CanvasFrontBufferedRenderer.Callback<Unit> {
     private val grain = GrainMasks()
     private val frontPainter = GeometryPainter(grain)
@@ -50,7 +51,7 @@ internal class InkRenderCallback(
         bufferHeight: Int,
         params: Collection<Unit>,
     ) {
-        canvas.drawColor(Color.WHITE, BlendMode.SRC)
+        PaperPainter.draw(canvas, style(), bufferWidth, bufferHeight)
         val strokes = store.strokes
         for (g in strokes) if (g.multiply) pagePainter.draw(canvas, g)
         for (g in strokes) if (!g.multiply) pagePainter.draw(canvas, g)

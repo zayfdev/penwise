@@ -131,6 +131,9 @@ Frames without a page are applied to the sender's selected page (back-compat wit
 
 ## App
 
+- **Paper**: the tablet draws the page's ruling/grid/dots itself (`PaperPainter`), with the same colours, spacing
+  (93.7 page px) and line widths as the server's PNG. Default sheet is **landscape 2560 × 1600** — the tablet's
+  own screen, so ink maps 1:1; older portrait pages are migrated on load.
 - **Foreground sync**: while the app runs it holds a `dataSync` foreground service with a Wi-Fi lock and pings the
   socket every 20 s. Without them Android suspends the app when the screen sleeps and the socket dies within
   seconds; with them the connection stayed established through 75 s of screen-off in testing. No CPU wake lock:

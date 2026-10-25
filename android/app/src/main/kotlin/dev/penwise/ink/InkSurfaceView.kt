@@ -26,6 +26,9 @@ class InkSurfaceView
         private var store: StrokeStore? = null
         private var controller: StylusStrokeController? = null
         private var renderer: CanvasFrontBufferedRenderer<Unit>? = null
+        @Volatile
+        private var pageStyle: PageStyle = PageStyle.BLANK
+
         private val twoFingerTap =
             TwoFingerTap(ViewConfiguration.get(context).scaledTouchSlop * TAP_SLOP_FACTOR) { store?.undo() }
 
@@ -38,11 +41,22 @@ class InkSurfaceView
             controller = StylusStrokeController(store, brushes, live, this, liveOut)
         }
 
+        /** Sets the paper drawn under the ink; repaints when it changes. */
+        fun setPageStyle(style: PageStyle) {
+            if (pageStyle == style) return
+            pageStyle = style
+            redrawPage()
+        }
+
         override fun onAttachedToWindow() {
             super.onAttachedToWindow()
             val pageStore = store ?: return
             requestUnbufferedDispatch(InputDevice.SOURCE_CLASS_POINTER)
-            renderer = CanvasFrontBufferedRenderer(this, InkRenderCallback(pageStore, live))
+            renderer =
+                CanvasFrontBufferedRenderer(
+                    this,
+                    InkRenderCallback(pageStore, live) { pageStyle },
+                )
             holder.addCallback(this)
             pageStore.onPageChanged = ::redrawPage
         }

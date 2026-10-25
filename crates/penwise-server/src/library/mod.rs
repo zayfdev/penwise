@@ -313,7 +313,7 @@ impl Library {
         let page = PageMeta {
             id: requested.unwrap_or_else(|| new_id("pg")),
             title: title_or(request.title, format!("Page {number}"))?,
-            kind: request.kind.unwrap_or_else(PageKind::a4),
+            kind: request.kind.unwrap_or_else(PageKind::landscape),
             background: request.background.unwrap_or_default(),
         };
         notebook.pages.push(page.clone());

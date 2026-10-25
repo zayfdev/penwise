@@ -59,15 +59,20 @@ fn push_run(runs: &mut Vec<Run>, start: usize, end: usize) {
     }
 }
 
-/// Shortest distance from `(x, y)` to the polyline `path` (`x, y` interleaved).
+/// Shortest distance from `(x, y)` to the polyline `path` (`x, y` interleaved, one point per pair).
+///
+/// The app appends every pen point of the sweep in order, so this walks **consecutive** points: reading the
+/// array as independent segment pairs loses the links between them and tests geometry the eraser never crossed.
 fn distance_to_path(path: &[f32], x: f32, y: f32) -> f32 {
-    if path.len() < 4 {
+    let points = path.len() / 2;
+    if points == 1 {
         let (px, py) = (path[0], path[1]);
         return ((x - px).powi(2) + (y - py).powi(2)).sqrt();
     }
     let mut best = f32::MAX;
-    for pair in path.chunks_exact(4) {
-        let d = distance_to_segment(x, y, pair[0], pair[1], pair[2], pair[3]);
+    for index in 0..points - 1 {
+        let o = index * 2;
+        let d = distance_to_segment(x, y, path[o], path[o + 1], path[o + 2], path[o + 3]);
         if d < best {
             best = d;
         }

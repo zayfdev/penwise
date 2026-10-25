@@ -35,8 +35,8 @@ class PageLibrary(
             } else {
                 JSONObject()
                     .put("t", "fixed")
-                    .put("width", PageListCodec.A4_WIDTH)
-                    .put("height", PageListCodec.A4_HEIGHT)
+                    .put("width", PageListCodec.SHEET_WIDTH)
+                    .put("height", PageListCodec.SHEET_HEIGHT)
             }
         return JSONObject()
             .put("id", page.id)

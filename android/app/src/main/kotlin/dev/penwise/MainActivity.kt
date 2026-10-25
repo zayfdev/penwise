@@ -28,6 +28,7 @@ import dev.penwise.home.HomeScreen
 import dev.penwise.ink.InkCanvas
 import dev.penwise.ink.PageList
 import dev.penwise.ink.PageStrip
+import dev.penwise.ink.PageStyle
 import dev.penwise.ink.PageViewModel
 import dev.penwise.ink.SyncService
 import dev.penwise.tools.SyncDialog
@@ -132,7 +133,13 @@ private fun CanvasScreen(
     val store = page.store
     val tools = page.tools
     Box(modifier = Modifier.fillMaxSize()) {
-        InkCanvas(store = store, brushes = tools, liveOut = page.liveOut, modifier = Modifier.fillMaxSize())
+        InkCanvas(
+            store = store,
+            brushes = tools,
+            style = PageStyle.of(pages.page(pages.active)),
+            liveOut = page.liveOut,
+            modifier = Modifier.fillMaxSize(),
+        )
         Column(
             modifier =
                 Modifier

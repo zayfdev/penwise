@@ -2,7 +2,17 @@
 
 Recorded 2026-10-25 while testing on the tablet. **Not started**; listed here so the next pass can pick them up.
 
-## 1. Page shape differs between tablet and PC
+## 1. Page shape differs between tablet and PC — **resolved: landscape**
+
+Done: pages are created 2560 × 1600 (landscape, the tablet's own screen) and every existing fixed page was
+migrated on load. The PC sheet is now wide, matching the tablet. Also fixed in the same pass: the tablet never
+drew paper at all — ruling, grid and dots existed only in the server's PNG. `PaperPainter` now draws them under
+the ink with the same colours, spacing and widths as `render.rs`.
+
+What is still open from this item: no view→page transform. The surface is the screen, so landscape is ~1:1, but
+the toolbar overlays the top of the page instead of the page starting below it.
+
+## 1a. (original diagnosis, kept for reference)
 
 **Symptom (user):** the page on the PC is "a long thin vertical", while on the tablet it is "a wide infinite
 canvas". Nothing had been drawn yet, so this is layout, not ink.

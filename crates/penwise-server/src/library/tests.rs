@@ -62,7 +62,7 @@ async fn pages_created_after_the_first_are_numbered_and_persisted() {
         .unwrap();
     assert_eq!("Page 2", page.title);
     assert_eq!(Background::Grid, page.background);
-    assert_eq!(PageKind::a4(), page.kind);
+    assert_eq!(PageKind::landscape(), page.kind);
     assert!(library.strokes(&page.id).await.is_empty());
     // A fresh load sees both pages and the stored background.
     drop(library);

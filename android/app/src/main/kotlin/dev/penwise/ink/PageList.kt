@@ -192,7 +192,7 @@ object PageListCodec {
             if (page.infinite) {
                 JSONObject().put("t", "infinite")
             } else {
-                JSONObject().put("t", "fixed").put("width", A4_WIDTH).put("height", A4_HEIGHT)
+                JSONObject().put("t", "fixed").put("width", SHEET_WIDTH).put("height", SHEET_HEIGHT)
             }
         return JSONObject()
             .put("id", page.id)
@@ -201,9 +201,9 @@ object PageListCodec {
             .put("background", page.background)
     }
 
-    /** A4 portrait in page px, matching the server's default. */
-    const val A4_WIDTH = 1600.0
-    const val A4_HEIGHT = 2560.0
+    /** Default sheet in page px: landscape, matching the tablet's screen. */
+    const val SHEET_WIDTH = 2560.0
+    const val SHEET_HEIGHT = 1600.0
 }
 
 /** The library cache in app files: `meta.json` plus one stroke file per page. */

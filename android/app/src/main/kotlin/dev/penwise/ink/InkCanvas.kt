@@ -9,11 +9,18 @@ import androidx.compose.ui.viewinterop.AndroidView
 fun InkCanvas(
     store: StrokeStore,
     brushes: BrushSource,
+    style: PageStyle,
     modifier: Modifier = Modifier,
     liveOut: LiveOut? = null,
 ) {
     AndroidView(
-        factory = { context -> InkSurfaceView(context).apply { bind(store, brushes, liveOut) } },
+        factory = { context ->
+            InkSurfaceView(context).apply {
+                bind(store, brushes, liveOut)
+                setPageStyle(style)
+            }
+        },
+        update = { view -> view.setPageStyle(style) },
         modifier = modifier,
     )
 }
