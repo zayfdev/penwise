@@ -63,6 +63,10 @@ ffi:
 extension-check:
     bun test extension
 
+# Components from a running page onto one Penwise page (needs Chrome/Chromium; CHROME= overrides).
+grab *ARGS:
+    bun scripts/grab.mjs {{ARGS}}
+
 # Browser viewer bundle (wasm) — rebuild after changing core or penwise-wasm.
 web:
     wasm-pack build crates/penwise-wasm --target web --out-dir ../../web/pkg --out-name penwise_wasm

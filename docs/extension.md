@@ -45,6 +45,23 @@ that component.
 - The real flow against the running server: `published {page, asset, anchors: 1}`, then
   `GET /pages/<id>/anchors` returned `#hero .cta`.
 
+## Component cut-outs (the grabber)
+
+`scripts/grab.mjs` cuts components out of a running page and lays them on one page, ready to be rearranged and
+finished with ink — the second workflow:
+
+```
+bun scripts/grab.mjs --url http://localhost:3000 --selectors ".hero,.card" --all --title "Pricing ideas"
+```
+
+- Drives Chrome over the DevTools protocol (`Page.captureScreenshot` with a clip), so it needs no automation
+  package — only a browser binary (`CHROME=` overrides the search).
+- `--all` cuts every match of each selector; labels become `.card[0]`, `.card[1]`.
+- Tiles are scaled to fit 640×480, laid out in a grid (3 columns past 4 tiles), uploaded as assets, and placed
+  with the selector as the label; the page is then selected so the tablet follows.
+- Verified against a fixture page: `cut .hero (1360x208)`, `cut .card …`, `page …: 2 cut-out(s), 1424x294`, and
+  `GET /pages/<id>/images` reported labels `[".card[0]", ".card[1]"]`.
+
 ## Not yet
 
 - Anchors are stored, not resolved: a stroke is not yet attributed to the selector it falls inside.
