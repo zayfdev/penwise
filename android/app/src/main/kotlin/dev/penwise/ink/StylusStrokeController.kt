@@ -1,5 +1,6 @@
 package dev.penwise.ink
 
+import android.util.Log
 import android.view.MotionEvent
 import dev.penwise.core.InkStroke
 import kotlin.random.Random
@@ -26,6 +27,15 @@ internal class StylusStrokeController(
     private val liveOut: LiveOut? = null,
 ) {
     private val buffer = SampleBuffer()
+
+    /**
+     * The stroke as *drawn* while the pen is down: thinned to a point every few pixels and rebuilt at most every
+     * [PREVIEW_INTERVAL_MS]. The committed stroke keeps every sample, so the finished ink is exact.
+     */
+    private var preview: InkStroke? = null
+    private val previewThinner = PreviewThinner(PREVIEW_SPACING_PX)
+    private var lastPreviewAtMs = 0L
+    private var previewSeed = 0L
 
     /**
      * Every sample of the stroke under the pen. [SampleBuffer] only holds the delta of one motion event (it is
@@ -94,6 +104,11 @@ internal class StylusStrokeController(
         activeBrush = brush
         activeSeed = Random.nextLong()
         stroke = InkStroke(brush.presetIndex, activeSeed, brush.argb, brush.sizeScale)
+        preview?.close()
+        preview = null
+        previewSeed = activeSeed
+        previewThinner.reset()
+        lastPreviewAtMs = 0L
         accumulated.reset()
         startNanos = event.eventTimeNanos
         strokeId++
@@ -180,14 +195,52 @@ internal class StylusStrokeController(
         index: Int,
     ) {
         val current = stroke ?: return
+        val brush = activeBrush ?: return
         buffer.fill(event, index, startNanos)
         accumulated.add(buffer.samples, buffer.times, buffer.count)
         current.push(buffer.samples, buffer.times, buffer.count)
         liveOut?.samples(buffer.samples, buffer.times, buffer.count)
-        if (live.claimFrame()) {
-            live.publish(LiveFrame(strokeId, current.snapshot()))
+        pushPreview(brush)
+        if (live.claimFrame() && previewReady()) {
+            val started = android.os.SystemClock.uptimeMillis()
+            live.publish(LiveFrame(strokeId, livePreviewGeometry(brush)))
+            val took = android.os.SystemClock.uptimeMillis() - started
+            if (took >= SLOW_PREVIEW_MS) {
+                Log.w(TAG, "slow preview: ${took}ms for ${accumulated.count} samples")
+            }
             sink.requestFrontFrame()
         }
+    }
+
+    /** Adds the newest samples to the preview stroke when they are far enough apart to matter. */
+    private fun pushPreview(brush: BrushSpec) {
+        val target =
+            preview ?: InkStroke(brush.presetIndex, previewSeed, brush.argb, brush.sizeScale).also { preview = it }
+        for (offset in 0 until buffer.count) {
+            val x = buffer.samples[offset * SAMPLE_STRIDE]
+            val y = buffer.samples[offset * SAMPLE_STRIDE + 1]
+            if (!previewThinner.keep(x, y)) continue
+            target.push(
+                buffer.samples.copyOfRange(offset * SAMPLE_STRIDE, (offset + 1) * SAMPLE_STRIDE),
+                intArrayOf(buffer.times[offset]),
+                1,
+            )
+        }
+    }
+
+    /** True when enough time passed since the last preview geometry rebuild. */
+    private fun previewReady(): Boolean {
+        val now = android.os.SystemClock.uptimeMillis()
+        if (now - lastPreviewAtMs < PREVIEW_INTERVAL_MS) return false
+        lastPreviewAtMs = now
+        return true
+    }
+
+    /** Geometry of the thinned preview stroke; the committed stroke is built separately, from every sample. */
+    private fun livePreviewGeometry(brush: BrushSpec): dev.penwise.core.InkGeometry {
+        val target =
+            preview ?: InkStroke(brush.presetIndex, previewSeed, brush.argb, brush.sizeScale).also { preview = it }
+        return target.snapshot()
     }
 
     private fun finish() {
@@ -206,6 +259,8 @@ internal class StylusStrokeController(
                 times = accumulated.timesCopy(),
                 count = accumulated.count,
             )
+        preview?.close()
+        preview = null
         val geometry = current.finish()
         current.close()
         saved.attachGeometry(geometry)
@@ -324,6 +379,16 @@ internal class StylusStrokeController(
     private companion object {
         const val NO_POINTER = -1
         const val PREVIEW_MIN_INTERVAL_MS = 40L
+
+        /** Distance between preview points while the pen is down; the committed stroke keeps them all. */
+        const val PREVIEW_SPACING_PX = 3.5f
+
+        /** Longest gap between preview geometry rebuilds, so a fast pen still shows motion. */
+        const val PREVIEW_INTERVAL_MS = 12L
+
+        /** A preview rebuild slower than this is logged: it is what makes long strokes stutter. */
+        const val SLOW_PREVIEW_MS = 8L
+        const val TAG = "PenwiseInk"
         const val SAMPLE_STRIDE = 5
         const val INITIAL_ERASE_POINTS = 64
 
