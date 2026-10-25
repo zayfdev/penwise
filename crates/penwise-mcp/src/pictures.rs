@@ -11,6 +11,10 @@ pub(crate) fn picture_tool(
 ) -> Result<serde_json::Value, serde_json::Value> {
     match name {
         "penwise_place_image" => place_image(request, endpoint),
+        "penwise_page_annotations" => {
+            let page = resolve_page(endpoint, request)?;
+            get_text(endpoint, &format!("/pages/{page}/annotations"))
+        }
         "penwise_list_images" => {
             let page = resolve_page(endpoint, request)?;
             get_text(endpoint, &format!("/pages/{page}/images"))

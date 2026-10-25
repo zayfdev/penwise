@@ -80,6 +80,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "/pages/{id}/anchors",
             get(archive::anchor_list).post(archive::anchor_put),
         )
+        .route("/pages/{id}/annotations", get(archive::annotation_list))
         .route("/health", get(health))
         .route("/annotate", post(annotate))
         .route("/annotate/clear", post(clear_annotations))

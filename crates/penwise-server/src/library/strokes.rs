@@ -64,6 +64,7 @@ impl Library {
             content.strokes.push(stroke.clone());
         }
         self.fan_out(Some(page.to_owned()), stroke_frame(page, &stroke));
+        self.resolve_anchors(page).await;
         true
     }
 
@@ -109,6 +110,7 @@ impl Library {
             current.clone()
         };
         self.fan_out(Some(page.to_owned()), page_frame(page, &all));
+        self.resolve_anchors(page).await;
         added
     }
 
@@ -157,6 +159,7 @@ impl Library {
             tracing::error!(page, %error, "stroke delete failed");
         }
         self.fan_out(Some(page.to_owned()), op_frame(page, &remove_op(seeds)));
+        self.resolve_anchors(page).await;
         removed
     }
 
@@ -189,6 +192,7 @@ impl Library {
             Some(page.to_owned()),
             op_frame(page, &replace_op(seeds, &strokes)),
         );
+        self.resolve_anchors(page).await;
         all.strokes.len()
     }
 
@@ -236,6 +240,7 @@ impl Library {
             tracing::error!(page, %error, "page replace failed");
         }
         self.fan_out(Some(page.to_owned()), page_frame(page, &content));
+        self.resolve_anchors(page).await;
         count
     }
 }

@@ -39,6 +39,7 @@ Build it with `cargo build -p penwise-mcp` (or `just mcp` to run it by hand).
 | `penwise_place_image` | `{path? \| asset?, x, y, w?, h?, label?, page?}` | the placed picture `{id, asset, x, y, w, h, label}` |
 | `penwise_list_images` | `{page?}` | `{"page":"pg_…","images":[…]}` |
 | `penwise_remove_image` | `{id, page?}` | `{"removed":1}` |
+| `penwise_page_annotations` | `{page?}` | `{"elements":[{selector, strokes, rect, text}],"unanchored":n}` |
 
 The MCP server finds the access token itself: `PENWISE_TOKEN`, else `~/.local/share/penwise/token` (where the
 server writes it). Set `PENWISE_TOKEN` explicitly if the server uses a different data directory.

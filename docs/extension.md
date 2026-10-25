@@ -62,7 +62,16 @@ bun scripts/grab.mjs --url http://localhost:3000 --selectors ".hero,.card" --all
 - Verified against a fixture page: `cut .hero (1360x208)`, `cut .card …`, `page …: 2 cut-out(s), 1424x294`, and
   `GET /pages/<id>/images` reported labels `[".card[0]", ".card[1]"]`.
 
+## Anchors, resolved
+
+- **Tab mode** stores the element map: every element with an `id` or `data-testid` plus headings, sections and
+  controls that are on screen, rects in screenshot px, capped at 400.
+- **Element mode** stores one anchor covering the whole crop (the picture *is* the element).
+- The server re-resolves ink on every change: a stroke belongs to the **smallest** anchor containing its centre,
+  and `GET /pages/<id>/annotations` (MCP: `penwise_page_annotations`) reports strokes per selector plus how many
+  fall outside all of them. Verified: three strokes over a two-element map produced `1 / 1 / unanchored: 1`.
+
 ## Not yet
 
-- Anchors are stored, not resolved: a stroke is not yet attributed to the selector it falls inside.
-- Only the visible viewport is captured (no full-page stitching).
+- No full-page stitching: only the visible viewport is captured.
+- Stale selectors are not detected (the `anchors.stale` column is unused).

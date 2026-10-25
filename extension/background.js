@@ -33,6 +33,43 @@ async function captureViewport(windowId) {
   return await (await fetch(dataUrl)).blob();
 }
 
+/**
+ * The elements worth attributing ink to: things with an id or test id, plus headings, sections and controls.
+ * Rects come back in viewport CSS px; the caller scales them into screenshot pixels.
+ */
+async function collectAnchors(tabId) {
+  const [{ result }] = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => {
+      const seen = new Set();
+      const anchors = [];
+      const candidates = document.querySelectorAll(
+        "[id], [data-testid], h1, h2, h3, nav, section, article, button, a[href], form, img",
+      );
+      for (const element of candidates) {
+        if (anchors.length >= 400) break;
+        const box = element.getBoundingClientRect();
+        if (box.width < 8 || box.height < 8) continue;
+        if (box.bottom < 0 || box.top > innerHeight || box.right < 0 || box.left > innerWidth) continue;
+        let selector;
+        if (element.id) selector = `#${CSS.escape(element.id)}`;
+        else if (element.dataset.testid) selector = `[data-testid="${element.dataset.testid}"]`;
+        else continue;
+        if (seen.has(selector)) continue;
+        seen.add(selector);
+        anchors.push({
+          selector,
+          rect: [box.left, box.top, box.width, box.height],
+          role: element.getAttribute("role") ?? element.tagName.toLowerCase(),
+          text: (element.textContent ?? "").trim().slice(0, 200),
+        });
+      }
+      return anchors;
+    },
+  });
+  return result ?? [];
+}
+
 /** The device pixel ratio of the tab, so CSS-pixel rects map onto screenshot pixels. */
 async function devicePixelRatio(tabId) {
   const [{ result }] = await chrome.scripting.executeScript({
@@ -49,12 +86,20 @@ async function captureTab() {
   const settings = await loadSettings();
   const png = await captureViewport(tab.windowId);
   const size = await createImageBitmap(png);
+  const dpr = await devicePixelRatio(tab.id);
+  // The page is the screenshot, so an element's anchor rect is its CSS box times the pixel ratio.
+  const anchors = (await collectAnchors(tab.id)).map((anchor) => ({
+    ...anchor,
+    rect: anchor.rect.map((value) => Math.round(value * dpr)),
+    url: tab.url ?? "",
+  }));
   return publishCapture(settings, {
     png,
     width: size.width,
     height: size.height,
     url: tab.url ?? "",
     title: tab.title ?? tab.url ?? "Capture",
+    anchors,
   });
 }
 
@@ -77,7 +122,8 @@ async function captureElement() {
     anchors: [
       {
         selector: pick.selector,
-        rect: pick.rect,
+        // The picture *is* the element, so its anchor covers the whole crop.
+        rect: [0, 0, cropped.width, cropped.height],
         role: pick.role,
         text: pick.text,
         url: tab.url ?? "",

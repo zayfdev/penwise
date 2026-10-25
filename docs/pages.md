@@ -74,6 +74,9 @@ canvas shadow.
 | `GET /pages/<id>/images` | — | `{"page":"pg_…","images":[…]}` |
 | `POST /pages/<id>/images` | `{"asset","x","y","w","h","label"?,"id"?,"layer"?}` | the placed picture, with its id |
 | `DELETE /pages/<id>/images` | `{"ids":[…]}` | `{"removed":n}` |
+| `GET /pages/<id>/anchors` | — | `{"page":"pg_…","anchors":[{selector, rect, role?, text?, url?}]}` |
+| `POST /pages/<id>/anchors` | `{"anchors":[…]}` | `{"stored":n}` — replaces the element map, then re-attributes ink |
+| `GET /pages/<id>/annotations` | — | `{"page":…,"elements":[{selector,rect,role,text,strokes}],"unanchored":n}` |
 | `GET /pages/<id>/history` | — | `{"page":"pg_…","archives":[{"at":MS,"objects":n}]}`, newest first |
 | `POST /pages/<id>/restore` | `{"at"?}` | `{"restored":n}`; newest archive when `at` is absent, `404` when none |
 
@@ -145,9 +148,11 @@ PNG an agent receives shows both.
 
 - **Sources:** a Chrome extension captures the visible tab or a chosen element (with its selector and rect); a
   grabber CLI renders components from a dev server; agents place pictures with `penwise_place_image`.
-- **Anchoring (planned):** pictures carry the page they came from (URL, selector). The `anchors` table stores
-  the element map, so a stroke's position can resolve to "inside `.hero__cta`" and survive layout changes;
-  stale selectors are marked rather than dropped.
+- **Anchoring (landed):** a capture stores the page's element map (`anchors`: selector, rect in page px, role,
+  text). Every ink change re-resolves strokes to the **smallest element containing the stroke's centre**, so an
+  agent asking `GET /pages/<id>/annotations` learns "one mark on `.hero__cta`" instead of only coordinates.
+  Rewriting the map (a newer capture) re-attributes existing ink.
+- Still open: stale selectors when the page has changed (the `stale` column exists, nothing sets it).
 
 ## MCP
 

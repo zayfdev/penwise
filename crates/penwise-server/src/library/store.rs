@@ -23,7 +23,7 @@ use super::stroke_codec;
 pub(super) const HISTORY_KEEP: i64 = 10;
 
 /// Schema version written to `PRAGMA user_version`.
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 /// One page's objects, as stored. Cheap to clone: the handle is shared.
 #[derive(Clone)]
@@ -411,6 +411,12 @@ fn create_schema(conn: &Connection) -> Result<(), String> {
          CREATE TABLE IF NOT EXISTS state (
              key TEXT PRIMARY KEY,
              value TEXT NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS ink_anchors (
+             page TEXT NOT NULL,
+             object TEXT NOT NULL,
+             selector TEXT NOT NULL,
+             PRIMARY KEY (page, object)
          );
          CREATE TABLE IF NOT EXISTS object_history (
              page TEXT NOT NULL,

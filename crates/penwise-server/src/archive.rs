@@ -107,3 +107,19 @@ pub struct AnchorRequest {
     #[serde(default)]
     pub anchors: Vec<Anchor>,
 }
+
+/// `GET /pages/<id>/annotations` — what ink belongs to which element of the captured page.
+pub(crate) async fn annotation_list(
+    Path(page_id): Path<String>,
+    State(app): State<AppState>,
+    Query(auth_query): Query<AuthQuery>,
+    headers: axum::http::HeaderMap,
+) -> Response {
+    if !auth::authorized(&app.token, auth_query.token.as_deref(), &headers) {
+        return auth::deny();
+    }
+    match app.library.annotations(&page_id).await {
+        Ok(body) => axum::Json(body).into_response(),
+        Err(error) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),
+    }
+}

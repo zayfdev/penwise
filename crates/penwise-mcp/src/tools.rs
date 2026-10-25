@@ -101,6 +101,14 @@ const TOOLS: &str = r##"{
       }
     },
     {
+      "name": "penwise_page_annotations",
+      "description": "Which elements of a captured page the ink belongs to: per-selector stroke counts, plus how many strokes fall outside every element.",
+      "inputSchema": {
+        "type": "object",
+        "properties": { "page": { "type": "string", "description": "Page id; defaults to the active page." } }
+      }
+    },
+    {
       "name": "penwise_list_pages",
       "description": "List notebooks and their pages, with the active page id.",
       "inputSchema": { "type": "object", "properties": {} }
