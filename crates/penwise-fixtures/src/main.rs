@@ -77,6 +77,9 @@ fn dump_strokes(input: &Path, out: &mut dyn Write) -> anyhow::Result<()> {
         x_scale: header.x_scale,
         y_scale: header.y_scale,
     };
+    // Seeds must be unique per recording, not per stroke index: two fixtures would otherwise carry the same
+    // stroke identities and a server that treats seeds as identity would drop the second recording.
+    let recording_seed = fnv1a(&bytes);
     let mut strokes = Vec::new();
     let mut samples = Vec::new();
     for (index, stroke) in capture.strokes.iter().enumerate() {
@@ -97,7 +100,7 @@ fn dump_strokes(input: &Path, out: &mut dyn Write) -> anyhow::Result<()> {
             "preset": 0,
             "argb": -16_777_216,
             "scale": 1.0,
-            "seed": format!("{}", 0x5EED_u64 + index as u64),
+            "seed": format!("{}", recording_seed ^ (index as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)),
             "samples": flat,
             "times": times,
         }));
@@ -108,6 +111,20 @@ fn dump_strokes(input: &Path, out: &mut dyn Write) -> anyhow::Result<()> {
     )?;
     out.write_all(b"\n")?;
     Ok(())
+}
+
+/// FNV-1a over the file, so a recording's strokes carry ids of their own.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "the seed is opaque; only its uniqueness matters"
+)]
+fn fnv1a(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xCBF2_9CE4_8422_2325;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01B3);
+    }
+    hash
 }
 
 /// Draws a recorded stroke to a PNG: the same engine the tablet, the browser and the server use.
