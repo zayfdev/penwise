@@ -131,6 +131,10 @@ Frames without a page are applied to the sender's selected page (back-compat wit
 
 ## App
 
+- **Foreground sync**: while the app runs it holds a `dataSync` foreground service with a Wi-Fi lock and pings the
+  socket every 20 s. Without them Android suspends the app when the screen sleeps and the socket dies within
+  seconds; with them the connection stayed established through 75 s of screen-off in testing. No CPU wake lock:
+  the pings wake the processor briefly through the Wi-Fi chip, which is enough.
 - **Home screen** first: notebooks with their pages as cards (glyph + name + template), `＋` for a new page
   inside each notebook, a pencil to rename (and, when a notebook is empty, delete) it, `＋ New notebook`, and the
   sync settings. Opening a card enters the canvas; the home icon (or system back) returns.

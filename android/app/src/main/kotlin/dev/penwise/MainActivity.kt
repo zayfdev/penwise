@@ -29,6 +29,7 @@ import dev.penwise.ink.InkCanvas
 import dev.penwise.ink.PageList
 import dev.penwise.ink.PageStrip
 import dev.penwise.ink.PageViewModel
+import dev.penwise.ink.SyncService
 import dev.penwise.tools.SyncDialog
 import dev.penwise.tools.Toolbar
 
@@ -40,6 +41,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        SyncService.start(this)
         page.loadPage()
         // Debug-only end-to-end replay: `am start … --es fixture <path>`.
         intent?.getStringExtra("fixture")?.let { path ->
@@ -106,6 +108,11 @@ class MainActivity : ComponentActivity() {
         val url = data.getQueryParameter("url").orEmpty()
         Log.i("PenwisePair", "pairing with code from ${url.ifBlank { "settings" }}")
         page.updateSync(url, code)
+    }
+
+    override fun onDestroy() {
+        SyncService.stop(this)
+        super.onDestroy()
     }
 
     override fun onNewIntent(intent: Intent) {

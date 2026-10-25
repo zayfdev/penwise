@@ -3,6 +3,11 @@
 
     <!-- LAN / Tailscale link to the Penwise PC server. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Keeping the sync socket alive while the screen sleeps: the app runs a dataSync foreground service. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
         android:allowBackup="false"
@@ -28,6 +33,12 @@
                 <data android:scheme="penwise" />
             </intent-filter>
         </activity>
+
+        <!-- Process priority only: the socket itself stays in the app's sync client (see SyncService). -->
+        <service
+            android:name=".ink.SyncService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 
 </manifest>

@@ -132,6 +132,10 @@ class PageViewModel(
             client.onConnect = {
                 sync.sendSelect(activePageId)
                 sync.sendPage(store.snapshot())
+                SyncService.start(
+                    getApplication(),
+                    getApplication<Application>().getString(R.string.sync_connected, settings.displayedUrl()),
+                )
             }
         }
 
