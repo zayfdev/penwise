@@ -59,6 +59,10 @@ device-check:
 ffi:
     ANDROID_NDK_HOME="$ANDROID_HOME/ndk/30.0.16248370" cargo ndk -t arm64-v8a -P 34 -o target/jniLibs build --release -p penwise-ffi
 
+# Chrome extension flow against the shipped server client (Bun, fake Penwise server).
+extension-check:
+    bun test extension
+
 # Browser viewer bundle (wasm) — rebuild after changing core or penwise-wasm.
 web:
     wasm-pack build crates/penwise-wasm --target web --out-dir ../../web/pkg --out-name penwise_wasm

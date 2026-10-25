@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Penwise capture</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body { width: 320px; margin: 0; padding: 14px; font: 13px/1.4 system-ui, sans-serif; }
+      h1 { margin: 0 0 10px; font-size: 14px; }
+      label { display: block; margin: 10px 0 4px; font-weight: 600; }
+      input { width: 100%; box-sizing: border-box; padding: 6px 8px; }
+      button { width: 100%; margin-top: 10px; padding: 8px; font: inherit; cursor: pointer; }
+      #status { margin-top: 10px; min-height: 18px; opacity: 0.8; }
+      #status.error { color: #b3261e; opacity: 1; }
+      .row { display: flex; gap: 8px; }
+      .row button { flex: 1; }
+    </style>
+  </head>
+  <body>
+    <h1>Penwise capture</h1>
+    <label for="url">Server</label>
+    <input id="url" placeholder="http://127.0.0.1:7420" />
+    <label for="token">Token</label>
+    <input id="token" placeholder="from ~/.local/share/penwise/token" />
+    <div class="row">
+      <button id="tab">Capture tab</button>
+      <button id="element">Pick element</button>
+    </div>
+    <div id="status"></div>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

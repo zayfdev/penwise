@@ -3,6 +3,7 @@
 //!
 //! See `docs/pages.md` for the wire and disk contract this implements.
 
+mod anchors;
 mod archive;
 mod legacy;
 mod model;
@@ -18,6 +19,7 @@ use std::sync::Arc;
 
 use tokio::sync::{RwLock, broadcast};
 
+pub use anchors::Anchor;
 pub use model::{
     AGENT_LAYER, BACKGROUND_SPACING_PX, Background, Frame, ImageMsg, Meta, NewPage, Notebook,
     PageContent, PageKind, PageMeta, PagePatch, StrokeMsg,

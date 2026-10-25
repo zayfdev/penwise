@@ -76,6 +76,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/page.png", get(page_png))
         .route("/pages/{id}/history", get(archive::page_history))
         .route("/pages/{id}/restore", post(archive::page_restore))
+        .route(
+            "/pages/{id}/anchors",
+            get(archive::anchor_list).post(archive::anchor_put),
+        )
         .route("/health", get(health))
         .route("/annotate", post(annotate))
         .route("/annotate/clear", post(clear_annotations))
