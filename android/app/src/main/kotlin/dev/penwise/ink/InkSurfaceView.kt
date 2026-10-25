@@ -26,6 +26,7 @@ class InkSurfaceView
         private var store: StrokeStore? = null
         private var controller: StylusStrokeController? = null
         private var renderer: CanvasFrontBufferedRenderer<Unit>? = null
+
         @Volatile
         private var pageStyle: PageStyle = PageStyle.BLANK
 

@@ -18,14 +18,16 @@ internal object PaperPainter {
     private const val LINE_WIDTH_PX = 1f
     private const val DOT_RADIUS_PX = 1.5f
 
-    private val line = Paint().apply {
-        style = Paint.Style.FILL
-        isAntiAlias = false
-    }
-    private val dot = Paint().apply {
-        style = Paint.Style.FILL
-        isAntiAlias = true
-    }
+    private val line =
+        Paint().apply {
+            style = Paint.Style.FILL
+            isAntiAlias = false
+        }
+    private val dot =
+        Paint().apply {
+            style = Paint.Style.FILL
+            isAntiAlias = true
+        }
 
     /** Paints the sheet across the canvas; a page without a pattern is simply white. */
     fun draw(
