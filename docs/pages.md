@@ -174,6 +174,14 @@ minutes, single use.
 | `POST /pair` | none — the code is the credential | `{"code":"6WSGM4"}` → `{"ok":true,"token":"…","urls":["http://192.168.1.19:7420",…]}` |
 | `GET /pair/code` | token | `{"code":"…","expires_in":599}` |
 | `POST /pair/code` | token | mints a new code (the old one dies) |
+| `GET /pair.png?size=8` | token | the deep link below as a QR PNG |
+
+The QR carries `penwise://pair?code=XXXXXX&url=http://<lan>:7420`. Scanning it with the **system camera** opens
+Penwise already pointed at that server — the app exchanges the code for the token itself, so there is no custom
+scanner screen. The same URL works with `adb shell am start -a android.intent.action.VIEW -d …`.
+
+Sync accepts either form of address: a viewer URL (`http://host:7420`) or a socket URL (`ws://host:7420/ws`)
+is normalised to the socket before dialling.
 
 The exchange is rate limited: eight wrong codes inside a minute lock it for a minute. The viewer's ⇄ button shows
 the current code (and rotates it); in the tablet's Sync dialog, six characters in the token field are treated as a

@@ -1,5 +1,6 @@
 package dev.penwise
 
+import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -45,6 +46,7 @@ class MainActivity : ComponentActivity() {
             Log.i("PenwiseFixture", "replay requested: $path")
             page.requestReplay(path)
         }
+        handlePairing(intent)
         setContent {
             val pages by page.pages.collectAsState()
             var showSync by remember { mutableStateOf(false) }
@@ -94,6 +96,22 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    /** `penwise://pair?code=…&url=…`: exchange the code for a token and point sync at that server. */
+    private fun handlePairing(intent: Intent?) {
+        val data = intent?.data ?: return
+        if (data.scheme != "penwise" || data.host != "pair") return
+        val code = data.getQueryParameter("code") ?: return
+        val url = data.getQueryParameter("url").orEmpty()
+        Log.i("PenwisePair", "pairing with code from ${url.ifBlank { "settings" }}")
+        page.updateSync(url, code)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handlePairing(intent)
     }
 }
 

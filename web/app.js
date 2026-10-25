@@ -261,6 +261,8 @@ async function togglePairing() {
   }
   pairPanel.classList.add("open");
   await loadPairCode("/pair/code");
+  // The QR carries the same code; it is refreshed whenever the code is.
+  document.getElementById("pair-qr").src = `/pair.png?token=${encodeURIComponent(TOKEN)}`;
 }
 
 async function loadPairCode(path, method = "GET") {
@@ -272,6 +274,7 @@ async function loadPairCode(path, method = "GET") {
   }
   const result = await response.json();
   pairCode.textContent = result.code ?? "·····";
+  document.getElementById("pair-qr").src = `/pair.png?token=${encodeURIComponent(TOKEN)}&t=${Date.now()}`;
 }
 
 document.getElementById("pair-device").addEventListener("click", () => void togglePairing());

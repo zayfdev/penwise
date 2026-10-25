@@ -78,6 +78,7 @@
         padding: 10px 12px 46px; border-top: 1px solid #e3e3e6; background: #fbfbfc;
       }
       #pair-panel.open { display: flex; }
+      #pair-qr { width: 148px; height: 148px; image-rendering: pixelated; align-self: center; }
       #pair-code {
         font: 600 26px/1.1 ui-monospace, SFMono-Regular, Menlo, monospace;
         letter-spacing: 0.22em; color: #23252a;
@@ -143,8 +144,9 @@
         <button id="text-refresh">Read page</button>
       </div>
       <div id="pair-panel">
+        <img id="pair-qr" alt="Pairing QR code" width="148" height="148" />
         <div id="pair-code">······</div>
-        <div class="hint">Type this code on the tablet: Sync → Token.</div>
+        <div class="hint">Scan with the tablet camera, or type this code in Sync → Token.</div>
         <button id="pair-new">New code</button>
       </div>
       <form id="new-page">

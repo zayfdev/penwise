@@ -221,6 +221,36 @@ pub async fn refresh_route(
     .into_response()
 }
 
+/// `GET /pair.png?size=8` — the pairing deep link as a QR the device camera can open.
+pub async fn qr_route(
+    State(app): State<AppState>,
+    Query(query): Query<QrQuery>,
+    Query(auth_query): Query<crate::AuthQuery>,
+    headers: axum::http::HeaderMap,
+) -> Response {
+    if !auth::authorized(&app.token, auth_query.token.as_deref(), &headers) {
+        return auth::deny();
+    }
+    let payload = crate::qr::current_payload(&app.pairing, &app.urls);
+    match crate::qr::png(&payload, crate::qr::module_px(query.size)) {
+        Ok(png) => (
+            [
+                (axum::http::header::CONTENT_TYPE, "image/png"),
+                (axum::http::header::CACHE_CONTROL, "no-store"),
+            ],
+            png,
+        )
+            .into_response(),
+        Err(error) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),
+    }
+}
+
+/// Query of the QR route.
+#[derive(Debug, serde::Deserialize)]
+pub struct QrQuery {
+    pub size: Option<u32>,
+}
+
 /// Uppercases and drops spaces and dashes so `7k2m-9q` matches `7K2M9Q`.
 #[must_use]
 pub fn normalize(candidate: &str) -> String {

@@ -9,6 +9,7 @@ mod http;
 mod library;
 mod ocr;
 mod pairing;
+mod qr;
 mod render;
 mod search;
 mod urls;
@@ -59,6 +60,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "/pair/code",
             get(pairing::code_route).post(pairing::refresh_route),
         )
+        .route("/pair.png", get(pairing::qr_route))
         .route(
             "/notebooks/{id}",
             patch(notebook_update).delete(notebook_remove),
