@@ -39,7 +39,23 @@ canvas". Nothing had been drawn yet, so this is layout, not ink.
 **Decide:** page orientation should follow the device at creation time (and be switchable), plus a visible page
 edge or a background that makes the sheet obvious on the tablet.
 
-## 1b. Latency (deferred by the user, but diagnosed)
+## 1b. Latency (addressed; numbers below)
+
+**Measured in the browser** (`window.__penwise.benchStroke` on a real page stroke):
+
+| Stroke | Geometry rebuild |
+|---|---|
+| 242 samples (a real long stroke) | < 0.5 ms |
+| 3000 samples (synthetic) | 1 ms |
+
+So the geometry rebuild was never the problem: the fixed 50 ms preview gate was pure added lag. The gate is now
+**adaptive** — `max(16 ms, 4 × the last rebuild cost)` — so short strokes preview at ~60 fps and long ones stay
+cheap. Server relay remains 0–1 ms (p95 1 ms over 40 frames).
+
+**Not done, deliberately:** binary frames and incremental geometry. With a 1 ms rebuild at 3000 samples and one
+merged live frame per 16 ms, neither would change felt latency; revisit only if a profile says otherwise.
+
+## 1b-old. Latency diagnosis (superseded)
 
 Measured: the **server relay is 0–1 ms** (p50 0 ms, p95 1 ms over 40 frames), so the delay is not the server. It
 was **queueing**: every motion event became its own WebSocket frame, so a 120 Hz pen queued frames faster than

@@ -29,7 +29,14 @@ let activePage = null;
 
 /** In-progress strokes from the tablet, keyed `${session}:${id}`; dropped when the stroke commits. */
 const live = new Map();
-const LIVE_REBUILD_MS = 50;
+/**
+ * Preview rebuild pacing. A rebuild costs time proportional to the stroke's length, so a fixed interval either
+ * lags short strokes or melts long ones: the gate is the larger of a floor and four times the last rebuild.
+ */
+const LIVE_REBUILD_FLOOR_MS = 16;
+const LIVE_REBUILD_HEADROOM = 4;
+/** Recent rebuild costs, so the floor can adapt without a timer. */
+let rebuildCostMs = 4;
 /** Eraser positions relayed from the tablet, shown briefly so an erase sweep is visible live. */
 const eraseMarks = [];
 const ERASE_MARK_MS = 700;
@@ -510,7 +517,7 @@ function buildJson(preset, seed, argb, scale, samples, times) {
   }
 }
 
-/** Appends new samples to a live preview and rebuilds its geometry at most every LIVE_REBUILD_MS. */
+/** Appends new samples to a live preview, rebuilding its geometry on an adaptive pace. */
 function accumulateLive(frame) {
   const key = `${frame.session}:${frame.id}`;
   let entry = live.get(key);
@@ -531,9 +538,11 @@ function accumulateLive(frame) {
   entry.samples.push(...frame.samples);
   entry.times.push(...frame.times);
   const now = performance.now();
-  if (now - entry.builtAt < LIVE_REBUILD_MS) return;
+  if (now - entry.builtAt < Math.max(LIVE_REBUILD_FLOOR_MS, rebuildCostMs * LIVE_REBUILD_HEADROOM)) return;
   entry.builtAt = now;
+  const started = performance.now();
   entry.json = buildJson(entry.preset, entry.seed, entry.argb, entry.scale, entry.samples, entry.times);
+  rebuildCostMs = rebuildCostMs * 0.8 + (performance.now() - started) * 0.2;
   if (!entry.json) live.delete(key);
 }
 
@@ -689,6 +698,34 @@ function drawDabs(json, argb) {
 window.__penwise = {
   get strokes() {
     return strokes.length;
+  },
+  /** Times a preview rebuild for a synthetic stroke, so pacing can be checked rather than guessed. */
+  bench(samples) {
+    const xs = new Float32Array(samples * 5);
+    const times = new Int32Array(samples);
+    for (let index = 0; index < samples; index++) {
+      xs[index * 5] = 100 + index * 0.5;
+      xs[index * 5 + 1] = 100 + Math.sin(index / 20) * 40;
+      xs[index * 5 + 2] = 0.6;
+      times[index] = index * 2000;
+    }
+    const started = performance.now();
+    const json = buildJson(0, 1n, -16_777_216, 1, xs, times);
+    return { samples, ms: Number((performance.now() - started).toFixed(2)), dabs: json?.dabs?.length ?? 0 };
+  },
+  /** Times a rebuild of a real stroke (`{preset, seed, argb, scale, samples, times}`). */
+  benchStroke(wire) {
+    const started = performance.now();
+    const json = buildJson(wire.preset, wire.seed, wire.argb, wire.scale, wire.samples, wire.times);
+    return {
+      samples: wire.times.length,
+      ms: Number((performance.now() - started).toFixed(2)),
+      outline: json?.outline?.length ?? 0,
+      dabs: json?.dabs?.length ?? 0,
+    };
+  },
+  get rebuildMs() {
+    return rebuildCostMs;
   },
   get images() {
     return images.map((image) => ({
