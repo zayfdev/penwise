@@ -4,6 +4,7 @@ import android.app.Application
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import dev.penwise.BuildConfig
 import dev.penwise.R
 import dev.penwise.tools.ToolState
 import kotlinx.coroutines.Dispatchers
@@ -248,6 +249,8 @@ class PageViewModel(
             _pages.value = list.copy(active = start.id)
             openPage(start.id)
             sync.start()
+            loading = false
+            if (pendingFixture != null) startPendingReplay()
         }
     }
 
@@ -295,6 +298,30 @@ class PageViewModel(
             selectPage(page.id)
         }
         return page.id
+    }
+
+    /** Pending debug replay, run once the page has finished loading. */
+    private var pendingFixture: String? = null
+
+    /**
+     * Debug builds only: replays a recorded page onto the visible one. Deferred until [loadPage] finishes, because
+     * restoring the page file would otherwise replace the replayed strokes.
+     */
+    fun requestReplay(path: String) {
+        if (!BuildConfig.DEBUG) return
+        pendingFixture = path
+        if (!loading) startPendingReplay()
+    }
+
+    /** Appends a recorded page's strokes through the normal path — store, file, sync — so it is a real test. */
+    private fun startPendingReplay(): Int {
+        val path = pendingFixture ?: return 0
+        pendingFixture = null
+        if (!BuildConfig.DEBUG) return 0
+        // `add` already persists and syncs; invoking the hook here too sent every stroke twice.
+        val added = FixtureReplay.replay(getApplication(), path) { stroke -> store.add(stroke) }
+        store.onPageChanged?.invoke()
+        return added
     }
 
     /** Renames a page locally and on the server. */

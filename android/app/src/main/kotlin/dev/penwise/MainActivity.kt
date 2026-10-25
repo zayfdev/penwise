@@ -1,6 +1,7 @@
 package dev.penwise
 
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -39,6 +40,11 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         page.loadPage()
+        // Debug-only end-to-end replay: `am start … --es fixture <path>`.
+        intent?.getStringExtra("fixture")?.let { path ->
+            Log.i("PenwiseFixture", "replay requested: $path")
+            page.requestReplay(path)
+        }
         setContent {
             val pages by page.pages.collectAsState()
             var showSync by remember { mutableStateOf(false) }

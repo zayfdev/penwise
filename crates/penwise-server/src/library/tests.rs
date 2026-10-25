@@ -4,12 +4,15 @@ use super::*;
 use crate::library::model::MAX_TITLE_BYTES;
 
 fn stroke() -> StrokeMsg {
+    // Fresh seed per call: seeds are stroke identity, and the server ignores a repeated one.
+    static NEXT_SEED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(42);
+    let seed = NEXT_SEED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     StrokeMsg {
         layer: "ink".to_owned(),
         preset: 0,
         argb: -16_777_216,
         scale: 1.0,
-        seed: "42".to_owned(),
+        seed: seed.to_string(),
         samples: vec![0.0, 0.0, 0.5, 0.0, 0.0, 10.0, 10.0, 0.5, 0.0, 0.0],
         times: vec![0, 8_000],
     }
@@ -152,6 +155,31 @@ async fn agent_marks_are_cleared_without_touching_ink() {
     assert_eq!(2, library.strokes(&page).await.len());
     assert_eq!(1, library.clear_agent(&page).await);
     assert_eq!(1, library.strokes(&page).await.len());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn a_stroke_resend_does_not_duplicate_ink() {
+    let dir = temp_dir("dedupe");
+    let library = Library::load(dir.clone()).await;
+    let page = library.active().await;
+    let mut first = stroke();
+    first.seed = "abc".to_owned();
+    assert!(library.append(&page, first.clone()).await);
+    assert!(
+        library.append(&page, first.clone()).await,
+        "reported as handled"
+    );
+    assert_eq!(1, library.strokes(&page).await.len(), "one stroke, not two");
+    let mut mark = first.clone();
+    mark.layer = AGENT_LAYER.to_owned();
+    mark.seed = "def".to_owned();
+    library.append_many(&page, vec![mark.clone(), mark]).await;
+    assert_eq!(
+        2,
+        library.strokes(&page).await.len(),
+        "annotation sent twice"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

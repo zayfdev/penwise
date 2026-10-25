@@ -6,7 +6,7 @@
 mod disk;
 mod model;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -134,16 +134,18 @@ impl Library {
         if !is_well_formed(&stroke) || !self.has_page(page).await {
             return false;
         }
-        let all = {
+        {
             let mut pages = self.pages.write().await;
             let strokes = pages.entry(page.to_owned()).or_default();
+            // Seeds are stroke identity: a client resending its page (reconnect, offline queue) must not
+            // duplicate ink.
+            if strokes.iter().any(|existing| existing.seed == stroke.seed) {
+                return true;
+            }
             strokes.push(stroke.clone());
-            let all = strokes.clone();
-            drop(pages);
-            self.save_page(page, &all).await;
-            all
-        };
-        let _ = all;
+        }
+        let all = self.strokes(page).await;
+        self.save_page(page, &all).await;
         self.fan_out(Some(page.to_owned()), stroke_frame(page, &stroke));
         true
     }
@@ -152,6 +154,22 @@ impl Library {
     pub async fn append_many(&self, page: &str, strokes: Vec<StrokeMsg>) -> usize {
         let strokes: Vec<StrokeMsg> = strokes.into_iter().filter(is_well_formed).collect();
         if strokes.is_empty() || !self.has_page(page).await {
+            return 0;
+        }
+        // Skip strokes the page already has (and repeats inside the batch), so an annotation sent twice
+        // does not stack copies.
+        let strokes: Vec<StrokeMsg> = {
+            let pages = self.pages.read().await;
+            let mut seen: HashSet<String> = pages
+                .get(page)
+                .map(|current| current.iter().map(|stroke| stroke.seed.clone()).collect())
+                .unwrap_or_default();
+            strokes
+                .into_iter()
+                .filter(|stroke| seen.insert(stroke.seed.clone()))
+                .collect()
+        };
+        if strokes.is_empty() {
             return 0;
         }
         let added = strokes.len();

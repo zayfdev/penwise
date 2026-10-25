@@ -26,6 +26,13 @@ internal class StylusStrokeController(
     private val liveOut: LiveOut? = null,
 ) {
     private val buffer = SampleBuffer()
+
+    /**
+     * Every sample of the stroke under the pen. [SampleBuffer] only holds the delta of one motion event (it is
+     * what the engine consumes per `push` and what the mirror streams), so the whole stroke is accumulated here:
+     * saving or syncing the delta would keep a single sample per stroke.
+     */
+    private val accumulated = StrokeAccumulator()
     private var stroke: InkStroke? = null
     private var activeBrush: BrushSpec? = null
     private var activeSeed = 0L
@@ -84,6 +91,7 @@ internal class StylusStrokeController(
         activeBrush = brush
         activeSeed = Random.nextLong()
         stroke = InkStroke(brush.presetIndex, activeSeed, brush.argb, brush.sizeScale)
+        accumulated.reset()
         startNanos = event.eventTimeNanos
         strokeId++
         live.reset()
@@ -170,6 +178,7 @@ internal class StylusStrokeController(
     ) {
         val current = stroke ?: return
         buffer.fill(event, index, startNanos)
+        accumulated.add(buffer.samples, buffer.times, buffer.count)
         current.push(buffer.samples, buffer.times, buffer.count)
         liveOut?.samples(buffer.samples, buffer.times, buffer.count)
         if (live.claimFrame()) {
@@ -190,9 +199,9 @@ internal class StylusStrokeController(
                 argb = brush.argb,
                 sizeScale = brush.sizeScale,
                 seed = activeSeed,
-                samples = buffer.samples.copyOf(buffer.count * SAMPLE_STRIDE),
-                times = buffer.times.copyOf(buffer.count),
-                count = buffer.count,
+                samples = accumulated.samplesCopy(),
+                times = accumulated.timesCopy(),
+                count = accumulated.count,
             )
         val geometry = current.finish()
         current.close()
