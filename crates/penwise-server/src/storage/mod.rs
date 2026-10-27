@@ -12,7 +12,7 @@ mod compact;
 mod error;
 mod legacy_codec;
 pub mod migrate;
-mod random;
+pub(crate) mod random;
 mod read;
 mod restore;
 mod rows;

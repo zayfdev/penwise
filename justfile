@@ -1,7 +1,7 @@
 # Full gate: a change is done only when this passes.
 default: check
 
-check: fmt-check clippy test wasm-build wasm-test sizes deny
+check: fmt-check clippy test wasm-build wasm-test jni-symbols sizes deny
 
 fmt-check:
     cargo fmt --all --check
@@ -21,6 +21,11 @@ wasm-build:
 # Core geometry goldens on wasm32 under Node (core-determinism.md §4).
 wasm-test:
     wasm-pack test --node --release crates/penwise-core
+    wasm-pack test --node --release crates/penwise-wasm
+
+# Every JNI export in penwise-ffi matches an `external fun` in Native.kt (new exports are reported).
+jni-symbols:
+    scripts/check-jni-symbols.sh
 
 sizes:
     scripts/check-sizes.sh

@@ -964,8 +964,17 @@ dependencies = [
 name = "penwise-ffi"
 version = "0.1.0"
 dependencies = [
+ "futures-util",
  "jni",
  "penwise-core",
+ "penwise-proto",
+ "penwise-server",
+ "penwise-testkit",
+ "postcard",
+ "serde",
+ "thiserror",
+ "tokio",
+ "tokio-tungstenite 0.30.0",
 ]
 
 [[package]]
@@ -984,8 +993,14 @@ dependencies = [
 name = "penwise-mcp"
 version = "0.1.0"
 dependencies = [
+ "axum",
+ "penwise-proto",
+ "penwise-server",
+ "penwise-testkit",
  "serde",
  "serde_json",
+ "tiny-skia",
+ "tokio",
 ]
 
 [[package]]
@@ -1040,9 +1055,12 @@ name = "penwise-wasm"
 version = "0.1.0"
 dependencies = [
  "penwise-core",
+ "penwise-proto",
  "serde",
  "serde_json",
+ "thiserror",
  "wasm-bindgen",
+ "wasm-bindgen-test",
 ]
 
 [[package]]

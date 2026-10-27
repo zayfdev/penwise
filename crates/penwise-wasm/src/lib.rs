@@ -2,6 +2,14 @@
 //!
 //! No geometry lives here; this only converts between the JS/JSON shapes and [`penwise_core`].
 
+pub mod decode;
+pub mod draw_list;
+pub mod encode;
+pub mod error;
+pub mod grain;
+pub mod received;
+pub mod viewer;
+
 use penwise_core::brush::{BlendMode, BrushParams};
 use penwise_core::builder::StrokeBuilder;
 use penwise_core::geometry::StrokeGeometry;

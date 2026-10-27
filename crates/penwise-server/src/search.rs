@@ -1,13 +1,16 @@
 //! Search across pages' recognised text: `GET /search?q=…`.
 //!
-//! Only pages that have been read by the handwriting model are searched; a page with ink but no text is simply
-//! not a hit. Matching is case-insensitive on the cached transcription, newest-looking first by page order.
+//! Searches the live text items of every live page (recognized handwriting on the text layer, typed text):
+//! a page with ink but no text item is simply not a hit. Matching is case-insensitive, hits come in catalog
+//! order (notebooks, then pages by position).
 
+use axum::Router;
 use axum::extract::{Query, State};
 use axum::response::{IntoResponse, Response};
+use axum::routing::get;
 
-use crate::AppState;
-use crate::auth;
+use crate::api::{ApiError, AppState};
+use crate::textlayer;
 
 /// Longest query accepted; longer ones are unlikely to be real and cost a full scan.
 const MAX_QUERY_CHARS: usize = 200;
@@ -18,7 +21,7 @@ const MAX_HITS: usize = 50;
 
 /// One page that contains the query.
 #[derive(Debug, serde::Serialize)]
-pub struct Hit {
+struct Hit {
     /// Page id.
     pub page: String,
     /// Page title.
@@ -27,44 +30,42 @@ pub struct Hit {
     pub snippet: String,
 }
 
-/// `GET /search?q=…` — pages whose recognised text contains `q`.
-pub async fn search(
+/// `GET /search?q=…` — pages whose text items contain `q` (recognized handwriting and typed text alike).
+async fn search(
     State(app): State<AppState>,
     Query(query): Query<SearchQuery>,
-    Query(auth_query): Query<crate::AuthQuery>,
-    headers: axum::http::HeaderMap,
-) -> Response {
-    if !auth::authorized(&app.token, auth_query.token.as_deref(), &headers) {
-        return auth::deny();
-    }
+) -> Result<Response, ApiError> {
     let needle = query.q.unwrap_or_default().trim().to_owned();
     if needle.is_empty() {
-        return axum::Json(serde_json::json!({ "query": "", "hits": [] })).into_response();
+        return Ok(axum::Json(serde_json::json!({ "query": "", "hits": [] })).into_response());
     }
     let needle: String = needle.chars().take(MAX_QUERY_CHARS).collect();
-    let hits = collect(&app, &needle).await;
-    axum::Json(serde_json::json!({ "query": needle, "hits": hits })).into_response()
+    let hits = collect(&app, &needle).await?;
+    Ok(axum::Json(serde_json::json!({ "query": needle, "hits": hits })).into_response())
 }
 
-async fn collect(app: &AppState, needle: &str) -> Vec<Hit> {
-    let meta = app.library.meta().await;
+async fn collect(app: &AppState, needle: &str) -> Result<Vec<Hit>, ApiError> {
+    let catalog = app.storage.catalog().await?;
+    let mut texts = textlayer::all_rows(&app.storage).await?;
     let mut hits = Vec::new();
-    for page in meta.notebooks.iter().flat_map(|book| &book.pages) {
-        if hits.len() >= MAX_HITS {
-            break;
-        }
-        let Some(text) = app.library.text(&page.id).await else {
-            continue;
-        };
-        if let Some(snippet) = snippet_of(&text, needle) {
-            hits.push(Hit {
-                page: page.id.clone(),
-                title: page.title.clone(),
-                snippet,
-            });
+    for notebook in catalog.notebooks() {
+        for page in catalog.pages(notebook.id) {
+            if hits.len() >= MAX_HITS {
+                return Ok(hits);
+            }
+            let Some(rows) = texts.remove(&page.id) else {
+                continue;
+            };
+            if let Some(snippet) = snippet_of(&textlayer::joined(&rows), needle) {
+                hits.push(Hit {
+                    page: page.id.to_string(),
+                    title: page.title,
+                    snippet,
+                });
+            }
         }
     }
-    hits
+    Ok(hits)
 }
 
 /// The first case-insensitive match in `text`, with context collapsed to one line.
@@ -86,40 +87,14 @@ fn snippet_of(text: &str, needle: &str) -> Option<String> {
 
 /// Query of the search route.
 #[derive(Debug, serde::Deserialize)]
-pub struct SearchQuery {
-    pub q: Option<String>,
+struct SearchQuery {
+    q: Option<String>,
+}
+
+/// `GET /search`.
+pub(crate) fn routes() -> Router<AppState> {
+    Router::new().route("/search", get(search))
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_match_comes_back_with_context() {
-        let text = "Shopping list\nmilk\neggs\nbread";
-        let snippet = snippet_of(text, "EGGS").unwrap();
-        assert!(snippet.contains("eggs"), "{snippet}");
-        assert!(!snippet.contains('\n'), "collapsed to one line");
-    }
-
-    #[test]
-    fn a_missing_needle_has_no_snippet() {
-        assert!(snippet_of("milk and eggs", "butter").is_none());
-        assert!(snippet_of("", "milk").is_none());
-    }
-
-    #[test]
-    fn snippets_never_split_a_character() {
-        let text = "héllo wörld with ümlauts and more ümlauts";
-        let snippet = snippet_of(text, "wörld").unwrap();
-        assert!(snippet.contains("wörld"));
-    }
-
-    #[test]
-    fn a_match_near_the_edges_is_clamped() {
-        let text = "start of a page with the word apples at the very beginning";
-        assert!(snippet_of(text, "apples").unwrap().contains("apples"));
-        let tail = "the end says bananas";
-        assert!(snippet_of(tail, "bananas").unwrap().ends_with("bananas"));
-    }
-}
+mod tests;

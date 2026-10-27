@@ -5,11 +5,6 @@
 
 use std::collections::VecDeque;
 
-use axum::extract::{Query, State};
-use axum::response::{IntoResponse, Response};
-
-use crate::AppState;
-use crate::auth;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -167,90 +162,6 @@ impl Default for Pairing {
     }
 }
 
-/// `POST /pair` — exchanges a short pairing code for the token and the reachable URLs.
-///
-/// The code is the credential, so this route takes no bearer token; it is single-use and rate limited.
-pub async fn exchange_route(
-    State(app): State<AppState>,
-    axum::Json(body): axum::Json<serde_json::Value>,
-) -> Response {
-    let code = body
-        .get("code")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default();
-    if !app.pairing.exchange(code) {
-        return (axum::http::StatusCode::UNAUTHORIZED, "bad pairing code").into_response();
-    }
-    axum::Json(serde_json::json!({
-        "ok": true,
-        "token": *app.token,
-        "urls": *app.urls,
-    }))
-    .into_response()
-}
-
-/// `GET /pair/code` — the current code, for the viewer to display.
-pub async fn code_route(
-    State(app): State<AppState>,
-    Query(auth_query): Query<crate::AuthQuery>,
-    headers: axum::http::HeaderMap,
-) -> Response {
-    if !auth::authorized(&app.token, auth_query.token.as_deref(), &headers) {
-        return auth::deny();
-    }
-    axum::Json(serde_json::json!({
-        "code": app.pairing.current(),
-        "expires_in": app.pairing.remaining().as_secs(),
-    }))
-    .into_response()
-}
-
-/// `POST /pair/code` — mints a new code (invalidates the old one).
-pub async fn refresh_route(
-    State(app): State<AppState>,
-    Query(auth_query): Query<crate::AuthQuery>,
-    headers: axum::http::HeaderMap,
-) -> Response {
-    if !auth::authorized(&app.token, auth_query.token.as_deref(), &headers) {
-        return auth::deny();
-    }
-    axum::Json(serde_json::json!({
-        "code": app.pairing.refresh(),
-        "expires_in": app.pairing.remaining().as_secs(),
-    }))
-    .into_response()
-}
-
-/// `GET /pair.png?size=8` — the pairing deep link as a QR the device camera can open.
-pub async fn qr_route(
-    State(app): State<AppState>,
-    Query(query): Query<QrQuery>,
-    Query(auth_query): Query<crate::AuthQuery>,
-    headers: axum::http::HeaderMap,
-) -> Response {
-    if !auth::authorized(&app.token, auth_query.token.as_deref(), &headers) {
-        return auth::deny();
-    }
-    let payload = crate::qr::current_payload(&app.pairing, &app.urls);
-    match crate::qr::png(&payload, crate::qr::module_px(query.size)) {
-        Ok(png) => (
-            [
-                (axum::http::header::CONTENT_TYPE, "image/png"),
-                (axum::http::header::CACHE_CONTROL, "no-store"),
-            ],
-            png,
-        )
-            .into_response(),
-        Err(error) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),
-    }
-}
-
-/// Query of the QR route.
-#[derive(Debug, serde::Deserialize)]
-pub struct QrQuery {
-    pub size: Option<u32>,
-}
-
 /// Uppercases and drops spaces and dashes so `7k2m-9q` matches `7K2M9Q`.
 #[must_use]
 pub fn normalize(candidate: &str) -> String {
@@ -262,69 +173,4 @@ pub fn normalize(candidate: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_code_is_six_unambiguous_characters() {
-        let pairing = Pairing::new();
-        let code = pairing.current();
-        assert_eq!(CODE_LEN, code.len());
-        assert!(code.chars().all(|c| ALPHABET.contains(&(c as u8))));
-        assert!(!code.contains('O') && !code.contains('0') && !code.contains('I'));
-    }
-
-    #[test]
-    fn exchanging_the_code_works_once() {
-        let pairing = Pairing::new();
-        let code = pairing.current();
-        assert!(pairing.exchange(&code), "first exchange");
-        assert!(!pairing.exchange(&code), "single use");
-    }
-
-    #[test]
-    fn case_spaces_and_dashes_do_not_matter() {
-        let pairing = Pairing::new();
-        let code = pairing.current().to_lowercase();
-        let typed = format!(" {} -{} ", &code[..3], &code[3..]);
-        assert!(pairing.exchange(&typed));
-    }
-
-    #[test]
-    fn a_wrong_code_counts_toward_the_lockout() {
-        let pairing = Pairing::new();
-        for _ in 0..MAX_FAILURES {
-            assert!(!pairing.exchange("ZZZZZZ"));
-        }
-        assert!(pairing.locked(), "locked after the budget");
-        assert!(
-            !pairing.exchange(&pairing.current()),
-            "a correct code is refused while locked"
-        );
-    }
-
-    #[test]
-    fn refreshing_invalidates_the_previous_code() {
-        let pairing = Pairing::new();
-        let old = pairing.current();
-        let new = pairing.refresh();
-        assert_ne!(old, new);
-        assert!(!pairing.exchange(&old));
-        assert!(pairing.exchange(&new));
-    }
-
-    #[test]
-    fn codes_do_not_repeat_in_a_row() {
-        let pairing = Pairing::new();
-        let first = pairing.refresh();
-        let second = pairing.refresh();
-        assert_ne!(first, second);
-    }
-
-    #[test]
-    fn remaining_time_shrinks() {
-        let pairing = Pairing::new();
-        assert!(pairing.remaining() <= CODE_TTL);
-        assert!(pairing.remaining() > Duration::from_secs(590));
-    }
-}
+mod tests;

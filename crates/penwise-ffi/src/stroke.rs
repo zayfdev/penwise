@@ -2,6 +2,7 @@
 
 use std::fmt;
 
+use crate::error::SyncError;
 use penwise_core::{
     BlendMode, BrushParams, GeometryView, Preset, Sample, StrokeBuilder, StrokeGeometry,
 };
@@ -17,6 +18,8 @@ pub enum FfiError {
     Jni(jni::errors::Error),
     BadArgument(&'static str),
     Finished,
+    /// A `SyncCore` / `SceneHandle` operation failed.
+    Sync(SyncError),
 }
 
 impl fmt::Display for FfiError {
@@ -25,11 +28,18 @@ impl fmt::Display for FfiError {
             Self::Jni(e) => write!(f, "jni: {e}"),
             Self::BadArgument(what) => write!(f, "invalid argument: {what}"),
             Self::Finished => f.write_str("stroke already finished"),
+            Self::Sync(e) => write!(f, "{e}"),
         }
     }
 }
 
 impl std::error::Error for FfiError {}
+
+impl From<SyncError> for FfiError {
+    fn from(e: SyncError) -> Self {
+        Self::Sync(e)
+    }
+}
 
 impl From<jni::errors::Error> for FfiError {
     fn from(e: jni::errors::Error) -> Self {

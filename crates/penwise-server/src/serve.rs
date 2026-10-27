@@ -1,20 +1,26 @@
-//! In-process server: storage + `/sync` on a caller-supplied listener (the test harness and, from S4, the
-//! binary). Injectable clock and fault plan; everything else is the production wiring.
+//! The server: storage, `/sync` and the HTTP API on a caller-supplied listener. The binary and the in-process
+//! test harness both call [`serve`]; the clock and a fault plan are injectable, everything else is the
+//! production wiring.
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::Router;
-use axum::routing::get;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
+use crate::api::{self, AppState};
+use crate::assets::Assets;
+use crate::pairing::Pairing;
 use crate::storage::{FaultPlan, NowMs, Storage, StorageConfig, StorageError, system_now_ms};
 use crate::sync::{Hub, SyncConfig};
 
 /// File name of the database inside the data directory.
 pub const DB_FILE: &str = "penwise.db";
+
+/// Where a local Ollama listens unless `PENWISE_OCR_URL` says otherwise.
+pub const DEFAULT_OCR_URL: &str = "http://127.0.0.1:11434";
 
 /// How to build a server.
 #[allow(missing_debug_implementations, reason = "holds the clock closure")]
@@ -30,6 +36,12 @@ pub struct ServerConfig {
     pub fault: Option<FaultPlan>,
     /// Overrides for the sync layer (timeouts, queue sizes); the token and clock fields are replaced.
     pub sync: Option<SyncConfig>,
+    /// Directory of the static viewer (missing files answer 404).
+    pub web_dir: PathBuf,
+    /// URLs this machine is reachable at, handed out when pairing.
+    pub urls: Vec<String>,
+    /// Base URL of the local vision model (Ollama) that reads handwriting.
+    pub ocr_url: String,
 }
 
 impl ServerConfig {
@@ -43,6 +55,10 @@ impl ServerConfig {
             broadcast_capacity: None,
             fault: None,
             sync: None,
+            web_dir: PathBuf::from("web"),
+            urls: Vec::new(),
+            ocr_url: std::env::var("PENWISE_OCR_URL")
+                .unwrap_or_else(|_| DEFAULT_OCR_URL.to_owned()),
         }
     }
 }
@@ -56,6 +72,7 @@ pub struct ServerHandle {
     pub addr: SocketAddr,
     pub storage: Storage,
     pub hub: Arc<Hub<Storage>>,
+    pub pairing: Arc<Pairing>,
     task: JoinHandle<()>,
 }
 
@@ -66,9 +83,14 @@ impl ServerHandle {
         self.task.abort();
         let _ = self.task.await;
     }
+
+    /// Resolves when the listener task ends (it only does on an accept error or a panic).
+    pub async fn wait(self) {
+        let _ = self.task.await;
+    }
 }
 
-/// Opens storage and serves `/sync` (and `/health`) on `listener`.
+/// Opens storage and serves `/sync`, the HTTP API and the viewer on `listener`.
 ///
 /// # Errors
 /// Storage open failures (`NeedsMigration`, …) and a listener without a local address.
@@ -89,11 +111,23 @@ pub async fn serve(
     let mut sync_config = config
         .sync
         .unwrap_or_else(|| SyncConfig::new(String::new()));
+    let sync_config_token = config.token.clone();
     sync_config.token = config.token;
     sync_config.now_ms = config.clock;
     let hub = Hub::new(storage.clone(), sync_config);
+    let pairing = Arc::new(Pairing::new());
+    let app = AppState {
+        storage: storage.clone(),
+        token: Arc::new(sync_config_token),
+        assets: Assets::load(config.data_dir.join("assets")),
+        data_dir: Arc::new(config.data_dir),
+        web: Arc::new(config.web_dir),
+        pairing: Arc::clone(&pairing),
+        urls: Arc::new(config.urls),
+        ocr_url: Arc::new(config.ocr_url),
+    };
     let router = Router::new()
-        .route("/health", get(|| async { "ok" }))
+        .merge(api::router(app))
         .merge(crate::sync::routes(Arc::clone(&hub)));
     let addr = listener
         .local_addr()
@@ -108,6 +142,7 @@ pub async fn serve(
         addr,
         storage,
         hub,
+        pairing,
         task,
     })
 }

@@ -3,6 +3,7 @@
 /// Every URL this machine is reachable at, best first: LAN address, Tailscale name, loopback.
 ///
 /// The tablet must not be handed `127.0.0.1`, so the LAN address is discovered rather than assumed.
+#[must_use]
 pub fn platform_urls(port: u16) -> Vec<String> {
     let mut urls = Vec::new();
     if let Some(lan) = lan_address() {

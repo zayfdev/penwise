@@ -1,40 +1,41 @@
-//! Agent annotations: polylines in page coordinates become ordinary strokes on the `agent` layer.
+//! Agent annotations: polylines in page coordinates become ordinary stroke [`Item`]s on the `Agent` layer.
 //!
-//! Keeping them as strokes means they render, persist, appear in the PNG and can be cleared as a set — without a
-//! second rendering path. Sampling is the same dense-walk the shape tool uses, so marks look like drawn ink.
+//! Keeping them as strokes means they render, sync, appear in the PNG, can be promoted to ink (`Update{layer}`)
+//! and cleared as a set, with no second rendering path. Sampling is the same dense walk the shape tool uses, so
+//! marks look like drawn ink. Identity is a fresh ULID per item and the seed is 64 random bits
+//! (SERVER-DATA-04: the old counter restarted at 1 after every server start).
 
-use std::collections::hash_map::RandomState;
-use std::hash::{BuildHasher, Hasher};
-
+use penwise_core::item::{
+    Affine, Item, ItemId, ItemKind, Layer, MAX_STROKE_SAMPLES, StrokeItem, Z_STEP,
+};
+use penwise_core::{BrushParams, Sample};
 use serde::Deserialize;
-
-use crate::library::{AGENT_LAYER, MAX_STROKE_SAMPLES, StrokeMsg};
 
 /// Distance between synthesised samples along a segment, page px.
 const STEP_PX: f32 = 4.0;
 /// Microseconds between synthesised samples (matches a slow, deliberate hand).
-const MICROS_PER_SAMPLE: i32 = 4000;
+const MICROS_PER_SAMPLE: u32 = 4000;
 /// Segments shorter than this are skipped (repeated points carry no direction).
 const MIN_SEGMENT_PX: f32 = 0.01;
 /// Steady pressure so annotations read as one width.
 const PRESSURE: f32 = 0.7;
 /// Ballpoint: the preset whose brush shape annotations use.
-const PRESET: u32 = 0;
-/// Default mark colour (red) and width in page px.
-const DEFAULT_ARGB: i32 = 0xFFE0_3131_u32.cast_signed();
+const PRESET: usize = 0;
+/// Default mark colour (red).
+const DEFAULT_ARGB: u32 = 0xFFE0_3131;
 /// Ballpoint's nominal width, used to turn a requested width into a size scale.
 const NOMINAL_WIDTH: f32 = 3.2;
 
 #[derive(Debug, Deserialize)]
-pub struct AnnotateRequest {
-    /// Target page; defaults to the active one.
+pub(crate) struct AnnotateRequest {
+    /// Target page; defaults to the current one.
     #[serde(default)]
     pub page: Option<String>,
     pub strokes: Vec<AnnotatedStroke>,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct AnnotatedStroke {
+pub(crate) struct AnnotatedStroke {
     /// Page-pixel points, `[[x, y], …]`; two or more make a line.
     pub points: Vec<[f32; 2]>,
     /// `#RRGGBB` or `#AARRGGBB`.
@@ -45,65 +46,94 @@ pub struct AnnotatedStroke {
     pub width: Option<f32>,
 }
 
-/// Converts the request into strokes; entries with fewer than two finite points are dropped.
-pub fn to_strokes(request: &AnnotateRequest) -> Vec<StrokeMsg> {
-    request.strokes.iter().filter_map(stroke_of).collect()
+/// Where new items get their identity and seed (injectable so tests are deterministic).
+pub(crate) trait Identity {
+    fn next(&mut self) -> (ItemId, u64);
 }
 
-fn stroke_of(annotation: &AnnotatedStroke) -> Option<StrokeMsg> {
+/// Converts the request into agent-layer strokes stacked from `first_z` up; entries with fewer than two finite
+/// points, too many samples, or a brush the core refuses are dropped.
+pub(crate) fn to_items(
+    request: &AnnotateRequest,
+    first_z: i64,
+    identity: &mut impl Identity,
+) -> Vec<Item> {
+    let mut z = first_z;
+    let mut items = Vec::new();
+    for annotation in &request.strokes {
+        let Some(samples) = samples_of(annotation) else {
+            continue;
+        };
+        let (id, seed) = identity.next();
+        let scale = annotation
+            .width
+            .map_or(1.0, |w| (w / NOMINAL_WIDTH).clamp(0.5, 6.0));
+        let argb = annotation
+            .color
+            .as_deref()
+            .map_or(DEFAULT_ARGB, parse_color);
+        let item = Item {
+            id,
+            layer: Layer::Agent,
+            z,
+            transform: Affine::IDENTITY,
+            kind: ItemKind::Stroke(StrokeItem {
+                params: BrushParams::for_preset(PRESET, argb, scale),
+                seed,
+                samples,
+                trim: None,
+            }),
+        };
+        if item.validate().is_ok() {
+            items.push(item);
+            z = z.saturating_add(Z_STEP);
+        }
+    }
+    items
+}
+
+fn samples_of(annotation: &AnnotatedStroke) -> Option<Vec<Sample>> {
     let points: Vec<[f32; 2]> = annotation
         .points
         .iter()
         .copied()
         .filter(|p| p[0].is_finite() && p[1].is_finite())
         .collect();
+    let first = *points.first()?;
     if points.len() < 2 {
         return None;
     }
-    let mut samples = Vec::new();
-    let mut times = Vec::new();
+    let cap = usize::try_from(MAX_STROKE_SAMPLES).unwrap_or(usize::MAX);
+    let mut samples = vec![sample_at(first, 0)];
     for pair in points.windows(2) {
-        append_segment(pair[0], pair[1], &mut samples, &mut times);
-        if times.len() > MAX_STROKE_SAMPLES {
+        append_segment(pair[0], pair[1], &mut samples);
+        if samples.len() > cap {
             return None;
         }
     }
-    if times.is_empty() {
-        return None;
+    (samples.len() > 1).then_some(samples)
+}
+
+fn sample_at(point: [f32; 2], index: usize) -> Sample {
+    let micros = u32::try_from(index)
+        .unwrap_or(u32::MAX / MICROS_PER_SAMPLE)
+        .saturating_mul(MICROS_PER_SAMPLE);
+    Sample {
+        x: point[0],
+        y: point[1],
+        pressure: PRESSURE,
+        tilt: 0.0,
+        azimuth: 0.0,
+        t_us: micros,
     }
-    let scale = annotation
-        .width
-        .map_or(1.0, |w| (w / NOMINAL_WIDTH).clamp(0.5, 6.0));
-    Some(StrokeMsg {
-        layer: AGENT_LAYER.to_owned(),
-        preset: PRESET,
-        argb: annotation
-            .color
-            .as_deref()
-            .map_or(DEFAULT_ARGB, parse_color),
-        scale,
-        seed: new_seed().to_string(),
-        samples,
-        times,
-    })
+    .quantize()
 }
 
-/// A random seed from the OS generator, 63 bits so the tablet's signed `Long` parses it.
-///
-/// Seeds are stroke identity on a page, so a counter restarting at 1 after every server start collided with the
-/// strokes already stored. `RandomState` draws its keys from the OS RNG (and steps them per instance), which is
-/// all the entropy an identity needs without a new dependency.
-fn new_seed() -> i64 {
-    let bits = RandomState::new().build_hasher().finish();
-    i64::try_from(bits >> 1).unwrap_or(0)
-}
-
-/// Appends samples along one segment, excluding the start and including the end (the first point of the first
-/// segment is seeded by the caller never being empty: the stroke starts at its first sample).
+/// Appends samples along one segment, excluding the start and including the end.
 ///
 /// A segment never adds more than `MAX_STROKE_SAMPLES + 1` samples, however long (or infinite) it is, so the
 /// caller can reject an oversized stroke after the fact without having allocated it.
-fn append_segment(from: [f32; 2], to: [f32; 2], samples: &mut Vec<f32>, times: &mut Vec<i32>) {
+fn append_segment(from: [f32; 2], to: [f32; 2], samples: &mut Vec<Sample>) {
     let dx = to[0] - from[0];
     let dy = to[1] - from[1];
     let length = (dx * dx + dy * dy).sqrt();
@@ -114,167 +144,38 @@ fn append_segment(from: [f32; 2], to: [f32; 2], samples: &mut Vec<f32>, times: &
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
         clippy::cast_precision_loss,
-        reason = "length is finite and positive; the ceiling is capped to a count that fits usize and f32"
+        reason = "length is finite and positive; the ceiling is capped to 2^20 + 1, exact in f32 and a valid usize"
     )]
     let steps = ((length / STEP_PX)
         .ceil()
-        .min((MAX_STROKE_SAMPLES + 1) as f32) as usize)
+        .min(MAX_STROKE_SAMPLES as f32 + 1.0) as usize)
         .max(1);
     for step in 1..=steps {
         let t = ratio(step, steps);
-        samples.extend_from_slice(&[from[0] + dx * t, from[1] + dy * t, PRESSURE, 0.0, 0.0]);
-        times.push(next_time(times.len()));
+        let index = samples.len();
+        samples.push(sample_at([from[0] + dx * t, from[1] + dy * t], index));
     }
 }
 
-/// `step / steps` in `f32`; both counts are small (one annotation's samples).
+/// `step / steps` in `f32`; both counts are bounded by the sample cap.
 #[allow(
     clippy::cast_precision_loss,
-    reason = "steps is the sample count of one annotation, far below 2^23"
+    reason = "steps is at most 2^20 + 1, exact in f32"
 )]
 fn ratio(step: usize, steps: usize) -> f32 {
     step as f32 / steps as f32
 }
 
-#[allow(
-    clippy::cast_possible_wrap,
-    reason = "index is bounded by the sample count of one annotation"
-)]
-fn next_time(index: usize) -> i32 {
-    i32::try_from(index)
-        .unwrap_or(i32::MAX / MICROS_PER_SAMPLE)
-        .saturating_mul(MICROS_PER_SAMPLE)
-}
-
 /// `#RRGGBB` / `#AARRGGBB` (the `#` is optional); anything unparseable falls back to the default colour.
-fn parse_color(text: &str) -> i32 {
+fn parse_color(text: &str) -> u32 {
     let hex = text.trim().trim_start_matches('#');
     let value = u32::from_str_radix(hex, 16).ok();
     match (value, hex.len()) {
-        (Some(rgb), 6) => (0xFF00_0000_u32 | rgb).cast_signed(),
-        (Some(argb), 8) => argb.cast_signed(),
+        (Some(rgb), 6) => 0xFF00_0000 | rgb,
+        (Some(argb), 8) => argb,
         _ => DEFAULT_ARGB,
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn request(stroke: AnnotatedStroke) -> AnnotateRequest {
-        AnnotateRequest {
-            page: None,
-            strokes: vec![stroke],
-        }
-    }
-
-    fn line(points: Vec<[f32; 2]>, color: Option<&str>, width: Option<f32>) -> AnnotatedStroke {
-        AnnotatedStroke {
-            points,
-            color: color.map(str::to_owned),
-            width,
-        }
-    }
-
-    #[test]
-    fn a_line_becomes_a_dense_agent_stroke() {
-        let strokes = to_strokes(&request(line(vec![[0.0, 0.0], [40.0, 0.0]], None, None)));
-        assert_eq!(strokes.len(), 1);
-        let stroke = &strokes[0];
-        assert_eq!(stroke.layer, AGENT_LAYER);
-        assert_eq!(stroke.samples.len(), stroke.times.len() * 5);
-        // 40 px in 4 px steps = 10 samples, five floats each.
-        assert_eq!(10 * 5, stroke.samples.len());
-        let last = (stroke.times.len() - 1) * 5;
-        assert!(
-            (stroke.samples[last] - 40.0).abs() < 1e-4,
-            "ends on the far point"
-        );
-        assert!(stroke.samples[last + 1].abs() < 1e-4);
-        assert_eq!(0, stroke.times[0]);
-        assert!(stroke.times.windows(2).all(|w| w[0] < w[1]));
-    }
-
-    #[test]
-    fn degenerate_or_non_finite_input_is_dropped() {
-        assert!(to_strokes(&request(line(vec![[5.0, 5.0]], None, None))).is_empty());
-        assert!(
-            to_strokes(&request(line(
-                vec![[f32::NAN, 0.0], [10.0, 10.0]],
-                None,
-                None
-            )))
-            .is_empty()
-        );
-        assert!(to_strokes(&request(line(vec![[1.0, 1.0], [1.0, 1.0]], None, None))).is_empty());
-    }
-
-    #[test]
-    fn colours_and_width_map_to_argb_and_scale() {
-        let red = to_strokes(&request(line(
-            vec![[0.0, 0.0], [10.0, 0.0]],
-            Some("#ff0000"),
-            Some(6.4),
-        )));
-        assert_eq!(0xFFFF_0000_u32.cast_signed(), red[0].argb);
-        assert!((red[0].scale - 2.0).abs() < 1e-6);
-        let translucent = to_strokes(&request(line(
-            vec![[0.0, 0.0], [10.0, 0.0]],
-            Some("#8000ff00"),
-            None,
-        )));
-        assert_eq!(0x8000_FF00_u32.cast_signed(), translucent[0].argb);
-        let fallback = to_strokes(&request(line(
-            vec![[0.0, 0.0], [10.0, 0.0]],
-            Some("not-a-colour"),
-            None,
-        )));
-        assert_eq!(DEFAULT_ARGB, fallback[0].argb);
-        assert!((fallback[0].scale - 1.0).abs() < 1e-6);
-    }
-
-    #[test]
-    fn seeds_differ_between_annotations() {
-        let a = to_strokes(&request(line(vec![[0.0, 0.0], [10.0, 0.0]], None, None)));
-        let b = to_strokes(&request(line(vec![[0.0, 0.0], [10.0, 0.0]], None, None)));
-        assert_ne!(a[0].seed, b[0].seed);
-    }
-
-    #[test]
-    fn seeds_are_non_negative_63_bit_numbers() {
-        for _ in 0..200 {
-            let strokes = to_strokes(&request(line(vec![[0.0, 0.0], [10.0, 0.0]], None, None)));
-            assert!(strokes[0].seed.parse::<i64>().expect("fits a signed Long") >= 0);
-        }
-    }
-
-    #[tokio::test]
-    async fn an_annotation_after_a_server_restart_is_not_dropped_as_a_duplicate() {
-        let dir = std::env::temp_dir().join(format!("penwise-annotate-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        let draw = || to_strokes(&request(line(vec![[0.0, 0.0], [10.0, 0.0]], None, None)));
-        let library = crate::library::Library::load(dir.clone());
-        let page = library.active().await;
-        assert_eq!(1, library.append_many(&page, draw()).await);
-        drop(library);
-
-        let restarted = crate::library::Library::load(dir.clone());
-        assert_eq!(
-            1,
-            restarted.append_many(&page, draw()).await,
-            "added, not skipped"
-        );
-        assert_eq!(2, restarted.strokes(&page).await.len());
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn absurdly_long_annotations_are_rejected_without_allocating_them() {
-        let far = request(line(vec![[0.0, 0.0], [3.0e38, 0.0]], None, None));
-        assert!(to_strokes(&far).is_empty(), "infinite-length segment");
-        let huge = request(line(vec![[0.0, 0.0], [1.0e9, 0.0]], None, None));
-        assert!(to_strokes(&huge).is_empty(), "250M samples is over the cap");
-        let fine = request(line(vec![[0.0, 0.0], [300_000.0, 0.0]], None, None));
-        assert_eq!(1, to_strokes(&fine).len(), "75k samples is within the cap");
-    }
-}
+mod tests;

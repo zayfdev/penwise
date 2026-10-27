@@ -1,4 +1,12 @@
-//! JNI bindings for `dev.penwise.core.Native` (Android). Conversion only: all ink logic lives in `penwise-core`.
+//! JNI bindings for `dev.penwise.core.Native` (Android). Conversion only: all ink logic lives in `penwise-core`
+//! and all sync logic in `penwise-proto`.
+//!
+//! Two layers:
+//! - the original ink exports in this file (`stroke*`, `preciseErase`, presets, paper tile), kept until the
+//!   tablet milestone replaces them;
+//! - the tablet surfaces, bytes in / bytes out, JNI-free at the core: [`sync_core::SyncCore`] (clock, outbox,
+//!   replica, `/sync` frame codec, legacy import) and [`scene_handle::SceneHandle`] (scene, undo, pen tools,
+//!   render floats), exported by the `jni_*` modules as `sync*` / `scene*`.
 //!
 //! Every entry point runs inside `EnvUnowned::with_env` (panics are caught) and resolves errors and panics
 //! to a thrown `java.lang.RuntimeException` via [`ThrowRuntimeExAndDefault`], so nothing unwinds into the JVM.
@@ -7,9 +15,20 @@
 //! `strokeFree`. Handles are not thread-safe: Kotlin must not use one handle from two threads at once.
 #![allow(unsafe_code)] // JNI entry points need `#[unsafe(no_mangle)]` and the boxed-handle round trip.
 
+mod bytes;
 mod cut;
 mod erase;
+pub mod error;
+pub mod ids;
+mod jni_scene;
+mod jni_scene_tools;
+mod jni_sync;
+mod jni_sync_authoring;
+mod jni_util;
+pub mod render_floats;
+pub mod scene_handle;
 mod stroke;
+pub mod sync_core;
 
 use jni::EnvUnowned;
 use jni::errors::ThrowRuntimeExAndDefault;

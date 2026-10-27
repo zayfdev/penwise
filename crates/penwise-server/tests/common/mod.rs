@@ -33,6 +33,8 @@ pub struct Opts {
     pub fault: Option<FaultPlan>,
     /// Reuse this data dir (restart / swapped DB scenarios).
     pub data: Option<Arc<TempDir>>,
+    /// Handwriting model endpoint (default: the config's own, a local Ollama).
+    pub ocr_url: Option<String>,
 }
 
 /// An in-process server.
@@ -72,6 +74,9 @@ impl TestServer {
         cfg.clock = now;
         cfg.broadcast_capacity = opts.broadcast_capacity;
         cfg.fault.clone_from(&opts.fault);
+        if let Some(url) = &opts.ocr_url {
+            cfg.ocr_url.clone_from(url);
+        }
         let mut sync = SyncConfig::new(TOKEN.to_owned());
         if let Some(cap) = opts.live_capacity {
             sync.live_capacity = cap;

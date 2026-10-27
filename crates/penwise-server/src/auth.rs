@@ -5,9 +5,13 @@
 
 use std::io::Read;
 use std::path::Path;
+use std::sync::Arc;
 
+use axum::extract::{Query, Request, State};
 use axum::http::{HeaderMap, StatusCode, header};
+use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
+use serde::Deserialize;
 
 /// `PENWISE_TOKEN` wins (useful in tests); otherwise `${data}/token`, created when missing.
 pub fn load_or_create(data_dir: &Path) -> String {
@@ -91,4 +95,22 @@ pub fn deny() -> Response {
         "missing or wrong token (append ?token=… or set X-Penwise-Token)",
     )
         .into_response()
+}
+
+/// The `?token=` query parameter (`/page.png?scale=1&token=…` is how an `<img>` tag authenticates).
+#[derive(Debug, Deserialize)]
+struct AuthQuery {
+    token: Option<String>,
+}
+
+/// Middleware: lets the request through only with the token (query or `X-Penwise-Token`), else 401.
+pub async fn require(State(token): State<Arc<String>>, request: Request, next: Next) -> Response {
+    let query_token = Query::<AuthQuery>::try_from_uri(request.uri())
+        .ok()
+        .and_then(|Query(q)| q.token);
+    if authorized(&token, query_token.as_deref(), request.headers()) {
+        next.run(request).await
+    } else {
+        deny()
+    }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "penwise-wasm"
-description = "Browser bindings: stroke geometry for the Canvas2D viewer (conversion only)."
+description = "Browser bindings: replica viewer, draw lists and stroke geometry for the Canvas2D viewer (conversion only)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,9 +12,14 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 penwise-core = { path = "../penwise-core" }
+penwise-proto = { path = "../penwise-proto" }
 serde.workspace = true
 serde_json.workspace = true
-wasm-bindgen = "0.2.129"
+thiserror.workspace = true
+wasm-bindgen.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test.workspace = true
 
 [lints]
 workspace = true

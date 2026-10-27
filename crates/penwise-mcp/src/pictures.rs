@@ -80,7 +80,6 @@ fn place_image(
         .ok_or_else(|| error(-32602, "missing h (no path to size it from)"))?;
     let page = resolve_page(endpoint, request)?;
     let body = serde_json::json!({
-        "id": "",
         "asset": asset,
         "x": x,
         "y": y,
@@ -115,8 +114,9 @@ fn resolve_page(
         serde_json::from_slice(&body).map_err(|failure| error(-32603, &failure.to_string()))?;
     meta.get("active")
         .and_then(serde_json::Value::as_str)
+        .filter(|active| !active.is_empty())
         .map(encode_segment)
-        .ok_or_else(|| error(-32603, "the server reported no active page"))
+        .ok_or_else(|| error(-32603, "the server has no pages yet"))
 }
 
 /// `POST`/`DELETE path` with an explicit body, returned as a text content block.

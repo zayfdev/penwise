@@ -1,6 +1,6 @@
 [package]
 name = "penwise-ffi"
-description = "JNI bindings exposing penwise-core's stroke builder to the Android app."
+description = "JNI bindings: penwise-core ink engine plus the SyncCore / SceneHandle tablet surfaces (bytes in, bytes out)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,11 +9,24 @@ publish.workspace = true
 
 [lib]
 name = "penwise_ffi"
-crate-type = ["cdylib"]
+# `rlib` lets the host tests in `tests/` link the same code the `cdylib` ships.
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 penwise-core = { path = "../penwise-core" }
+penwise-proto = { path = "../penwise-proto" }
 jni.workspace = true
+serde.workspace = true
+postcard.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+# Headless-tablet test: a real in-process server plus the shared harness checks.
+penwise-server = { path = "../penwise-server" }
+penwise-testkit = { path = "../penwise-testkit" }
+futures-util.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
 
 # Mirrors [workspace.lints] except `unsafe_code`: JNI needs `#[unsafe(no_mangle)] extern "system"` entry
 # points and the boxed-handle round trip. Only this crate may use unsafe; lib.rs opts in with

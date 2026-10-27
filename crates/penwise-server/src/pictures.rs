@@ -1,145 +1,276 @@
 //! Picture routes: upload a PNG as an asset, place it on a page, list it, remove it.
 //!
 //! Pictures are what make the canvas a design surface — a webpage screenshot to annotate, a component cut out of
-//! a running app. They are content-addressed files (`assets/<sha256>.png`); page objects only reference them.
+//! a running app. The bytes are content-addressed files (`assets/<sha256>.png`, see [`crate::assets`]); a placed
+//! picture is an `Add(Image)` item from the server device, so it reaches every device like any other mark and is
+//! listed and removed through the page's items. Its label lives in `image_labels`, keyed by the item id.
+
+mod labels;
+
+use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::{Path, Query, State};
+use axum::extract::{DefaultBodyLimit, Path, State};
+use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
+use penwise_core::edit::Edit;
+use penwise_core::item::{
+    Affine, ImageItem, Item, ItemId, ItemKind, Layer, LayerSet, Scene, Z_STEP,
+};
+use penwise_proto::{ItemRef, PageId};
+use serde::{Deserialize, Serialize};
 
-use crate::AppState;
-use crate::AuthQuery;
+use crate::api::{ApiError, AppState, Author, parse_page};
 use crate::assets;
-use crate::auth;
-use crate::library;
-use axum::extract::DefaultBodyLimit;
+use crate::storage::PageView;
 
-/// `GET /page.png`'s pictures, with their bytes loaded once.
-pub(crate) async fn load_images(app: &AppState, page: &str) -> Vec<(library::ImageMsg, Vec<u8>)> {
-    let mut loaded = Vec::new();
-    for image in app.library.images(page).await {
-        if let Some(bytes) = app.assets.bytes(&image.asset) {
-            loaded.push((image, bytes));
-        } else {
-            tracing::warn!(asset = %image.asset, page, "picture asset missing");
-        }
-    }
-    loaded
+/// Largest picture side, local px (the item's own limit is 2²⁰).
+const MAX_PICTURE_SIDE: f32 = 1_048_576.0;
+
+/// A placed picture as the API shows it. `x, y, w, h` are page px.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct Picture {
+    /// The image item's id (ULID text).
+    pub id: String,
+    pub asset: String,
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    pub layer: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PlaceRequest {
+    asset: String,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    label: Option<String>,
+    /// Re-placing the same id is a no-op that returns the existing picture.
+    id: Option<String>,
+    /// `ink` (default) or `agent`.
+    layer: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct IdsRequest {
+    #[serde(default)]
+    ids: Vec<String>,
 }
 
 /// `POST /assets` — body is a PNG. Returns `{"asset","width","height"}`; the digest is the picture's identity.
-pub(crate) async fn asset_upload(
+async fn asset_upload(
     State(app): State<AppState>,
-    Query(auth_query): Query<AuthQuery>,
-    headers: axum::http::HeaderMap,
     body: axum::body::Bytes,
-) -> Response {
-    if !auth::authorized(&app.token, auth_query.token.as_deref(), &headers) {
-        return auth::deny();
+) -> Result<Response, ApiError> {
+    let assets = Arc::clone(&app.assets);
+    let stored = tokio::task::spawn_blocking(move || assets.put(&body))
+        .await
+        .map_err(|error| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+        .map_err(ApiError::bad_request)?;
+    Ok(axum::Json(stored).into_response())
+}
+
+/// `GET /assets/<id>` — the picture itself.
+async fn asset_get(Path(id): Path<String>, State(app): State<AppState>) -> Response {
+    match app.assets.bytes(&id) {
+        Some(bytes) => (
+            [
+                (header::CONTENT_TYPE, "image/png"),
+                (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+            ],
+            bytes,
+        )
+            .into_response(),
+        None => (StatusCode::NOT_FOUND, "unknown asset").into_response(),
     }
-    match app.assets.put(&body) {
-        Ok(stored) => axum::Json(stored).into_response(),
-        Err(error) => (axum::http::StatusCode::BAD_REQUEST, error).into_response(),
+}
+
+async fn live_view(app: &AppState, page: &str) -> Result<(PageId, PageView), ApiError> {
+    let page = parse_page(app, page).await?;
+    let view = app
+        .storage
+        .page_view(page)
+        .await?
+        .filter(|view| !view.page.deleted)
+        .ok_or_else(|| ApiError::not_found("unknown page"))?;
+    Ok((page, view))
+}
+
+fn layer_of(name: Option<&str>) -> Result<Layer, ApiError> {
+    match name.unwrap_or("ink") {
+        "ink" => Ok(Layer::Ink),
+        "agent" => Ok(Layer::Agent),
+        _ => Err(ApiError::bad_request("layer is `ink` or `agent`")),
     }
+}
+
+fn picture_of(item: &Item, image: &ImageItem, label: Option<String>) -> Picture {
+    Picture {
+        id: ItemRef::from(item.id).to_string(),
+        asset: assets::id_of(&image.asset),
+        x: item.transform.e,
+        y: item.transform.f,
+        w: image.w * item.transform.a,
+        h: image.h * item.transform.d,
+        layer: if item.layer == Layer::Agent {
+            "agent"
+        } else {
+            "ink"
+        },
+        label,
+    }
+}
+
+/// The page's live pictures, in paint order.
+fn pictures_of(scene: &Scene) -> Vec<(&Item, &ImageItem)> {
+    scene
+        .render_order(LayerSet::ALL)
+        .into_iter()
+        .filter_map(|id| scene.get(id))
+        .filter_map(|item| match &item.kind {
+            ItemKind::Image(image) => Some((item, image)),
+            _ => None,
+        })
+        .collect()
 }
 
 /// `POST /pages/<id>/images` — body `{"asset","x","y","w","h","label"?,"id"?,"layer"?}`.
 ///
 /// The picture is placed in page px: the extension sends a screenshot sized to the page, and components are
-/// laid out where the caller wants them.
-pub(crate) async fn image_place(
+/// laid out where the caller wants them. It goes beneath everything already on the page, so ink draws over it.
+async fn image_place(
     Path(page_id): Path<String>,
     State(app): State<AppState>,
-    Query(auth_query): Query<AuthQuery>,
-    headers: axum::http::HeaderMap,
-    axum::Json(request): axum::Json<library::ImageMsg>,
-) -> Response {
-    if !auth::authorized(&app.token, auth_query.token.as_deref(), &headers) {
-        return auth::deny();
+    axum::Json(request): axum::Json<PlaceRequest>,
+) -> Result<Response, ApiError> {
+    let (page, view) = live_view(&app, &page_id).await?;
+    let digest = assets::digest_of(&request.asset)
+        .filter(|_| app.assets.path(&request.asset).is_some())
+        .ok_or_else(|| ApiError::not_found("unknown asset"))?;
+    let sizes = [request.w, request.h];
+    if !(sizes
+        .iter()
+        .all(|s| s.is_finite() && *s > 0.0 && *s <= MAX_PICTURE_SIDE)
+        && request.x.is_finite()
+        && request.y.is_finite())
+    {
+        return Err(ApiError::bad_request("picture has no size or no asset"));
     }
-    if app.library.page(&page_id).await.is_none() {
-        return (axum::http::StatusCode::NOT_FOUND, "unknown page").into_response();
+    if request
+        .label
+        .as_ref()
+        .is_some_and(|l| l.len() > labels::MAX_LABEL_BYTES)
+    {
+        return Err(ApiError::bad_request("label is too long"));
     }
-    if app.assets.path(&request.asset).is_none() {
-        return (axum::http::StatusCode::NOT_FOUND, "unknown asset").into_response();
+    let layer = layer_of(request.layer.as_deref())?;
+    let scene = view.replica.scene();
+    let id = match request.id.as_deref() {
+        Some(text) => {
+            let id: ItemId = text
+                .parse::<ItemRef>()
+                .map_err(|_| ApiError::bad_request("malformed picture id"))?
+                .into();
+            if let Some((item, image)) = pictures_of(scene)
+                .into_iter()
+                .find(|(item, _)| item.id == id)
+            {
+                let label = labels::of_page(&app.data_dir, page).await?.remove(&id);
+                return Ok(axum::Json(picture_of(item, image, label)).into_response());
+            }
+            id
+        }
+        None => {
+            ItemRef::from_parts(app.storage.now_ms(), crate::storage::random::random_u128()).into()
+        }
+    };
+    let z = view
+        .replica
+        .items()
+        .filter(|state| !state.deleted)
+        .map(|state| state.item.z)
+        .min()
+        .map_or(0, |lowest| lowest.saturating_sub(Z_STEP));
+    let item = Item {
+        id,
+        layer,
+        z,
+        transform: Affine::translate(request.x, request.y),
+        kind: ItemKind::Image(ImageItem {
+            asset: digest,
+            w: request.w,
+            h: request.h,
+        }),
+    };
+    let picture = picture_of(
+        &item,
+        &ImageItem {
+            asset: digest,
+            w: request.w,
+            h: request.h,
+        },
+        request.label.clone(),
+    );
+    let mut author = Author::new(&app.storage);
+    author.item(page, Edit::Add(item)).await?;
+    author.commit().await?;
+    if let Some(label) = request.label {
+        labels::put(&app.data_dir, id, label).await?;
     }
-    let mut image = request;
-    if image.id.is_empty() {
-        image.id = library::new_image_id();
-    }
-    if !app.library.add_image(&page_id, image.clone()).await {
-        return (
-            axum::http::StatusCode::BAD_REQUEST,
-            "picture has no size or no asset",
-        )
-            .into_response();
-    }
-    axum::Json(image).into_response()
+    Ok(axum::Json(picture).into_response())
 }
 
 /// `GET /pages/<id>/images` — the page's pictures.
-pub(crate) async fn image_list(
+async fn image_list(
     Path(page_id): Path<String>,
     State(app): State<AppState>,
-    Query(auth_query): Query<AuthQuery>,
-    headers: axum::http::HeaderMap,
-) -> Response {
-    if !auth::authorized(&app.token, auth_query.token.as_deref(), &headers) {
-        return auth::deny();
-    }
-    if app.library.page(&page_id).await.is_none() {
-        return (axum::http::StatusCode::NOT_FOUND, "unknown page").into_response();
-    }
-    let images = app.library.images(&page_id).await;
-    axum::Json(serde_json::json!({ "page": page_id, "images": images })).into_response()
-}
-
-/// `DELETE /pages/<id>/images` — body `{"ids":[…]}`.
-pub(crate) async fn image_remove(
-    Path(page_id): Path<String>,
-    State(app): State<AppState>,
-    Query(auth_query): Query<AuthQuery>,
-    headers: axum::http::HeaderMap,
-    axum::Json(request): axum::Json<IdsRequest>,
-) -> Response {
-    if !auth::authorized(&app.token, auth_query.token.as_deref(), &headers) {
-        return auth::deny();
-    }
-    let removed = app.library.remove_images(&page_id, &request.ids).await;
-    axum::Json(serde_json::json!({ "removed": removed })).into_response()
-}
-
-/// `GET /assets/<id>` — the picture itself.
-pub(crate) async fn asset_get(
-    Path(id): Path<String>,
-    State(app): State<AppState>,
-    Query(auth_query): Query<AuthQuery>,
-    headers: axum::http::HeaderMap,
-) -> Response {
-    if !auth::authorized(&app.token, auth_query.token.as_deref(), &headers) {
-        return auth::deny();
-    }
-    match app.assets.bytes(&id) {
-        Some(bytes) => (
-            [
-                (axum::http::header::CONTENT_TYPE, "image/png"),
-                (
-                    axum::http::header::CACHE_CONTROL,
-                    "public, max-age=31536000, immutable",
-                ),
-            ],
-            bytes,
-        )
+) -> Result<Response, ApiError> {
+    let (page, view) = live_view(&app, &page_id).await?;
+    let labels = labels::of_page(&app.data_dir, page).await?;
+    let images: Vec<Picture> = pictures_of(view.replica.scene())
+        .into_iter()
+        .map(|(item, image)| picture_of(item, image, labels.get(&item.id).cloned()))
+        .collect();
+    Ok(
+        axum::Json(serde_json::json!({ "page": page.to_string(), "images": images }))
             .into_response(),
-        None => (axum::http::StatusCode::NOT_FOUND, "unknown asset").into_response(),
-    }
+    )
 }
 
-#[derive(Debug, serde::Deserialize)]
-pub struct IdsRequest {
-    #[serde(default)]
-    pub ids: Vec<String>,
+/// `DELETE /pages/<id>/images` — body `{"ids":[…]}`; tombstones the pictures (undoable through restore).
+async fn image_remove(
+    Path(page_id): Path<String>,
+    State(app): State<AppState>,
+    axum::Json(request): axum::Json<IdsRequest>,
+) -> Result<Response, ApiError> {
+    let (page, view) = live_view(&app, &page_id).await?;
+    let present: BTreeSet<ItemId> = pictures_of(view.replica.scene())
+        .into_iter()
+        .map(|(item, _)| item.id)
+        .collect();
+    let mut doomed = BTreeSet::new();
+    for text in &request.ids {
+        let id: ItemId = text
+            .parse::<ItemRef>()
+            .map_err(|_| ApiError::bad_request("malformed picture id"))?
+            .into();
+        if present.contains(&id) {
+            doomed.insert(id);
+        }
+    }
+    let mut author = Author::new(&app.storage);
+    for id in &doomed {
+        author.item(page, Edit::Delete(*id)).await?;
+    }
+    author.commit().await?;
+    Ok(axum::Json(serde_json::json!({ "removed": doomed.len() })).into_response())
 }
 
 /// The picture routes. Only the upload takes a body this large; every other route keeps axum's small default.
@@ -157,61 +288,4 @@ pub(crate) fn routes() -> Router<AppState> {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-
-    use super::*;
-    use crate::assets::Assets;
-    use crate::pairing::Pairing;
-
-    /// A PNG header (IHDR only) padded with zeros to `total` bytes: enough for the upload route to accept.
-    fn padded_png(total: usize) -> Vec<u8> {
-        let mut bytes = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
-        bytes.extend_from_slice(&13u32.to_be_bytes());
-        bytes.extend_from_slice(b"IHDR");
-        bytes.extend_from_slice(&64u32.to_be_bytes());
-        bytes.extend_from_slice(&32u32.to_be_bytes());
-        bytes.extend_from_slice(&[8, 6, 0, 0, 0, 0, 0, 0, 0]);
-        bytes.resize(total, 0);
-        bytes
-    }
-
-    async fn serve(name: &str) -> (String, std::path::PathBuf) {
-        let dir = std::env::temp_dir().join(format!("penwise-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        let app = AppState {
-            library: library::Library::load(dir.clone()),
-            assets: Assets::load(dir.join("assets")),
-            web: Arc::new(dir.clone()),
-            token: Arc::new("t".to_owned()),
-            pairing: Arc::new(Pairing::new()),
-            urls: Arc::new(Vec::new()),
-        };
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let router = routes().with_state(app);
-        tokio::spawn(async move { axum::serve(listener, router).await });
-        (format!("http://{addr}/assets?token=t"), dir)
-    }
-
-    #[tokio::test]
-    async fn an_upload_over_the_json_limit_is_accepted_up_to_24_mib() {
-        let (url, dir) = serve("upload-limit").await;
-        let client = reqwest::Client::new();
-        let ok = client
-            .post(&url)
-            .body(padded_png(3 * 1024 * 1024))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(200, ok.status().as_u16(), "3 MiB fits the 24 MiB limit");
-        let too_big = client
-            .post(&url)
-            .body(padded_png(assets::MAX_BYTES + 1024))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(413, too_big.status().as_u16(), "above 24 MiB is refused");
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-}
+mod tests;

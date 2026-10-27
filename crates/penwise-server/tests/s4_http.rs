@@ -1,8 +1,5 @@
-//! Scenarios that need the S4 HTTP API (annotate, PNG render, restore). Written against the planned routes
-//! (`docs/rewrite-design.md` §1.5, §3.5; JSON shapes unchanged for MCP) and ignored until S4 lands.
-//!
-//! The harness does not start an HTTP router yet (`serve()` mounts `/sync` and `/health` only): S4 adds the routes
-//! to `serve()`, after which these are enabled and `base()` below is the only thing to adjust.
+//! Scenarios over the HTTP API (annotate/clear, PNG render, restore): H-5, H-6, H-9. The routes are the ones
+//! `penwise-mcp` uses (`docs/rewrite-design.md` §1.5, §3.5); `serve()` mounts them next to `/sync`.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -36,7 +33,6 @@ fn auth() -> (&'static str, &'static str) {
 
 /// H-5: negative/zero/huge seeds through `/sync` render pixel-equal to an in-process `Scene` render of the same ops.
 #[tokio::test]
-#[ignore = "needs S4: GET /page.png on the op-log server"]
 async fn h05_seed_edge_cases_render_pixel_equal_to_the_in_process_scene() {
     let server = TestServer::start().await;
     let mut a = server.tablet(1);
@@ -80,7 +76,7 @@ async fn h05_seed_edge_cases_render_pixel_equal_to_the_in_process_scene() {
         max_x: 1000.0,
         max_y: 1000.0,
     };
-    let local = penwise_core::raster::render_scene(
+    let ink = penwise_core::raster::render_scene(
         scene,
         LayerSet::ALL,
         &bounds,
@@ -88,6 +84,21 @@ async fn h05_seed_edge_cases_render_pixel_equal_to_the_in_process_scene() {
         &std::collections::BTreeMap::new(),
     )
     .expect("render");
+    // The served page is the scene over white paper (blank background).
+    let mut local = tiny_skia::Pixmap::new(1000, 1000).expect("pixmap");
+    local.fill(tiny_skia::Color::WHITE);
+    local.draw_pixmap(
+        0,
+        0,
+        ink.as_ref(),
+        &tiny_skia::PixmapPaint::default(),
+        tiny_skia::Transform::identity(),
+        None,
+    );
+    assert!(
+        served.data().chunks_exact(4).any(|p| p[0] < 200),
+        "the page has ink"
+    );
     assert_eq!(
         served.data(),
         local.data(),
@@ -97,7 +108,6 @@ async fn h05_seed_edge_cases_render_pixel_equal_to_the_in_process_scene() {
 
 /// H-6: annotate ×N across a server restart, then clear; a promoted mark survives the clear.
 #[tokio::test]
-#[ignore = "needs S4: POST /annotate and /annotate/clear on ops"]
 async fn h06_annotate_across_restart_then_clear_removes_exactly_agent_items() {
     let mut server = TestServer::start().await;
     let mut a = server.tablet(1);
@@ -157,7 +167,6 @@ async fn h06_annotate_across_restart_then_clear_removes_exactly_agent_items() {
 /// H-9: restore with a missing seq / unknown page / below-floor seq is 404/410, never a silent empty page; a restore
 /// can itself be undone by restoring again.
 #[tokio::test]
-#[ignore = "needs S4: POST /pages/{id}/restore?to_seq=N"]
 async fn h09_restore_edge_cases_and_restore_then_undo_restore() {
     let server = TestServer::start().await;
     let mut a = server.tablet(1);

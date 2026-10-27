@@ -1,7 +1,24 @@
-//! Penwise server library: storage (op log + materialized rows), sync sessions and the pieces the binary and
-//! the in-process test harness share. The binary (`main.rs`) still carries the pre-rewrite routes until S4.
+//! Penwise server library: op-log storage, `/sync` sessions, the JSON HTTP API and the pieces the binary and
+//! the in-process test harness share (`serve::serve` builds the one router both use).
 
+mod anchors;
+mod annotate;
+pub mod api;
+mod assets;
 pub mod auth;
+mod http;
+mod ocr;
+pub mod pairing;
+mod pictures;
+mod qr;
+mod render;
+mod search;
 pub mod serve;
+mod sidecar;
 pub mod storage;
 pub mod sync;
+mod textlayer;
+pub mod urls;
+
+#[cfg(test)]
+mod testing;
