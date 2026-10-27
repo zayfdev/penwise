@@ -1,0 +1,19 @@
+[package]
+name = "penwise-testkit"
+description = "Dev-only test harness: TestDevice (real /sync client), v3 DbFixture, convergence checks."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+penwise-core = { path = "../penwise-core" }
+penwise-proto = { path = "../penwise-proto" }
+futures-util.workspace = true
+rusqlite.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+
+[lints]
+workspace = true

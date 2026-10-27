@@ -7,6 +7,7 @@ mod annotate;
 mod archive;
 mod assets;
 mod auth;
+mod cli;
 mod http;
 mod library;
 mod ocr;
@@ -35,6 +36,10 @@ const DEFAULT_PORT: u16 = 7420;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("migrate") {
+        return cli::run_migrate(&args[1..]);
+    }
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .init();

@@ -7,6 +7,7 @@ members = [
     "crates/penwise-mcp",
     "crates/penwise-proto",
     "crates/penwise-server",
+    "crates/penwise-testkit",
     "crates/penwise-wasm",
 ]
 

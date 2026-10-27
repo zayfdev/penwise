@@ -1007,17 +1007,32 @@ dependencies = [
  "axum",
  "futures-util",
  "penwise-core",
+ "penwise-proto",
+ "penwise-testkit",
  "qrcode",
  "reqwest",
  "rusqlite",
  "serde",
  "serde_json",
  "sha2",
+ "thiserror",
  "tiny-skia",
  "tokio",
  "tokio-tungstenite 0.30.0",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "penwise-testkit"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "penwise-core",
+ "penwise-proto",
+ "rusqlite",
+ "tokio",
+ "tokio-tungstenite 0.30.0",
 ]
 
 [[package]]

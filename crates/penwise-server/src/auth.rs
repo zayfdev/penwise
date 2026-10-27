@@ -55,6 +55,7 @@ fn random_hex() -> String {
 }
 
 /// `true` when the request carries the expected token in the query or the `X-Penwise-Token` header.
+#[must_use]
 pub fn authorized(expected: &str, query_token: Option<&str>, headers: &HeaderMap) -> bool {
     if expected.is_empty() {
         return true;
@@ -82,6 +83,7 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
 }
 
 /// 401 with a plain-text reason (the caller answers the request directly).
+#[must_use]
 pub fn deny() -> Response {
     (
         StatusCode::UNAUTHORIZED,
