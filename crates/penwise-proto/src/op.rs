@@ -1,8 +1,6 @@
 //! Ops: the append-only change log entries (PLAN "Sync protocol": `AddItem`, `DeleteItem`, `UpdateItem`
 //! = core [`Edit`]; `PageOp`; `NotebookOp`).
 //!
-//! Owner: slice a.
-//!
 //! Every op carries `{op_id, device, hlc}`; `hlc.device == device` always. Ops are immutable once created; the
 //! server assigns each accepted op a `seq` (its log position) without changing it.
 //!
@@ -18,7 +16,7 @@
 use penwise_core::edit::Edit;
 use serde::{Deserialize, Serialize};
 
-use crate::hlc::Hlc;
+use crate::hlc::{Hlc, MAX_WALL_MS};
 use crate::ids::{DeviceId, ItemRef, NotebookId, OpId, PageId};
 use crate::notebook::{NotebookChange, PageChange};
 
@@ -53,7 +51,7 @@ pub struct NotebookOp {
     pub change: NotebookChange,
 }
 
-/// Any log entry. Variant order is frozen (postcard discriminant; SQLite `ops.kind` = discriminant).
+/// Any log entry. Variant order is frozen (postcard discriminant; `SQLite` `ops.kind` = discriminant).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AnyOp {
     /// Kind 0. Boxed: an [`Op`] carries the whole edit payload, far larger than the other variants.
@@ -104,37 +102,60 @@ impl AnyOp {
     /// Header op id.
     #[must_use]
     pub fn op_id(&self) -> OpId {
-        todo!()
+        match self {
+            Self::Item(op) => op.op_id,
+            Self::Page(op) => op.op_id,
+            Self::Notebook(op) => op.op_id,
+        }
     }
 
     /// Header author.
     #[must_use]
     pub fn device(&self) -> DeviceId {
-        todo!()
+        match self {
+            Self::Item(op) => op.device,
+            Self::Page(op) => op.device,
+            Self::Notebook(op) => op.device,
+        }
     }
 
     /// Header stamp.
     #[must_use]
     pub fn hlc(&self) -> Hlc {
-        todo!()
+        match self {
+            Self::Item(op) => op.hlc,
+            Self::Page(op) => op.hlc,
+            Self::Notebook(op) => op.hlc,
+        }
     }
 
     /// Page an item/page op belongs to; `None` for notebook ops.
     #[must_use]
     pub fn page(&self) -> Option<PageId> {
-        todo!()
+        match self {
+            Self::Item(op) => Some(op.page),
+            Self::Page(op) => Some(op.page),
+            Self::Notebook(_) => None,
+        }
     }
 
     /// Target item of an item op ([`Edit::target`]); `None` otherwise.
     #[must_use]
     pub fn item(&self) -> Option<ItemRef> {
-        todo!()
+        match self {
+            Self::Item(op) => Some(op.edit.target().into()),
+            Self::Page(_) | Self::Notebook(_) => None,
+        }
     }
 
     /// Frozen kind code = variant discriminant (`Item 0, Page 1, Notebook 2`).
     #[must_use]
     pub fn kind_code(&self) -> u8 {
-        todo!()
+        match self {
+            Self::Item(_) => 0,
+            Self::Page(_) => 1,
+            Self::Notebook(_) => 2,
+        }
     }
 
     /// Stateless checks every receiver can run without the log: `hlc.device == device`;
@@ -144,7 +165,27 @@ impl AnyOp {
     /// # Errors
     /// [`OpRejection::NotOwnDevice`] for the device mismatch, else [`OpRejection::Invalid`].
     pub fn validate(&self) -> Result<(), OpRejection> {
-        todo!()
+        let hlc = self.hlc();
+        if hlc.device != self.device() {
+            return Err(OpRejection::NotOwnDevice);
+        }
+        if hlc.wall_ms > MAX_WALL_MS {
+            return Err(OpRejection::Invalid);
+        }
+        let valid = match self {
+            Self::Item(op) => match &op.edit {
+                Edit::Add(item) => item.validate().is_ok(),
+                Edit::Delete(_) => true,
+                Edit::Update { patch, .. } => !patch.is_empty(),
+            },
+            Self::Page(op) => op.change.is_valid(),
+            Self::Notebook(op) => op.change.is_valid(),
+        };
+        if valid {
+            Ok(())
+        } else {
+            Err(OpRejection::Invalid)
+        }
     }
 }
 
@@ -152,7 +193,11 @@ impl AnyOp {
 /// (`penwise_core::codec::edit::encode_edit`, header + FNV trailer), so the edit format versions itself
 /// independently of postcard.
 pub mod edit_blob {
+    use core::fmt;
+
+    use penwise_core::codec::edit::{decode_edit, encode_edit};
     use penwise_core::edit::Edit;
+    use serde::de::{self, Visitor};
     use serde::{Deserializer, Serializer};
 
     /// Writes `encode_edit(edit)` as a postcard byte string (`serialize_bytes`).
@@ -160,7 +205,23 @@ pub mod edit_blob {
     /// # Errors
     /// Only the serializer's own errors.
     pub fn serialize<S: Serializer>(edit: &Edit, serializer: S) -> Result<S::Ok, S::Error> {
-        todo!()
+        let mut blob = Vec::new();
+        encode_edit(edit, &mut blob);
+        serializer.serialize_bytes(&blob)
+    }
+
+    struct BlobVisitor;
+
+    impl Visitor<'_> for BlobVisitor {
+        type Value = Edit;
+
+        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("a PWED edit blob")
+        }
+
+        fn visit_bytes<E: de::Error>(self, bytes: &[u8]) -> Result<Edit, E> {
+            decode_edit(bytes).map_err(E::custom)
+        }
     }
 
     /// Reads a byte string and `decode_edit`s it; a `CodecError` becomes `D::Error::custom`.
@@ -168,6 +229,6 @@ pub mod edit_blob {
     /// # Errors
     /// Malformed bytes or a codec error.
     pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Edit, D::Error> {
-        todo!()
+        deserializer.deserialize_bytes(BlobVisitor)
     }
 }

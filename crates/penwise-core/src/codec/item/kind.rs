@@ -13,10 +13,11 @@ use crate::codec::params_fields::{invalid, write_f32s};
 use crate::codec::stroke::{decode_params, decode_samples, encode_params, encode_samples};
 use crate::codec::varint::{Reader, write_uv32};
 use crate::item::{
-    EraseItem, FillItem, ItemKind, ItemKindTag, SampleParam, SampleRange, ShapeItem, StrokeItem,
-    TextItem, Trim,
+    EraseItem, FillItem, ImageItem, ItemKind, ItemKindTag, SampleParam, SampleRange, ShapeItem,
+    StrokeItem, TextItem, Trim,
 };
 use crate::sample::{GridSample, Sample};
+use crate::smoothing::{HISTORY_LEN, HistoryPoint, PositionState, PressureState, SmootherState};
 
 /// Range flag bits.
 const START_CUT: u8 = 1;
@@ -51,6 +52,10 @@ pub(super) fn encode_kind(kind: &ItemKind, out: &mut Vec<u8>) {
                 write_id(out, *id);
             }
         }
+        ItemKind::Image(image) => {
+            out.extend_from_slice(&image.asset);
+            write_f32s(out, &[image.w, image.h]);
+        }
     }
 }
 
@@ -81,6 +86,14 @@ pub(super) fn decode_kind(r: &mut Reader<'_>, tag: ItemKindTag) -> Result<ItemKi
             ItemKind::Fill(FillItem { polygons, paint })
         }
         ItemKindTag::Text => ItemKind::Text(decode_text(r)?),
+        ItemKindTag::Image => {
+            let mut asset = [0_u8; 32];
+            for byte in &mut asset {
+                *byte = r.u8()?;
+            }
+            let [w, h] = read_pair(r, "image.size")?;
+            ItemKind::Image(ImageItem { asset, w, h })
+        }
     })
 }
 
@@ -107,7 +120,74 @@ fn encode_stroke(stroke: &StrokeItem, out: &mut Vec<u8>) {
             let end = if range.end_cut { END_CUT } else { 0 };
             out.push(start | end);
         }
+        write_flag(out, trim.warm.is_some());
+        if let Some(warm) = &trim.warm {
+            encode_warm(warm, out);
+        }
     }
+}
+
+fn encode_warm(warm: &SmootherState, out: &mut Vec<u8>) {
+    let (p, q) = (&warm.position, &warm.pressure);
+    write_f32s(out, &[p.x, p.y, p.dx, p.dy, p.dt_s]);
+    write_uv32(out, p.t_us);
+    write_f32s(out, &[q.value, q.derivative, q.dt_s]);
+    write_uv32(out, q.t_us);
+    let n = write_len(out, warm.history.len());
+    for h in warm.history.iter().take(n) {
+        write_f32s(out, &[h.x, h.y]);
+        write_uv32(out, h.t_us);
+    }
+}
+
+fn decode_warm(r: &mut Reader<'_>) -> Result<SmootherState, CodecError> {
+    let [x, y, dx, dy, dt_s] = read_f32s(r, "trim.warm.position")?;
+    let t_us = r.uv32()?;
+    let position = PositionState {
+        x,
+        y,
+        dx,
+        dy,
+        t_us,
+        dt_s,
+    };
+    let [value, derivative, dt_s] = read_f32s(r, "trim.warm.pressure")?;
+    let pressure = PressureState {
+        value,
+        derivative,
+        t_us: r.uv32()?,
+        dt_s,
+    };
+    // x, y f32 (8 bytes) + t uv (≥ 1): at least 9 bytes per entry.
+    let (count, cap) = read_count(r, 9)?;
+    if usize::try_from(count).map_or(true, |c| c > HISTORY_LEN) {
+        return Err(invalid("trim.warm.history"));
+    }
+    let mut history = Vec::with_capacity(cap);
+    for _ in 0..count {
+        let [x, y] = read_f32s(r, "trim.warm.history")?;
+        history.push(HistoryPoint {
+            x,
+            y,
+            t_us: r.uv32()?,
+        });
+    }
+    Ok(SmootherState {
+        position,
+        pressure,
+        history,
+    })
+}
+
+fn read_f32s<const N: usize>(
+    r: &mut Reader<'_>,
+    field: &'static str,
+) -> Result<[f32; N], CodecError> {
+    let mut out = [0.0_f32; N];
+    for v in &mut out {
+        *v = r.f32_le(field)?;
+    }
+    Ok(out)
 }
 
 fn decode_stroke(r: &mut Reader<'_>) -> Result<StrokeItem, CodecError> {
@@ -149,11 +229,17 @@ fn decode_trim(r: &mut Reader<'_>) -> Result<Trim, CodecError> {
             end_cut: flags & END_CUT != 0,
         });
     }
+    let warm = if read_flag(r, "trim.warm flag")? {
+        Some(decode_warm(r)?)
+    } else {
+        None
+    };
     Ok(Trim {
         origin,
         sample_offset,
         visible,
         own,
+        warm,
     })
 }
 

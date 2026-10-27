@@ -12,6 +12,7 @@ mod erase;
 mod fill;
 mod geometry;
 mod id;
+mod image;
 mod index;
 mod layer;
 mod paint;
@@ -26,12 +27,13 @@ pub use erase::EraseItem;
 pub use fill::{FillItem, Polygon};
 pub use geometry::{DeriveContext, ItemGeometry, RenderBand, RenderKey};
 pub use id::{IdSource, ItemId};
+pub use image::ImageItem;
 pub use layer::{Layer, LayerSet};
 pub use paint::Paint;
 pub use scene::{PageKind, Scene};
 pub use shape::{ArrowHead, ShapeItem, ShapeKind};
 pub use stroke::{
-    CONTEXT_SAMPLES, CentrePoint, Centreline, MAX_STROKE_SAMPLES, SampleParam, SampleRange,
+    CUT_LOOKAHEAD_SAMPLES, CentrePoint, Centreline, MAX_STROKE_SAMPLES, SampleParam, SampleRange,
     StrokeItem, Trim, intersect_ranges,
 };
 pub use text::TextItem;
@@ -59,7 +61,7 @@ pub struct Item {
     pub kind: ItemKind,
 }
 
-/// Kind-specific data (PLAN "Data model": stroke, erase, shape, fill, text; image is later).
+/// Kind-specific data (PLAN "Data model": stroke, erase, shape, fill, text, image).
 #[derive(Debug, Clone, PartialEq)]
 pub enum ItemKind {
     /// Pen stroke: brush params + seed + raw samples (+ visible-range [`Trim`] for precise-erase pieces).
@@ -72,6 +74,8 @@ pub enum ItemKind {
     Fill(FillItem),
     /// Recognized or typed text.
     Text(TextItem),
+    /// Placed picture (asset hash + box).
+    Image(ImageItem),
 }
 
 /// Stable kind tags (frozen: stored in the item codec; append only).
@@ -82,10 +86,11 @@ pub enum ItemKindTag {
     Shape,
     Fill,
     Text,
+    Image,
 }
 
 impl ItemKindTag {
-    /// Byte tag: `Stroke = 0, Erase = 1, Shape = 2, Fill = 3, Text = 4`.
+    /// Byte tag: `Stroke = 0, Erase = 1, Shape = 2, Fill = 3, Text = 4, Image = 5`.
     #[must_use]
     pub fn code(self) -> u8 {
         match self {
@@ -94,6 +99,7 @@ impl ItemKindTag {
             Self::Shape => 2,
             Self::Fill => 3,
             Self::Text => 4,
+            Self::Image => 5,
         }
     }
 
@@ -106,6 +112,7 @@ impl ItemKindTag {
             2 => Some(Self::Shape),
             3 => Some(Self::Fill),
             4 => Some(Self::Text),
+            5 => Some(Self::Image),
             _ => None,
         }
     }
@@ -121,6 +128,7 @@ impl ItemKind {
             Self::Shape(_) => ItemKindTag::Shape,
             Self::Fill(_) => ItemKindTag::Fill,
             Self::Text(_) => ItemKindTag::Text,
+            Self::Image(_) => ItemKindTag::Image,
         }
     }
 }

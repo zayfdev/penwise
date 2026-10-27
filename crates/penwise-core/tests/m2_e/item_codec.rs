@@ -1,6 +1,6 @@
 //! `PWIT` item blob: round trips, canonical bytes, and every error from crafted input.
 
-use super::fixtures::{every_kind, fill, id, shape, text};
+use super::fixtures::{every_kind, fill, id, image, piece, shape, text};
 use penwise_core::CodecError;
 use penwise_core::codec::item::{
     ITEM_MAGIC, ITEM_VERSION, decode_item, decode_item_body, decode_points, encode_item,
@@ -8,7 +8,8 @@ use penwise_core::codec::item::{
 };
 use penwise_core::codec::varint::{Reader, write_sv32, write_uv32};
 use penwise_core::hash::fnv1a64;
-use penwise_core::item::{Item, ShapeKind};
+use penwise_core::item::{Item, ItemKind, ShapeKind};
+use penwise_core::smoothing::{HISTORY_LEN, SmootherState};
 
 pub fn blob(item: &Item) -> Vec<u8> {
     let mut out = Vec::new();
@@ -292,4 +293,68 @@ fn items_failing_validation_are_invalid() {
     }
     let err = decode_item(&blob(&item)).unwrap_err();
     assert!(matches!(err, CodecError::InvalidValue { .. }), "{err:?}");
+}
+
+#[test]
+fn image_blob_carries_the_asset_hash_and_size_verbatim() {
+    let item = image(id(9), -5);
+    let bytes = blob(&item);
+    let ItemKind::Image(data) = &item.kind else {
+        panic!("image fixture")
+    };
+    // Kind data is the last thing before the 8-byte trailer: 32 hash bytes + two f32.
+    let at = bytes.len() - 8 - 40;
+    assert_eq!(&bytes[at..at + 32], &data.asset);
+    assert_eq!(bytes[KIND_AT], 5, "Image kind tag");
+}
+
+#[test]
+fn degenerate_pictures_are_invalid() {
+    for (w, h) in [(0.0, 10.0), (10.0, 0.0), (-1.0, 10.0), (2.0e6, 10.0)] {
+        let mut item = image(id(9), 0);
+        if let ItemKind::Image(data) = &mut item.kind {
+            data.w = w;
+            data.h = h;
+        }
+        let err = decode_item(&blob(&item)).unwrap_err();
+        assert_eq!(
+            err,
+            CodecError::InvalidValue {
+                field: "image_size"
+            },
+            "{w}x{h}"
+        );
+    }
+}
+
+#[test]
+fn hostile_warm_state_is_rejected_on_decode() {
+    let good = piece(id(3), id(1), 1, 10.0);
+    let tweak = |f: &dyn Fn(&mut SmootherState)| {
+        let mut item = good.clone();
+        if let ItemKind::Stroke(s) = &mut item.kind
+            && let Some(warm) = s.trim.as_mut().and_then(|t| t.warm.as_mut())
+        {
+            f(warm);
+        }
+        decode_item(&blob(&item))
+    };
+    assert!(tweak(&|_| {}).is_ok());
+    let bad = Err(CodecError::InvalidValue { field: "trim" });
+    assert_eq!(tweak(&|w| w.position.dt_s = 0.0), bad);
+    assert_eq!(tweak(&|w| w.pressure.dt_s = 1.0e9), bad);
+    assert_eq!(tweak(&|w| w.position.dx = 1.0e12), bad);
+    assert_eq!(tweak(&|w| w.history.clear()), bad);
+    assert_eq!(
+        tweak(&|w| w.history.reverse()),
+        bad,
+        "timestamps must not decrease"
+    );
+    assert!(
+        matches!(
+            tweak(&|w| w.history = vec![w.history[0]; HISTORY_LEN + 1]),
+            Err(CodecError::InvalidValue { .. })
+        ),
+        "more history than the speed window holds"
+    );
 }

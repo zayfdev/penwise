@@ -1,7 +1,6 @@
 //! Protocol errors: frame/blob coding ([`ProtoError`]) and replica application ([`ReplicaError`]).
-//!
-//! Owner: slice a.
 
+use penwise_core::CodecError;
 use penwise_core::edit::EditError;
 
 use crate::lww::LwwError;
@@ -24,6 +23,12 @@ pub enum ProtoError {
     /// postcard rejected the bytes (truncation, unknown variant, bad UTF-8, embedded edit blob error).
     #[error("decode: {0}")]
     Decode(postcard::Error),
+    /// An embedded core blob (item, edit) failed its codec.
+    #[error("blob: {0}")]
+    Codec(#[from] CodecError),
+    /// A well-formed frame or blob holding a value the protocol forbids (e.g. more field stamps than fields).
+    #[error("invalid {0}")]
+    Invalid(&'static str),
     /// postcard could not encode (never expected for well-formed values).
     #[error("encode: {0}")]
     Encode(postcard::Error),
@@ -44,6 +49,9 @@ pub enum ReplicaError {
     Duplicate,
     #[error(transparent)]
     Lww(#[from] LwwError),
+    /// A snapshot row did not decode or violates a protocol invariant.
+    #[error("snapshot row: {0}")]
+    Snapshot(#[from] ProtoError),
     /// The core scene rejected the edit.
     #[error(transparent)]
     Edit(#[from] EditError),

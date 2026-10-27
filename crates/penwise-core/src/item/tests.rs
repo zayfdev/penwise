@@ -54,6 +54,7 @@ fn trim(sample_offset: u32, visible: Vec<SampleRange>, own: u32) -> Trim {
         sample_offset,
         visible,
         own,
+        warm: None,
     }
 }
 
@@ -72,7 +73,8 @@ fn tags_round_trip() {
         }
     }
     assert_eq!(ItemKindTag::from_code(4), Some(ItemKindTag::Text));
-    assert_eq!(ItemKindTag::from_code(5), None);
+    assert_eq!(ItemKindTag::from_code(5), Some(ItemKindTag::Image));
+    assert_eq!(ItemKindTag::from_code(6), None);
     assert_eq!(Layer::from_code(3), None);
     assert_eq!(
         stroke(Preset::Ballpoint, None).kind.tag(),

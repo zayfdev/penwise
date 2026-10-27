@@ -5,8 +5,10 @@
 //! Custom brushes are [`BrushParams`] values, not code. The `code`/`from_code` byte tags below are part of the
 //! stored stroke format (`codec::stroke`) and are frozen: never renumber, only append.
 
+mod for_preset;
 mod params;
 mod presets;
+mod validate;
 
 pub use params::{
     BrushParams, CapStyle, GrainParams, Jitter, NibParams, OutlineParams, SprayDistribution,

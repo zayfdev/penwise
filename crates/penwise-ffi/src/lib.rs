@@ -15,8 +15,8 @@ use jni::EnvUnowned;
 use jni::errors::ThrowRuntimeExAndDefault;
 use jni::objects::{JByteArray, JFloatArray, JIntArray, JObject};
 use jni::sys::{jfloat, jint, jintArray, jlong};
-use penwise_core::Preset;
 use penwise_core::stamp::texture;
+use penwise_core::{Preset, Seed};
 
 use crate::stroke::{FfiError, SAMPLE_FLOATS, Stroke};
 
@@ -122,8 +122,8 @@ pub extern "system" fn Java_dev_penwise_core_Native_strokeNew<'local>(
     size_scale: jfloat,
 ) -> jlong {
     env.with_env(|_env| -> Result<jlong, FfiError> {
-        let params = stroke::brush_params(stroke::preset(preset)?, argb, size_scale)?;
-        let boxed = Box::new(Stroke::new(&params, seed.cast_unsigned()));
+        let params = stroke::brush_params(preset, argb, size_scale)?;
+        let boxed = Box::new(Stroke::new(&params, Seed::from_i64_wire(seed).get()));
         Ok(Box::into_raw(boxed) as jlong)
     })
     .resolve::<ThrowRuntimeExAndDefault>()
@@ -244,7 +244,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_presetDefaultArgb<'local>(
     _this: JObject<'local>,
 ) -> JIntArray<'local> {
     env.with_env(|env| -> Result<_, FfiError> {
-        let colors = Preset::ALL.map(|p| stroke::argb_from_color(p.params().color));
+        let colors = Preset::ALL.map(|p| p.params().color.to_argb().cast_signed());
         let array = env.new_int_array(colors.len())?;
         array.set_region(env, 0, &colors)?;
         Ok(array)

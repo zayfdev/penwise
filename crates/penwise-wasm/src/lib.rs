@@ -2,7 +2,7 @@
 //!
 //! No geometry lives here; this only converts between the JS/JSON shapes and [`penwise_core`].
 
-use penwise_core::brush::{BlendMode, BrushParams, Preset};
+use penwise_core::brush::{BlendMode, BrushParams};
 use penwise_core::builder::StrokeBuilder;
 use penwise_core::geometry::StrokeGeometry;
 use penwise_core::sample::Sample;
@@ -41,11 +41,12 @@ struct GeometryJson {
 
 #[wasm_bindgen]
 impl Stroke {
-    /// `preset` indexes [`Preset::ALL`]; `scale` multiplies the preset's size range (the app's size slider).
+    /// `preset` indexes `penwise_core::brush::Preset::ALL`; `scale` multiplies every size-like length of the preset
+    /// (the app's size slider; [`BrushParams::for_preset`], the tablet's rule).
     #[wasm_bindgen(constructor)]
     #[must_use]
     pub fn new(preset: u32, seed: u64, argb: u32, scale: f32) -> Stroke {
-        let params = params_for(preset, scale);
+        let params = BrushParams::for_preset(preset as usize, argb, scale);
         Stroke {
             builder: Some(StrokeBuilder::new(&params, seed)),
             argb,
@@ -101,16 +102,6 @@ pub fn geometry(
 }
 
 const EMPTY: &str = "{\"stamps\":false,\"outline\":[],\"ends\":[],\"dabs\":[],\"argb\":0,\"opacity\":0,\"multiply\":false,\"points\":0}";
-
-fn params_for(preset: u32, scale: f32) -> BrushParams {
-    let index = (preset as usize).min(Preset::ALL.len().saturating_sub(1));
-    let mut params = Preset::ALL[index].params();
-    if scale.is_finite() && scale > 0.0 {
-        params.size_min *= scale;
-        params.size_max *= scale;
-    }
-    params
-}
 
 fn to_json(geometry: &StrokeGeometry, argb: u32) -> String {
     let style = geometry.style();

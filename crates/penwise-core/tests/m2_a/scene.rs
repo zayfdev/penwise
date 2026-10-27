@@ -618,6 +618,7 @@ fn piece(of: &Item, piece_id: ItemId, visible: Vec<SampleRange>, own: u32) -> It
             sample_offset: 0,
             visible,
             own,
+            warm: None,
         }),
         ..s.clone()
     });

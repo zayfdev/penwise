@@ -37,7 +37,7 @@ impl LassoParams {
 ///      bias the count), dropping points inside the item's masks;
 ///    - shape: flattened page path resampled, plus every path vertex, dropping masked points;
 ///    - fill: outer rings resampled plus their vertices;
-///    - text: the 4 corners and the centre.
+///    - text, image: the 4 corners and the centre.
 /// 3. Select when `inside / total ≥ threshold`. Items whose total arc length is `< tiny_length` (dots) are
 ///    selected iff the mean of their samples is inside. An item with zero unmasked samples is never selected.
 ///
@@ -100,7 +100,7 @@ fn item_samples(
                 length += push_ring_or_line(&poly.outer, true, step, out);
             }
         }
-        Some(ItemGeometry::Text { corners, .. }) => {
+        Some(ItemGeometry::Text { corners, .. } | ItemGeometry::Image { corners }) => {
             length = arc_length(corners, true);
             out.extend_from_slice(corners);
             let mid = |i: usize| f32::midpoint(corners[0][i], corners[2][i]);

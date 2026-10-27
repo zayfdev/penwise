@@ -11,7 +11,7 @@ use crate::geometry::{Outline, StrokeGeometry, StrokeStyle};
 use crate::item::Affine;
 use crate::outline::OutlineEngine;
 use crate::sample::Sample;
-use crate::smoothing::Smoother;
+use crate::smoothing::{FilteredSample, Smoother, SmootherState};
 
 /// `params` with `size_min`/`size_max` × [`Affine::width_scale`] (width applied after the transform).
 pub(super) fn scaled_params(params: &BrushParams, transform: &Affine) -> BrushParams {
@@ -37,21 +37,38 @@ pub(super) fn empty_geometry(params: &BrushParams, style: StrokeStyle) -> Stroke
     }
 }
 
+/// The stroke's smoother positioned at its first stored sample: fresh for an origin, resumed from the piece's
+/// stored [`super::Trim::warm`] (mapped into page space by `transform`) otherwise.
+fn smoother_at_start(stroke: &StrokeItem, transform: &Affine, params: &BrushParams) -> Smoother {
+    match stroke.trim.as_ref().and_then(|t| t.warm.as_ref()) {
+        Some(warm) => Smoother::resume(
+            &params.smoothing,
+            &warm.mapped(|p| transform.apply(p), |v| transform.apply_vector(v)),
+        ),
+        None => Smoother::new(&params.smoothing),
+    }
+}
+
+/// Filters one stored sample: position mapped through `transform`, quantized, smoothed.
+fn filter_sample(smoother: &mut Smoother, transform: &Affine, s: &Sample) -> FilteredSample {
+    let [x, y] = transform.apply([s.x, s.y]);
+    smoother.filter(&Sample { x, y, ..*s }.quantize())
+}
+
 /// One ink point per stored sample, exactly as `StrokeBuilder` produces them: position mapped through
-/// `transform`, quantized, One Euro smoothed, dynamics applied. The origin's last sample (pen-up) takes its
-/// raw quantized position, like the builder's `finish`.
+/// `transform`, quantized, One Euro smoothed (resumed from the piece's warm state), dynamics applied. The
+/// origin's last sample (pen-up) takes its raw quantized position, like the builder's `finish`.
 pub(super) fn ink_points(
     stroke: &StrokeItem,
     transform: &Affine,
     params: &BrushParams,
 ) -> Vec<InkPoint> {
-    let mut smoother = Smoother::new(&params.smoothing);
+    let mut smoother = smoother_at_start(stroke, transform, params);
     let dynamics = params.dynamics;
     let mut out = Vec::with_capacity(stroke.samples.len());
     let mut last_raw = None;
     for s in &stroke.samples {
-        let [x, y] = transform.apply([s.x, s.y]);
-        let filtered = smoother.filter(&Sample { x, y, ..*s }.quantize());
+        let filtered = filter_sample(&mut smoother, transform, s);
         out.push(dynamics.apply(&filtered));
         last_raw = Some([filtered.raw_x, filtered.raw_y]);
     }
@@ -62,6 +79,24 @@ pub(super) fn ink_points(
         last.y = y;
     }
     out
+}
+
+/// Smoother memory before the stored sample at slice index `upto`, in the local frame (see
+/// [`super::Trim::warm`]). `None` when nothing precedes it or the transform is not invertible.
+pub(super) fn warm_before(
+    stroke: &StrokeItem,
+    transform: &Affine,
+    upto: usize,
+) -> Option<SmootherState> {
+    let params = scaled_params(&stroke.params, transform);
+    let mut smoother = smoother_at_start(stroke, transform, &params);
+    for s in stroke.samples.iter().take(upto) {
+        filter_sample(&mut smoother, transform, s);
+    }
+    let inverse = transform.invert()?;
+    smoother
+        .state()
+        .map(|state| state.mapped(|p| inverse.apply(p), |v| inverse.apply_vector(v)))
 }
 
 /// Half-width at `size_pressure` from the brush's size response: outline brushes are linear in pressure

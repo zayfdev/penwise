@@ -6,7 +6,8 @@
 //! origin). Every piece cut from it (and every piece cut from a piece) keeps the origin's sample indexing:
 //! `SampleParam` `u` addresses the point `lerp(s[i], s[i+1], frac)` of the origin's samples, where
 //! `i = u >> 12`. A piece stores only the window of origin samples it needs (its visible range plus
-//! [`CONTEXT_SAMPLES`] on each side, clipped), starting at origin index [`Trim::sample_offset`].
+//! [`CUT_LOOKAHEAD_SAMPLES`] after it, clipped), starting at origin index [`Trim::sample_offset`]; the smoother
+//! memory at that index is stored in [`Trim::warm`].
 //!
 //! **Concurrent splits (decided).** Each piece carries the whole-origin visible set produced by the split
 //! that created it ([`Trim::visible`]). The scene renders a live member `X` of a family over
@@ -26,13 +27,14 @@ use crate::brush::{BrushFamily, BrushParams};
 use crate::builder::StrokeBuilder;
 use crate::geometry::{Outline, StrokeGeometry, StrokeStyle};
 use crate::sample::Sample;
+use crate::smoothing::SmootherState;
 
 use render::{centre_at, range_params};
 
-/// Origin samples kept on each side of a piece's visible range so smoothing and velocity dynamics are warm
-/// at the cut (editing-algorithms.md §1: ~66 ms at 482 Hz). Not a stored format: older pieces keep whatever
-/// window they were cut with.
-pub const CONTEXT_SAMPLES: u32 = 32;
+/// Origin samples kept after a piece's visible range: the end point is interpolated between its segment's
+/// samples. Nothing is kept before it: smoothing resumes from [`Trim::warm`] and everything downstream of the
+/// smoother is causal. Not a stored format.
+pub const CUT_LOOKAHEAD_SAMPLES: u32 = 1;
 
 /// One centreline point in page px with its half-width (from the brush dynamics, after transform).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -195,6 +197,13 @@ impl StrokeItem {
             })
             .collect();
         StrokeBuilder::build(params, self.seed, &mapped)
+    }
+
+    /// Smoother memory before the stored sample at origin index `index` (see [`Trim::warm`]), for a piece cut
+    /// from this stroke under `transform`; `None` when nothing precedes it or it cannot be represented.
+    pub(crate) fn warm_state(&self, transform: &Affine, index: u32) -> Option<SmootherState> {
+        let upto = usize::try_from(index.checked_sub(self.sample_offset())?).ok()?;
+        render::warm_before(self, transform, upto)
     }
 
     /// Origin index of `samples[0]`.

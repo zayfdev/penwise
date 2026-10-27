@@ -150,7 +150,7 @@ fn untrimmed_identity_geometry_equals_builder_bytes() {
 
 #[test]
 fn middle_split_keeps_ink_outside_the_cut_without_taper() {
-    // 200 px long: the right piece has > 60 px of ink well past its warm-up window.
+    // 200 px long: the right piece keeps > 40 px of ink beyond the cut cap.
     let item = stroke_item(1, tapered_ballpoint(), slow_line(2000), Affine::IDENTITY);
     let stroke = stroke_of(&item);
     let eraser = vertical(150.0);
@@ -216,12 +216,12 @@ fn middle_split_keeps_ink_outside_the_cut_without_taper() {
             hi - lo
         );
 
-        // Away from the cut the ink is unchanged (within 1/16 px of the original outline).
+        // Pieces resume the origin's smoothing state, so away from the cut cap the ink is unchanged (within 1/16 px of the original outline).
         for p in &outline.points {
             let far = if k == 0 {
                 p[0] < cut.x - 15.0
             } else {
-                p[0] > cut.x + 60.0
+                p[0] > cut.x + 15.0
             };
             if far {
                 let d = point_ring_dist(*p, ring);

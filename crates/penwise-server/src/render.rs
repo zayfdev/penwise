@@ -1,11 +1,12 @@
 //! Page → PNG through the ink engine, so agents see exactly what the tablet drew.
 
-use penwise_core::brush::{Color, Preset};
+use penwise_core::brush::BrushParams;
 use penwise_core::builder::StrokeBuilder;
 use penwise_core::geometry::StrokeGeometry;
 use penwise_core::raster::png::encode_png;
 use penwise_core::raster::{CoverageBuffer, Viewport, render_strokes};
 use penwise_core::sample::Sample;
+use penwise_core::seed::Seed;
 use tiny_skia::Pixmap;
 
 use crate::library::{BACKGROUND_SPACING_PX, Background, ImageMsg, PageKind, PageMeta, StrokeMsg};
@@ -302,20 +303,15 @@ fn pixel_span(page: f32, scale: f32) -> u32 {
     (page * scale).round().max(1.0) as u32
 }
 
-/// The brush seed of a wire seed: the tablet sends its signed `Long` as decimal text and the FFI bit-casts it to
-/// `u64` (`penwise-ffi`), so a negative seed must land on the same `u64` here or its jitter differs. Text that
-/// is not a number falls back to 0.
-fn seed_of(text: &str) -> u64 {
-    text.parse::<i64>()
-        .map(i64::cast_unsigned)
-        .or_else(|_| text.parse::<u64>())
-        .unwrap_or(0)
-}
-
 /// Rebuilds one stored stroke; its stored colour replaces the preset's, opacity and blend stay the brush's.
+/// The seed is the tablet's signed wire value ([`Seed::parse_decimal`]); text that is not a number is seed 0.
 fn geometry_of(stroke: &StrokeMsg) -> StrokeGeometry {
-    let params = params_for(stroke);
-    let seed = seed_of(&stroke.seed);
+    let params = BrushParams::for_preset(
+        stroke.preset as usize,
+        stroke.argb.cast_unsigned(),
+        stroke.scale,
+    );
+    let seed = Seed::parse_decimal(&stroke.seed).map_or(0, Seed::get);
     let mut builder = StrokeBuilder::new(&params, seed);
     let count = (stroke.samples.len() / SAMPLE_STRIDE).min(stroke.times.len());
     let mut batch = Vec::with_capacity(count);
@@ -331,52 +327,13 @@ fn geometry_of(stroke: &StrokeMsg) -> StrokeGeometry {
         });
     }
     builder.push(&batch);
-    let mut geometry = builder.finish();
-    set_color(&mut geometry, stroke.argb);
-    geometry
-}
-
-fn params_for(stroke: &StrokeMsg) -> penwise_core::brush::BrushParams {
-    let index = (stroke.preset as usize).min(Preset::ALL.len().saturating_sub(1));
-    let mut params = Preset::ALL[index].params();
-    if stroke.scale.is_finite() && stroke.scale > 0.0 {
-        params.size_min *= stroke.scale;
-        params.size_max *= stroke.scale;
-    }
-    params
-}
-
-#[allow(
-    clippy::cast_sign_loss,
-    reason = "the colour word is manipulated as u32; the sign bit is the alpha channel"
-)]
-fn set_color(geometry: &mut StrokeGeometry, argb: i32) {
-    let bits = argb as u32;
-    let color = Color {
-        r: byte(bits >> 16),
-        g: byte(bits >> 8),
-        b: byte(bits),
-        a: byte(bits >> 24),
-    };
-    match geometry {
-        StrokeGeometry::Outline { style, .. } | StrokeGeometry::Stamps { style, .. } => {
-            style.color = color;
-        }
-    }
-}
-
-/// One colour channel from a shifted ARGB word.
-#[allow(
-    clippy::cast_possible_truncation,
-    reason = "masked to 8 bits before the cast"
-)]
-fn byte(shifted: u32) -> u8 {
-    (shifted & 0xFF) as u8
+    builder.finish()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use penwise_core::brush::Preset;
 
     fn stroke(x: f32, y: f32) -> StrokeMsg {
         StrokeMsg {
@@ -443,7 +400,7 @@ mod tests {
             seed.clone_into(&mut s.seed);
             page_png(&[s], &[], 0.25, &page).unwrap()
         };
-        assert_eq!(u64::MAX, seed_of("-1"));
+        assert_eq!(Some(u64::MAX), Seed::parse_decimal("-1").map(Seed::get));
         let mut collapsed_everywhere = true;
         for preset in 0..u32::try_from(Preset::ALL.len()).unwrap() {
             assert_eq!(

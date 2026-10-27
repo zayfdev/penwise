@@ -1,8 +1,7 @@
 //! Penwise sync protocol: identities, hybrid logical clock, ops, last-writer-wins materialization and the
 //! versioned client ↔ server wire messages (PLAN "Sync protocol").
 //!
-//! Owner: contract. Only the contract owner edits this file; the M3 contract lives in
-//! `docs/contracts/m3-server.md`.
+//! The contract of record is `docs/rewrite-design.md` (§2 ops, §4 wire protocol, §5 proto).
 //!
 //! Pure like `penwise-core`: no I/O, async, clocks, randomness or logging. Callers inject wall-clock time
 //! (`now_ms`) and random bits (id generation), so every function is deterministic and runs unchanged on the
@@ -14,32 +13,20 @@
 //!   → server log (seq) → ServerMsg::OpsSince / broadcast → Replica::apply (LWW per (item, field) by HLC)
 //!   → PageReplica scene → renderer
 //! ```
-// Contract stubs: the public docs are the specification and are finalised when each type is implemented.
-#![allow(
-    clippy::doc_markdown,
-    reason = "stub crate: prose docs are the contract, rewritten with the implementations"
-)]
-#![allow(
-    clippy::todo,
-    clippy::missing_panics_doc,
-    clippy::needless_pass_by_value,
-    clippy::unused_self,
-    unused_variables,
-    dead_code,
-    reason = "M3 contract stubs"
-)]
-
 pub mod catalog;
 pub mod envelope;
 pub mod error;
 pub mod hlc;
 pub mod ids;
+pub mod legacy;
 pub mod live;
 pub mod lww;
 pub mod message;
 pub mod notebook;
 pub mod op;
+pub mod outbox;
 pub mod replica;
+pub mod snapshot;
 
 pub use catalog::Catalog;
 pub use envelope::{
@@ -47,16 +34,17 @@ pub use envelope::{
     decode_op, decode_server, encode_client, encode_op, encode_server,
 };
 pub use error::{ProtoError, ReplicaError};
-pub use hlc::{Hlc, HlcClock, HlcError, MAX_SKEW_MS};
+pub use hlc::{ClockOffset, Hlc, HlcClock, HlcError, MAX_SKEW_MS};
 pub use ids::{DeviceId, IdParseError, ItemRef, NotebookId, OpId, PageId, ServerId};
 pub use live::{LiveError, LiveSample, LiveStroke, LiveStrokes, StrokeCancel, StrokeDelta};
-pub use lww::{FieldStamps, LwwError, MaterializedItem, Register};
+pub use lww::{FieldStamps, LwwError, MaterializedItem, Register, merge_patch};
 pub use message::{
-    AuthToken, ClientKind, ClientMsg, NotebookInfo, OpRejected, PageInfo, PairingCode,
-    RejectReason, ServerMsg,
+    AuthToken, ClientKind, ClientMsg, ErrorCode, OpRejected, RejectReason, ServerMsg,
 };
 pub use notebook::{
     Background, Notebook, NotebookChange, NotebookPatch, Page, PageChange, PageKind, PagePatch,
 };
 pub use op::{AnyOp, NotebookOp, Op, OpRejection, PageOp, SeqOp};
-pub use replica::{Applied, PageReplica, Replica};
+pub use outbox::{DeadOp, Outbox};
+pub use replica::{Applied, PageReplica, Replica, SnapshotApplied};
+pub use snapshot::{ItemState, NotebookState, PageState, Scope, SnapshotChunk};

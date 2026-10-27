@@ -8,9 +8,11 @@
 //! outputs.
 
 mod speed;
+mod state;
 
 pub use speed::SPEED_WINDOW_US;
 use speed::SpeedEstimator;
+pub use state::{HISTORY_LEN, HistoryPoint, PositionState, PressureState, SmootherState};
 
 use crate::sample::Sample;
 
@@ -82,6 +84,33 @@ impl OneEuro {
     #[must_use]
     pub fn new(params: OneEuroParams) -> Self {
         Self { params, prev: None }
+    }
+
+    /// Filter resuming from `state`.
+    fn resume(params: OneEuroParams, s: PositionState) -> Self {
+        let prev = OneEuroState {
+            x: s.x,
+            y: s.y,
+            dx: s.dx,
+            dy: s.dy,
+            t_us: s.t_us,
+            dt_s: s.dt_s,
+        };
+        Self {
+            params,
+            prev: Some(prev),
+        }
+    }
+
+    fn state(&self) -> Option<PositionState> {
+        self.prev.map(|p| PositionState {
+            x: p.x,
+            y: p.y,
+            dx: p.dx,
+            dy: p.dy,
+            t_us: p.t_us,
+            dt_s: p.dt_s,
+        })
     }
 
     /// Filters one point; returns `(x̂, ŷ, speed_px_per_s)`.
@@ -162,6 +191,23 @@ impl OneEuroScalar {
         Self { params, prev: None }
     }
 
+    fn resume(params: OneEuroParams, s: PressureState) -> Self {
+        Self {
+            params,
+            prev: Some((s.value, s.derivative, s.t_us, s.dt_s)),
+        }
+    }
+
+    fn state(&self) -> Option<PressureState> {
+        self.prev
+            .map(|(value, derivative, t_us, dt_s)| PressureState {
+                value,
+                derivative,
+                t_us,
+                dt_s,
+            })
+    }
+
     /// Filters one value; first call returns `v` unchanged. Δt rules as in [`OneEuro::filter`].
     pub fn filter(&mut self, v: f32, t_us: u32) -> f32 {
         let Some((prev_v, prev_d, prev_t, prev_dt)) = self.prev else {
@@ -214,6 +260,26 @@ impl Smoother {
             pressure: OneEuroScalar::new(params.pressure),
             speed: SpeedEstimator::new(),
         }
+    }
+
+    /// Smoother that continues from `state` as if it had filtered every earlier sample itself.
+    #[must_use]
+    pub fn resume(params: &SmoothingParams, state: &SmootherState) -> Self {
+        Self {
+            position: OneEuro::resume(params.position, state.position),
+            pressure: OneEuroScalar::resume(params.pressure, state.pressure),
+            speed: SpeedEstimator::from_history(&state.history),
+        }
+    }
+
+    /// Memory after the samples filtered so far; `None` before the first one.
+    #[must_use]
+    pub fn state(&self) -> Option<SmootherState> {
+        Some(SmootherState {
+            position: self.position.state()?,
+            pressure: self.pressure.state()?,
+            history: self.speed.history(),
+        })
     }
 
     /// Filters one already-quantized sample (position via [`OneEuro`], pressure via [`OneEuroScalar`] then

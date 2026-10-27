@@ -9,6 +9,7 @@
 
 pub mod outline;
 pub mod png;
+pub mod scene;
 pub mod sheet;
 pub mod stamps;
 
@@ -20,6 +21,7 @@ use crate::brush::BlendMode;
 use crate::float::clamp01;
 use crate::geometry::{StrokeGeometry, StrokeStyle};
 use ::tiny_skia::Pixmap;
+pub use scene::{AssetSource, render_scene};
 pub use stamps::CoverageBuffer;
 
 /// Page → pixel mapping: `px = (page_x − origin_x)·scale`, `py = (page_y − origin_y)·scale`.

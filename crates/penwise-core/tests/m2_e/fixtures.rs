@@ -1,9 +1,10 @@
 //! Valid items of every kind for the slice e codec and undo tests.
 
 use penwise_core::item::{
-    Affine, ArrowHead, EraseItem, FillItem, Item, ItemId, ItemKind, Layer, Paint, Polygon,
-    SampleParam, SampleRange, ShapeItem, ShapeKind, StrokeItem, TextItem, Trim,
+    Affine, ArrowHead, EraseItem, FillItem, ImageItem, Item, ItemId, ItemKind, Layer, Paint,
+    Polygon, SampleParam, SampleRange, ShapeItem, ShapeKind, StrokeItem, TextItem, Trim,
 };
+use penwise_core::smoothing::{HistoryPoint, PositionState, PressureState, SmootherState};
 use penwise_core::{Color, Preset, Sample};
 
 pub fn id(n: u8) -> ItemId {
@@ -111,6 +112,34 @@ pub fn piece(id: ItemId, origin: ItemId, z: i64, x0: f32) -> Item {
                     },
                 ],
                 own: 1,
+                warm: Some(SmootherState {
+                    position: PositionState {
+                        x: 101.5,
+                        y: 202.25,
+                        dx: -3.5,
+                        dy: 12.0,
+                        t_us: 8300,
+                        dt_s: 0.002_075,
+                    },
+                    pressure: PressureState {
+                        value: 0.4,
+                        derivative: 0.01,
+                        t_us: 8300,
+                        dt_s: 0.002_075,
+                    },
+                    history: vec![
+                        HistoryPoint {
+                            x: 101.0,
+                            y: 201.5,
+                            t_us: 6225,
+                        },
+                        HistoryPoint {
+                            x: 101.5,
+                            y: 202.25,
+                            t_us: 8300,
+                        },
+                    ],
+                }),
             }),
         }),
     )
@@ -204,6 +233,32 @@ pub fn text(id: ItemId, z: i64, sources: Vec<ItemId>) -> Item {
     it
 }
 
+/// A 300 × 200 picture rotated a little and moved.
+pub fn image(id: ItemId, z: i64) -> Item {
+    let mut asset = [0_u8; 32];
+    for (i, b) in asset.iter_mut().enumerate() {
+        *b = u8::try_from(i).unwrap() * 7 + 1;
+    }
+    let mut it = item(
+        id,
+        z,
+        ItemKind::Image(ImageItem {
+            asset,
+            w: 300.0,
+            h: 200.0,
+        }),
+    );
+    it.transform = Affine {
+        a: 0.9,
+        b: 0.1,
+        c: -0.1,
+        d: 0.9,
+        e: 64.0,
+        f: -32.5,
+    };
+    it
+}
+
 /// Every shape kind.
 pub fn shape_kinds() -> Vec<ShapeKind> {
     vec![
@@ -233,6 +288,7 @@ pub fn every_kind() -> Vec<Item> {
         fill(id(5), 0),
         text(id(6), 7, vec![id(1), id(2)]),
         text(id(7), 8, Vec::new()),
+        image(id(9), -5),
     ];
     let mut agent = stroke(id(8), 9, 0.0);
     agent.layer = Layer::Agent;

@@ -49,6 +49,10 @@ pub enum ItemGeometry {
         corners: [[f32; 2]; 4],
         paint: Paint,
     },
+    /// The picture box's 4 page-space corners, same order as [`ItemGeometry::Text`].
+    Image {
+        corners: [[f32; 2]; 4],
+    },
 }
 
 impl ItemGeometry {
@@ -83,10 +87,12 @@ impl ItemGeometry {
                         acc
                     })
             }
-            Self::Text { corners, .. } => corners.iter().fold(Bounds::EMPTY, |mut acc, p| {
-                acc.include_point(p[0], p[1]);
-                acc
-            }),
+            Self::Text { corners, .. } | Self::Image { corners } => {
+                corners.iter().fold(Bounds::EMPTY, |mut acc, p| {
+                    acc.include_point(p[0], p[1]);
+                    acc
+                })
+            }
         }
     }
 }
@@ -120,7 +126,9 @@ impl Item {
             ItemKind::Stroke(s) => s.params.blend,
             ItemKind::Shape(s) => s.brush.blend,
             ItemKind::Fill(_) => return RenderBand::Fill,
-            ItemKind::Erase(_) | ItemKind::Text(_) => return RenderBand::Normal,
+            ItemKind::Erase(_) | ItemKind::Text(_) | ItemKind::Image(_) => {
+                return RenderBand::Normal;
+            }
         };
         if blend == BlendMode::Multiply {
             RenderBand::Multiply
@@ -175,6 +183,15 @@ impl Item {
                     paint: text.paint,
                 }
             }
+            ItemKind::Image(image) => ItemGeometry::Image {
+                corners: [
+                    [0.0, 0.0],
+                    [image.w, 0.0],
+                    [image.w, image.h],
+                    [0.0, image.h],
+                ]
+                .map(|c| t.apply(c)),
+            },
         }
     }
 }

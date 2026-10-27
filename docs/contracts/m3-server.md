@@ -1,3 +1,5 @@
+> **Superseded by docs/rewrite-design.md (owner decisions at its top override); kept for history.**
+
 # M3 contract: `penwise-proto`, `penwise-server`, `penwise-wasm`, browser viewer
 
 Status: committed contract for the M3 fan-out (PLAN "Phase loop" step 2, phase map row "M3 server + web").

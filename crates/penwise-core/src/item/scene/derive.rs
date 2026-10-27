@@ -147,7 +147,7 @@ impl Scene {
             ItemKind::Stroke(s) => {
                 self.families.entry(s.origin(id)).or_default().insert(id);
             }
-            ItemKind::Shape(_) | ItemKind::Fill(_) | ItemKind::Text(_) => {}
+            ItemKind::Shape(_) | ItemKind::Fill(_) | ItemKind::Text(_) | ItemKind::Image(_) => {}
         }
         if let Some(key) = slot.item.paint_key() {
             self.order.insert(key);
@@ -162,7 +162,7 @@ impl Scene {
         match &slot.item.kind {
             ItemKind::Erase(e) => remove_member(&mut self.masks, e.target, id),
             ItemKind::Stroke(s) => remove_member(&mut self.families, s.origin(id), id),
-            ItemKind::Shape(_) | ItemKind::Fill(_) | ItemKind::Text(_) => {}
+            ItemKind::Shape(_) | ItemKind::Fill(_) | ItemKind::Text(_) | ItemKind::Image(_) => {}
         }
         if let Some(key) = slot.item.paint_key() {
             self.order.remove(&key);

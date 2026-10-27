@@ -15,13 +15,16 @@
 //!         transform a b c d e f f32×6; kind data:
 //! Stroke  params (stroke::encode_params); seed u64; samples (stroke::encode_samples);
 //!         trim flag u8 (0/1) [+ origin id; sample_offset uv; own uv; count uv;
-//!                             count × (start uv, end uv, flags u8: bit0 start_cut, bit1 end_cut)]
+//!                             count × (start uv, end uv, flags u8: bit0 start_cut, bit1 end_cut);
+//!                             warm flag u8 (0/1) [+ position f32×5 (x y dx dy dt) t uv; pressure f32×3
+//!                             (value derivative dt) t uv; count uv (1..=16) × (x f32, y f32, t uv)]]
 //! Erase   target id; radius f32; path count uv + pts
 //! Shape   kind u8 (ShapeKind::code) [+ RoundedRect radius f32 | Arrow head u8 | Polygon count uv + f32 pairs];
 //!         size f32×2; brush (encode_params); fill flag u8 [+ r g b a u8]
 //! Fill    paint (r g b a u8, opacity f32); polygon count uv; per polygon: outer ring, hole count uv, holes;
 //!         ring = count uv + pts
 //! Text    content (len uv + UTF-8); size f32×2; font_size f32; paint; sources count uv + ids
+//! Image   asset 32 raw bytes (SHA-256); size f32×2 (w, h)
 //! ```
 //! Grid-stored values (erase paths, fill rings) round-trip exactly only when already on the 1/16 px grid
 //! (the producers snap them); everything else round-trips bit-exactly. Decoding validates with

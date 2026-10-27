@@ -37,7 +37,7 @@ pub fn hit_test(scene: &Scene, p: [f32; 2], tol: f32, layers: LayerSet) -> Vec<I
 /// - shape: `dist(p, flattened page path) ≤ brush_size_max / 2 + tol`, or inside its fill polygon when
 ///   filled (nonzero);
 /// - fill: nonzero point-in-polygon over its page polygons (holes excluded), or within `tol` of a ring;
-/// - text: inside the box quad or within `tol` of it.
+/// - text, image: inside the box quad or within `tol` of it.
 ///
 /// Masks: for strokes and shapes, a point is not a hit when it lies inside any of the item's masks
 /// (`dist(p, mask.path) ≤ mask.radius`, page space), editing-algorithms.md §2.
@@ -67,7 +67,8 @@ pub fn item_hit(scene: &Scene, id: ItemId, p: [f32; 2], tol: f32) -> bool {
                         || poly.holes.iter().any(|h| point_ring_dist(p, h) <= tol)
                 })
         }
-        (ItemKind::Text(_), ItemGeometry::Text { corners, .. }) => {
+        (ItemKind::Text(_), ItemGeometry::Text { corners, .. })
+        | (ItemKind::Image(_), ItemGeometry::Image { corners }) => {
             ring_contains(corners, p) || point_ring_dist(p, corners) <= tol
         }
         _ => false,

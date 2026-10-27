@@ -104,7 +104,7 @@ impl ItemPatch {
                 set(&mut t.size, self.text_box.as_ref());
                 set(&mut t.font_size, self.font_size.as_ref());
             }
-            ItemKind::Erase(_) => {}
+            ItemKind::Erase(_) | ItemKind::Image(_) => {}
         }
     }
 }

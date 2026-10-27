@@ -10,6 +10,7 @@ use super::{
 use crate::bounds::Bounds;
 use crate::edit::EditError;
 use crate::sample::POSITION_LIMIT_PX;
+use crate::smoothing::SmootherState;
 
 /// Most vertices a [`ShapeKind::Polygon`] may have (regular n-gons use ≤ 64; the cap bounds outline work
 /// for decoded remote shapes).
@@ -28,10 +29,13 @@ impl Item {
     ///   `Polygon` `3 ..=` [`MAX_POLYGON_POINTS`] points;
     /// - fill: ≥ 1 polygon, every ring ≥ 3 points;
     /// - text: `font_size` in `(0, 2²⁰]`, size components in `0 ..= 2²⁰`;
-    /// - brush sizes, erase radius: `|v| ≤ 2²⁰`;
+    /// - brushes: [`crate::BrushParams::is_valid`] (every float finite and in range, `opacity ∈ 0..=1`,
+    ///   `0 < size_min ≤ size_max`); erase radius `≤ 2²⁰`;
+    /// - trim warm state: [`crate::smoothing::SmootherState::is_valid`];
     /// - extent: the local data box and its page image under the transform lie within `±2²⁰` px (the
     ///   codec's position limit), and a stroke's page half-width (`size_max ×`
     ///   [`Affine::width_scale`]) is at most `2²⁰`.
+    /// - image: `w`, `h` in `(0, 2²⁰]`.
     ///
     /// # Errors
     /// [`EditError::InvalidValue`] naming the first offending field (fields checked in the order above;
@@ -62,6 +66,12 @@ impl Item {
                 check(polygons_ok, "polygons")?;
                 check(paint_ok(f.paint), "paint")
             }
+            ItemKind::Image(i) => check(
+                [i.w, i.h]
+                    .iter()
+                    .all(|v| *v > 0.0 && *v <= POSITION_LIMIT_PX),
+                "image_size",
+            ),
             ItemKind::Text(t) => {
                 let font_ok = t.font_size.is_finite() && t.font_size > 0.0;
                 check(font_ok && t.font_size <= POSITION_LIMIT_PX, "font_size")?;
@@ -113,6 +123,10 @@ fn local_box(kind: &ItemKind) -> Bounds {
             b.include_point(0.0, 0.0);
             b.include_point(t.size[0], t.size[1]);
         }
+        ItemKind::Image(i) => {
+            b.include_point(0.0, 0.0);
+            b.include_point(i.w, i.h);
+        }
     }
     b
 }
@@ -153,14 +167,8 @@ fn paint_ok(paint: Paint) -> bool {
     (0.0..=1.0).contains(&paint.opacity)
 }
 
-fn brush_ok(brush: &crate::brush::BrushParams) -> bool {
-    [brush.size_min, brush.size_max, brush.opacity]
-        .iter()
-        .all(|v| v.is_finite() && v.abs() <= POSITION_LIMIT_PX)
-}
-
 fn validate_stroke(s: &StrokeItem) -> Result<(), EditError> {
-    check(brush_ok(&s.params), "brush")?;
+    check(s.params.is_valid(), "brush")?;
     let on_grid = |x: &crate::sample::Sample| {
         let q = x.quantize();
         q.x.to_bits() == x.x.to_bits()
@@ -191,12 +199,13 @@ fn validate_stroke(s: &StrokeItem) -> Result<(), EditError> {
                 (u64::from(trim.sample_offset) + n - 1).saturating_mul(1 << SampleParam::FRAC_BITS);
             u64::from(own.start.0) >= first && u64::from(own.end.0) <= last
         });
-    check(outline && ordered && own_ok, "trim")
+    let warm_ok = trim.warm.as_ref().is_none_or(SmootherState::is_valid);
+    check(outline && ordered && own_ok && warm_ok, "trim")
 }
 
 fn validate_shape(s: &ShapeItem) -> Result<(), EditError> {
     let outline = matches!(s.brush.family, crate::brush::BrushFamily::Outline(_));
-    check(outline && brush_ok(&s.brush), "brush")?;
+    check(outline && s.brush.is_valid(), "brush")?;
     check(size_ok(s.size), "shape_size")?;
     let kind_ok = match &s.kind {
         ShapeKind::RoundedRect { radius } => radius.is_finite() && *radius >= 0.0,

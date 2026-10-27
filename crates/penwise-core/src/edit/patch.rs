@@ -193,7 +193,7 @@ impl ItemPatch {
     ///
     /// # Errors
     /// `FieldNotApplicable` for a field the item's kind lacks; `InvalidValue` from [`Item::validate`].
-    pub(crate) fn applied(&self, item: &Item, deleted: bool) -> Result<(Item, bool), EditError> {
+    pub fn applied(&self, item: &Item, deleted: bool) -> Result<(Item, bool), EditError> {
         let tag = item.kind.tag();
         if let Some(field) = self.fields().into_iter().find(|f| !f.applies_to(tag)) {
             return Err(EditError::FieldNotApplicable { id: item.id, field });

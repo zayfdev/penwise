@@ -3,6 +3,7 @@
 //! Owner: slice b.
 
 use crate::item::id::ItemId;
+use crate::smoothing::SmootherState;
 
 /// Largest origin sample index a [`SampleParam`] can address.
 const MAX_INDEX: u32 = u32::MAX >> SampleParam::FRAC_BITS;
@@ -58,7 +59,7 @@ pub struct SampleRange {
 }
 
 /// Visible-range data of a precise-erase piece (outline-family strokes only; stamp strokes are masked).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Trim {
     /// Root stroke of the family (never a piece id).
     pub origin: ItemId,
@@ -68,4 +69,8 @@ pub struct Trim {
     pub visible: Vec<SampleRange>,
     /// Index into `visible` of the range this piece renders.
     pub own: u32,
+    /// Smoother memory after origin sample `sample_offset − 1`, in the **local** frame (positions and velocities
+    /// before the item transform), so the piece's first sample is filtered exactly as in the origin. `None` when
+    /// `sample_offset == 0` (nothing precedes it).
+    pub warm: Option<SmootherState>,
 }

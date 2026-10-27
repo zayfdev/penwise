@@ -25,7 +25,7 @@ pub(crate) use index::{EraserIndex, query_box};
 ///   point inside its fill;
 /// - fill: eraser within `radius` of a polygon **ring** only (scribbling over a fill's interior to erase ink
 ///   on top must not delete the fill);
-/// - text: eraser within `radius` of the box quad or inside it;
+/// - text, image: eraser within `radius` of the box quad or inside it;
 /// - erase items are never deleted directly (they are inert while their target is dead).
 ///
 /// May be called per path chunk during a gesture (overlap the previous chunk by one point); apply the edits
@@ -77,7 +77,8 @@ pub(crate) fn path_touches_in(
                 .chain(&poly.holes)
                 .any(|ring| line_touches(ring, true, index, radius, &[]))
         }),
-        (ItemKind::Text(_), ItemGeometry::Text { corners, .. }) => {
+        (ItemKind::Text(_), ItemGeometry::Text { corners, .. })
+        | (ItemKind::Image(_), ItemGeometry::Image { corners }) => {
             line_touches(corners, true, index, radius, &[])
                 || path.iter().any(|&p| ring_contains(corners, p))
         }

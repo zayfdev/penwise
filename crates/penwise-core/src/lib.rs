@@ -22,6 +22,7 @@ pub mod outline;
 #[cfg(feature = "raster")]
 pub mod raster;
 pub mod sample;
+pub mod seed;
 pub mod shape;
 pub mod smoothing;
 pub mod stamp;
@@ -32,3 +33,4 @@ pub use builder::StrokeBuilder;
 pub use codec::CodecError;
 pub use geometry::{Dab, GeometryView, Outline, StrokeGeometry, StrokeStyle};
 pub use sample::{DigitizerRanges, RawSample, Sample};
+pub use seed::Seed;

@@ -3,7 +3,7 @@
 use std::fmt;
 
 use penwise_core::{
-    BlendMode, BrushParams, Color, GeometryView, Preset, Sample, StrokeBuilder, StrokeGeometry,
+    BlendMode, BrushParams, GeometryView, Preset, Sample, StrokeBuilder, StrokeGeometry,
 };
 
 /// Floats per input sample on the Kotlin side: x, y, pressure, tilt, azimuth.
@@ -45,34 +45,22 @@ pub fn preset(index: i32) -> Result<Preset, FfiError> {
         .ok_or(FfiError::BadArgument("preset index"))
 }
 
-/// `0xAARRGGBB` (Android `Color` int) → core color.
-pub fn color_from_argb(argb: i32) -> Color {
-    let [a, r, g, b] = argb.to_be_bytes();
-    Color { r, g, b, a }
-}
-
-/// Core color → `0xAARRGGBB`.
-pub fn argb_from_color(c: Color) -> i32 {
-    i32::from_be_bytes([c.a, c.r, c.g, c.b])
-}
-
-/// Preset params with the color overridden and every size-like length scaled by `size_scale`.
-pub fn brush_params(preset: Preset, argb: i32, size_scale: f32) -> Result<BrushParams, FfiError> {
+/// Params of the preset at `index` with the colour and size scale applied ([`BrushParams::for_preset`], the one
+/// definition shared with the server and the browser). Unlike the lenient core function, a bad index or scale is
+/// an error here: the tablet must never silently draw with a different brush than it asked for.
+pub fn brush_params(index: i32, argb: i32, size_scale: f32) -> Result<BrushParams, FfiError> {
+    let position = usize::try_from(index)
+        .ok()
+        .filter(|i| *i < Preset::ALL.len())
+        .ok_or(FfiError::BadArgument("preset index"))?;
     if !(size_scale.is_finite() && size_scale > 0.0) {
         return Err(FfiError::BadArgument("sizeScale must be finite and > 0"));
     }
-    let mut p = preset.params();
-    p.color = color_from_argb(argb);
-    p.size_min *= size_scale;
-    p.size_max *= size_scale;
-    p.outline.taper_start *= size_scale;
-    p.outline.taper_end *= size_scale;
-    p.outline.nib.thickness *= size_scale;
-    if let Some(spray) = p.stamp.spray.as_mut() {
-        spray.particle_size_min *= size_scale;
-        spray.particle_size_max *= size_scale;
-    }
-    Ok(p)
+    Ok(BrushParams::for_preset(
+        position,
+        argb.cast_unsigned(),
+        size_scale,
+    ))
 }
 
 /// One in-progress stroke plus scratch buffers reused across JNI calls.
@@ -219,16 +207,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn argb_round_trips() {
-        let argb = i32::from_be_bytes([0x80, 0x11, 0x22, 0x33]);
-        assert_eq!(argb_from_color(color_from_argb(argb)), argb);
-    }
-
-    #[test]
     fn every_preset_snapshots_and_finishes() -> Result<(), FfiError> {
         for i in 0..Preset::ALL.len() {
             let index = i32::try_from(i).map_err(|_| FfiError::BadArgument("index"))?;
-            let params = brush_params(preset(index)?, -1, 2.0)?;
+            let params = brush_params(index, -1, 2.0)?;
             let mut stroke = Stroke::new(&params, 7);
             let (xs, ts) = stroke.input_buffers(3);
             for k in 0..3 {

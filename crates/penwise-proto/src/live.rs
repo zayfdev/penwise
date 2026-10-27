@@ -2,7 +2,6 @@
 //! `AddItem` on pen-up). Never logged, never acknowledged; the server may drop them (lag), receivers may
 //! miss chunks. The committed `Edit::Add` with the same id is the only source of truth.
 //!
-//! Owner: slice d (consumer: browser viewer; the tablet is the producer in M4).
 //!
 //! **Chunk rule.** A delta carries `start` = index of its first sample within the stroke. A receiver keeps
 //! `next` (samples received so far) per stroke and:
@@ -18,8 +17,11 @@
 use std::collections::BTreeMap;
 
 use penwise_core::StrokeBuilder;
+use penwise_core::codec::stroke::decode_params;
+use penwise_core::codec::varint::Reader;
 use penwise_core::geometry::GeometryView;
-use penwise_core::sample::{GridSample, Sample};
+use penwise_core::item::MAX_STROKE_SAMPLES;
+use penwise_core::sample::{AZIMUTH_GRID_HALF, GridSample, PRESSURE_STEPS, Sample, TILT_GRID_MAX};
 use serde::{Deserialize, Serialize};
 
 use crate::ids::{DeviceId, ItemRef, PageId};
@@ -78,6 +80,10 @@ pub enum LiveError {
     /// Device already has `MAX_LIVE_STROKES_PER_DEVICE` open strokes.
     #[error("too many live strokes")]
     TooMany,
+    /// The stroke id is open under another device or page (ids are unique; a second producer is hostile or
+    /// buggy). The existing preview is untouched.
+    #[error("stroke belongs to another producer")]
+    WrongOwner,
 }
 
 /// One receiver-side live stroke.
@@ -99,19 +105,43 @@ impl LiveSample {
     /// From the core grid form.
     #[must_use]
     pub fn from_grid(sample: GridSample) -> Self {
-        todo!()
+        Self {
+            x: sample.x,
+            y: sample.y,
+            pressure: sample.pressure,
+            tilt: sample.tilt,
+            azimuth: sample.azimuth,
+            t_us: sample.t_us,
+        }
     }
 
     /// To the core grid form (fields copied).
     #[must_use]
     pub fn to_grid(self) -> GridSample {
-        todo!()
+        GridSample {
+            x: self.x,
+            y: self.y,
+            pressure: self.pressure,
+            tilt: self.tilt,
+            azimuth: self.azimuth,
+            t_us: self.t_us,
+        }
     }
 
     /// Page-px sample (`GridSample::to_sample`), what `StrokeBuilder::push` takes.
     #[must_use]
     pub fn to_sample(self) -> Sample {
-        todo!()
+        self.to_grid().to_sample()
+    }
+
+    /// True when every field lies in its `GridSample` range.
+    fn on_grid(self) -> bool {
+        const POSITION_GRID_LIMIT: i32 = 1 << 24;
+        self.x.abs() <= POSITION_GRID_LIMIT
+            && self.y.abs() <= POSITION_GRID_LIMIT
+            && f32::from(self.pressure) <= PRESSURE_STEPS
+            && self.tilt <= TILT_GRID_MAX
+            && (1 - AZIMUTH_GRID_HALF..=AZIMUTH_GRID_HALF).contains(&self.azimuth)
     }
 }
 
@@ -119,19 +149,27 @@ impl LiveStroke {
     /// Producer device.
     #[must_use]
     pub fn device(&self) -> DeviceId {
-        todo!()
+        self.device
     }
 
     /// Page the stroke is drawn on.
     #[must_use]
     pub fn page(&self) -> PageId {
-        todo!()
+        self.page
     }
 
     /// Live geometry (stable + tentative parts) from the builder.
     #[must_use]
     pub fn geometry(&self) -> GeometryView<'_> {
-        todo!()
+        self.builder.geometry()
+    }
+
+    fn push(&mut self, samples: &[LiveSample]) {
+        let batch: Vec<Sample> = samples.iter().map(|s| s.to_sample()).collect();
+        self.builder.push(&batch);
+        self.next = self
+            .next
+            .saturating_add(u32::try_from(samples.len()).unwrap_or(u32::MAX));
     }
 }
 
@@ -139,7 +177,7 @@ impl LiveStrokes {
     /// No open strokes.
     #[must_use]
     pub fn new() -> Self {
-        todo!()
+        Self::default()
     }
 
     /// Applies a delta from `device` per the module chunk rule. Returns `Ok(true)` when the preview changed.
@@ -151,27 +189,76 @@ impl LiveStrokes {
         device: DeviceId,
         delta: &StrokeDelta,
     ) -> Result<bool, LiveError> {
-        todo!()
+        let count = delta.samples.len();
+        if count == 0 || count > MAX_DELTA_SAMPLES || !delta.samples.iter().all(|s| s.on_grid()) {
+            return Err(LiveError::BadSamples);
+        }
+        if let Some(open) = self.strokes.get(&delta.stroke)
+            && (open.device != device || open.page != delta.page)
+        {
+            return Err(LiveError::WrongOwner);
+        }
+        if delta.start == 0 {
+            return self.start(device, delta);
+        }
+        let Some(open) = self.strokes.get_mut(&delta.stroke) else {
+            return Err(LiveError::OutOfOrder);
+        };
+        let total = u64::from(open.next) + count as u64;
+        if delta.start != open.next || total > u64::from(MAX_STROKE_SAMPLES) {
+            self.strokes.remove(&delta.stroke);
+            return Err(LiveError::OutOfOrder);
+        }
+        open.push(&delta.samples);
+        Ok(true)
+    }
+
+    /// `start == 0`: (re)starts the stroke from the delta's brush and seed.
+    fn start(&mut self, device: DeviceId, delta: &StrokeDelta) -> Result<bool, LiveError> {
+        let mut reader = Reader::new(&delta.brush);
+        let params = decode_params(&mut reader).map_err(|_| LiveError::BadBrush)?;
+        if reader.remaining() != 0 || !params.is_valid() {
+            return Err(LiveError::BadBrush);
+        }
+        if !self.strokes.contains_key(&delta.stroke) {
+            let open = self.strokes.values().filter(|s| s.device == device).count();
+            if open >= MAX_LIVE_STROKES_PER_DEVICE {
+                return Err(LiveError::TooMany);
+            }
+        }
+        let mut stroke = LiveStroke {
+            device,
+            page: delta.page,
+            next: 0,
+            builder: StrokeBuilder::new(&params, delta.seed),
+        };
+        stroke.push(&delta.samples);
+        self.strokes.insert(delta.stroke, stroke);
+        Ok(true)
     }
 
     /// Removes a cancelled stroke; true when it was open.
     pub fn cancel(&mut self, stroke: ItemRef) -> bool {
-        todo!()
+        self.strokes.remove(&stroke).is_some()
     }
 
     /// Removes a stroke whose `Edit::Add` arrived (the committed item now renders it); true when it was open.
     pub fn commit(&mut self, stroke: ItemRef) -> bool {
-        todo!()
+        self.strokes.remove(&stroke).is_some()
     }
 
     /// Removes every stroke (after `Resync` or reconnect).
     pub fn clear(&mut self) {
-        todo!()
+        self.strokes.clear();
     }
 
     /// Open strokes on `page`, ascending stroke id.
     #[must_use]
     pub fn on_page(&self, page: PageId) -> Vec<(ItemRef, &LiveStroke)> {
-        todo!()
+        self.strokes
+            .iter()
+            .filter(|(_, s)| s.page == page)
+            .map(|(&id, s)| (id, s))
+            .collect()
     }
 }

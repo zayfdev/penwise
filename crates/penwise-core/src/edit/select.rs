@@ -60,11 +60,18 @@ pub fn duplicate_items(
         let pieces = if let ItemKind::Stroke(stroke) = &item.kind {
             let visible = scene.visible_ranges(item.id);
             let whole = stroke.trim.is_none() && visible == [stroke.own_range()];
-            (!whole).then_some((visible, stroke.trim.as_ref().map_or(0, |t| t.sample_offset)))
+            (!whole).then(|| {
+                let trim = stroke.trim.as_ref();
+                (
+                    visible,
+                    trim.map_or(0, |t| t.sample_offset),
+                    trim.and_then(|t| t.warm.clone()),
+                )
+            })
         } else {
             None
         };
-        if let Some((visible, sample_offset)) = pieces {
+        if let Some((visible, sample_offset, warm)) = pieces {
             let mut root = None;
             for own in 0..visible.len() {
                 let mut piece = copy.clone();
@@ -77,6 +84,7 @@ pub fn duplicate_items(
                         sample_offset,
                         visible: visible.clone(),
                         own: u32::try_from(own).unwrap_or(u32::MAX),
+                        warm: warm.clone(),
                     });
                 }
                 let (layer, z) = (piece.layer, piece.z);

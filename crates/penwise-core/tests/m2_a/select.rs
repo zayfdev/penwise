@@ -117,9 +117,11 @@ fn delete_recolor_and_layer() {
             assert_eq!(s.params.color, RED);
             assert_eq!(s.params.size_max, Preset::Pencil.params().size_max);
         }
-        ItemKind::Erase(_) | ItemKind::Shape(_) | ItemKind::Fill(_) | ItemKind::Text(_) => {
-            panic!("not a stroke")
-        }
+        ItemKind::Erase(_)
+        | ItemKind::Shape(_)
+        | ItemKind::Fill(_)
+        | ItemKind::Text(_)
+        | ItemKind::Image(_) => panic!("not a stroke"),
     }
     assert!(recolor_items(&recolored, &[id(1), id(3), id(4)], RED).is_empty());
 
@@ -196,6 +198,7 @@ fn piece_scene() -> Scene {
             sample_offset: 0,
             visible,
             own: 1,
+            warm: None,
         }),
         ..s.clone()
     });

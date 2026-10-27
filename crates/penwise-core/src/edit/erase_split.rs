@@ -12,7 +12,7 @@ mod coverage;
 use super::Edit;
 use super::erase_stroke::{EraserIndex, eraser_bounds};
 use crate::item::{
-    Affine, CONTEXT_SAMPLES, CentrePoint, Centreline, IdSource, Item, ItemKind, SampleParam,
+    Affine, CUT_LOOKAHEAD_SAMPLES, CentrePoint, Centreline, IdSource, Item, ItemKind, SampleParam,
     SampleRange, StrokeItem, Trim,
 };
 use coverage::Coverage;
@@ -76,10 +76,11 @@ pub(crate) fn uncovered_in(
 /// Edits replacing live stroke `item` (`id = item.id`, `stroke` = its data) by pieces over `kept` (output of [`uncovered_ranges`]):
 /// `Delete(id)` then one `Add` per kept range whose visible arc length ≥ [`MIN_PIECE_LENGTH_FACTOR`] ·
 /// mean half-width, in range order, each with `ids.next_id()`. A piece copies the original's layer, z,
-/// transform, params and seed; its samples are the origin window `[start.index − CONTEXT_SAMPLES,
-/// end.index + 1 + CONTEXT_SAMPLES]` clipped to what `id` stores; its [`crate::item::Trim`] has
+/// transform, params and seed; its samples are the origin window `[start.index, end.index +
+/// CUT_LOOKAHEAD_SAMPLES]` clipped to what `id` stores; its [`crate::item::Trim`] has
 /// `origin = stroke.origin(id)`, `visible` = the member's family set with its own range replaced by the kept
-/// pieces (other members' ranges untouched), and `own` = the piece's index in that set. Only `Delete(id)` when
+/// pieces (other members' ranges untouched), `own` = the piece's index in that set, and `warm` = the smoother
+/// memory at the piece's first sample (so the piece filters exactly as the origin did). Only `Delete(id)` when
 /// nothing survives.
 #[must_use]
 pub fn split_edits(
@@ -122,8 +123,9 @@ pub fn split_edits(
             sample_offset: 0,
             visible: set.clone(),
             own,
+            warm: None,
         };
-        if let Some(piece) = piece(stroke, range, trim) {
+        if let Some(piece) = piece(stroke, &item.transform, range, trim) {
             edits.push(Edit::Add(Item {
                 id: ids.next_id(),
                 layer: item.layer,
@@ -160,23 +162,30 @@ pub fn bisect_cut(
     .bisect(a, b)
 }
 
-/// Piece data for `range`: the context window of stored samples around it, with `trim` (whose
-/// `sample_offset` is filled in here). `None` when the window is empty (range outside the stored samples).
-fn piece(stroke: &StrokeItem, range: &SampleRange, mut trim: Trim) -> Option<StrokeItem> {
+/// Piece data for `range`: the stored samples from the range start through the lookahead, with `trim` (whose
+/// `sample_offset` and `warm` are filled in here). `None` when the window is empty (range outside the stored
+/// samples).
+fn piece(
+    stroke: &StrokeItem,
+    transform: &Affine,
+    range: &SampleRange,
+    mut trim: Trim,
+) -> Option<StrokeItem> {
     let offset = stroke.sample_offset();
-    let lo = range.start.index().saturating_sub(CONTEXT_SAMPLES);
+    let lo = range.start.index();
     let lo = if lo < offset { offset } else { lo };
-    let hi = range
-        .end
-        .index()
-        .saturating_add(1)
-        .saturating_add(CONTEXT_SAMPLES);
+    let hi = range.end.index().saturating_add(CUT_LOOKAHEAD_SAMPLES);
     let last = stroke.last_index();
     let hi = if hi > last { last } else { hi };
     let from = usize::try_from(lo.checked_sub(offset)?).ok()?;
     let to = usize::try_from(hi.checked_sub(offset)?).ok()?;
     let samples = stroke.samples.get(from..=to)?.to_vec();
     trim.sample_offset = lo;
+    trim.warm = if lo == offset {
+        stroke.trim.as_ref().and_then(|t| t.warm.clone())
+    } else {
+        stroke.warm_state(transform, lo)
+    };
     Some(StrokeItem {
         params: stroke.params,
         seed: stroke.seed,

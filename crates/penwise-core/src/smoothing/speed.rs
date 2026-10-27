@@ -1,12 +1,13 @@
 //! Windowed pen-speed estimate (ink-rendering.md §4.2), independent of the One Euro filter.
 
 use super::MIN_DT_S;
+use super::state::HistoryPoint;
 
 /// Time window of the pen-speed estimate, µs (ink-rendering.md §4.2).
 pub const SPEED_WINDOW_US: u32 = 10_000;
 
 /// Samples kept for the speed window (covers 10 ms up to 1.5 kHz; faster input shortens the window).
-const SPEED_HISTORY: usize = 16;
+pub(super) const SPEED_HISTORY: usize = 16;
 
 /// Pen speed from quantized sample positions, independent of the One Euro filter (whose derivative
 /// `(x − x̂_prev)/Δt` mixes filtered and raw positions and overestimates speed rate-dependently).
@@ -30,6 +31,29 @@ impl SpeedEstimator {
             len: 0,
             head: 0,
         }
+    }
+
+    /// The stored window, oldest first.
+    pub(super) fn history(&self) -> Vec<HistoryPoint> {
+        (0..self.len)
+            .rev()
+            .map(|k| {
+                let (x, y, t_us) = self.back(k);
+                HistoryPoint { x, y, t_us }
+            })
+            .collect()
+    }
+
+    /// Estimator holding `points` (oldest first; only the newest `SPEED_HISTORY` are kept).
+    pub(super) fn from_history(points: &[HistoryPoint]) -> Self {
+        let mut est = Self::new();
+        let skip = points.len().saturating_sub(SPEED_HISTORY);
+        for (slot, p) in est.ring.iter_mut().zip(&points[skip..]) {
+            *slot = (p.x, p.y, p.t_us);
+        }
+        est.len = points.len() - skip;
+        est.head = est.len % SPEED_HISTORY;
+        est
     }
 
     /// `k`-th newest stored sample (`k = 0` is the newest); `k < len`.
