@@ -114,11 +114,7 @@ fn call_tool(
                 .and_then(serde_json::Value::as_f64)
                 .unwrap_or(1.0);
             let arguments = arguments(request);
-            let page = arguments
-                .get("page")
-                .and_then(serde_json::Value::as_str)
-                .map(|page| format!("&page={page}"))
-                .unwrap_or_default();
+            let page = page_query(&arguments);
             let png = endpoint
                 .get(&format!("/page.png?scale={scale}{page}"))
                 .map_err(|failure| error(-32603, &failure))?;
@@ -145,11 +141,7 @@ fn call_tool(
         }
         "penwise_page_text" => {
             let arguments = arguments(request);
-            let page = arguments
-                .get("page")
-                .and_then(serde_json::Value::as_str)
-                .map(|page| format!("&page={page}"))
-                .unwrap_or_default();
+            let page = page_query(&arguments);
             let refresh = if arguments
                 .get("refresh")
                 .and_then(serde_json::Value::as_bool)
@@ -169,20 +161,45 @@ fn call_tool(
                 .get("page")
                 .and_then(serde_json::Value::as_str)
                 .ok_or_else(|| error(-32602, "missing page"))?;
-            post_text(endpoint, &format!("/pages/{page}/select"), "{}")
+            post_text(
+                endpoint,
+                &format!("/pages/{}/select", encode_segment(page)),
+                "{}",
+            )
         }
         other => Err(error(-32602, &format!("unknown tool {other}"))),
     }
 }
 
+/// `&page=<id>` (encoded) when the arguments name a page, else nothing.
+fn page_query(arguments: &serde_json::Value) -> String {
+    arguments
+        .get("page")
+        .and_then(serde_json::Value::as_str)
+        .map(|page| format!("&page={}", encode_segment(page)))
+        .unwrap_or_default()
+}
+
+/// Percent-encodes everything but unreserved bytes, spaces as `+` (a query value).
 fn encode_query(value: &str) -> String {
+    percent_encode(value, "+")
+}
+
+/// Percent-encodes everything but unreserved bytes (a path segment or `page=` value). A page id comes from
+/// the agent's tool arguments and is spliced into the HTTP request line, so a CR/LF/space in it would end the
+/// request early and smuggle in another one.
+pub(crate) fn encode_segment(value: &str) -> String {
+    percent_encode(value, "%20")
+}
+
+fn percent_encode(value: &str, space: &str) -> String {
     value
         .bytes()
         .map(|byte| match byte {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
                 (byte as char).to_string()
             }
-            b' ' => "+".to_owned(),
+            b' ' => space.to_owned(),
             other => format!("%{other:02X}"),
         })
         .collect()
@@ -234,7 +251,7 @@ fn page_path(path: &str, request: &serde_json::Value) -> String {
         .get("page")
         .and_then(serde_json::Value::as_str)
     {
-        Some(page) => format!("{path}?page={page}"),
+        Some(page) => format!("{path}?page={}", encode_segment(page)),
         None => path.to_owned(),
     }
 }
@@ -270,4 +287,29 @@ fn base64(data: &[u8]) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_page_id_with_a_request_smuggle_is_one_inert_path_segment() {
+        let hostile = "pg_1 HTTP/1.1\r\n\r\nGET /pages HTTP/1.1\r\nX: ";
+        let encoded = encode_segment(hostile);
+        assert!(
+            encoded
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"-_.~%".contains(&b)),
+            "only unreserved bytes and escapes survive: {encoded}"
+        );
+        assert!(encoded.contains("%0D%0A%0D%0A"));
+        assert_eq!("pg_0123456789abcdef", encode_segment("pg_0123456789abcdef"));
+    }
+
+    #[test]
+    fn the_page_query_encodes_the_id() {
+        let request = serde_json::json!({ "params": { "arguments": { "page": "a b&x=1" } } });
+        assert_eq!("/p?page=a%20b%26x%3D1", page_path("/p", &request));
+    }
 }

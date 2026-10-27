@@ -40,10 +40,12 @@ removals hit all of them). Old strokes with no seed are given one by the tablet 
 
 ### The tablet's stroke files
 
-`SavedStrokeCodec` (Android) reads two on-disk layouts, both under the same version byte: the current one (five
-floats per sample, then the time array) and the pre-2026-10-25 one (time interleaved per sample). It detects them
-from the data — recorded times only increase — because reading a legacy file with the current layout turns ink
-into noise and silently empties the history.
+`SavedStrokeCodec` (Android) reads and writes one layout: per sample, the five floats
+(`x, y, pressure, tilt, azimuth`) then its `time` int. No writer ever produced another, and a "detect the layout
+from the data" heuristic misread 2- and 3-sample strokes (Line tool, tiny arrows) with zero tilt, so it is gone.
+
+Page and undo files are rewritten atomically (temp file, fsync, rename), and every read, append and rewrite runs on
+one single-threaded writer (`PageIo`), so a rewrite can never overtake an append.
 
 ### Pictures
 

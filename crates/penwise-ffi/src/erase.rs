@@ -12,10 +12,13 @@ pub const STRIDE: usize = 5;
 /// Half-open sample range `[start, end)` that survives.
 pub type Run = (usize, usize);
 
-/// Runs of `count` samples that are at least `radius` away from the eraser path.
+/// Runs of `count` samples whose centreline segments stay farther than `radius` from the eraser path.
 ///
-/// `samples` is interleaved by [`STRIDE`]; `path` is `x, y` interleaved. Returns one run per surviving piece,
-/// shortest piece of two samples (a single point paints nothing). An empty result means the whole stroke is gone.
+/// `samples` is interleaved by [`STRIDE`]; `path` is `x, y` interleaved. The rule is segment-based and inclusive
+/// (`<= radius` erases), matching the hit test in `EraseHit.kt`: a segment of the stroke survives only when the
+/// whole segment is farther than `radius` from the eraser path, so a two-sample line crossed in the middle is
+/// removed rather than returned unchanged. Consecutive surviving segments form one run `[from, to)`; a stroke
+/// the sweep never reaches comes back as the single run `(0, count)`. An empty result means nothing survives.
 #[must_use]
 pub fn surviving_runs(
     samples: &[f32],
@@ -31,32 +34,82 @@ pub fn surviving_runs(
         return vec![(0, count)];
     }
     let path = &path[..path_count * 2];
+    if count == 1 {
+        let d = distance_to_path(path, samples[0], samples[1]);
+        return if d <= radius {
+            Vec::new()
+        } else {
+            vec![(0, 1)]
+        };
+    }
     let mut runs = Vec::new();
+    // First sample of the current run of surviving segments.
     let mut start: Option<usize> = None;
-    for index in 0..count {
-        let x = samples[index * STRIDE];
-        let y = samples[index * STRIDE + 1];
-        let erased = distance_to_path(path, x, y) < radius;
+    for index in 0..count - 1 {
+        let o = index * STRIDE;
+        let p = o + STRIDE;
+        let erased = segment_distance_to_path(
+            path,
+            [samples[o], samples[o + 1]],
+            [samples[p], samples[p + 1]],
+        ) <= radius;
         match (erased, start) {
             (false, None) => start = Some(index),
             (true, Some(from)) => {
-                push_run(&mut runs, from, index);
+                runs.push((from, index + 1));
                 start = None;
             }
             _ => {}
         }
     }
     if let Some(from) = start {
-        push_run(&mut runs, from, count);
+        runs.push((from, count));
     }
     runs
 }
 
-/// Records a run when it is long enough to paint.
-fn push_run(runs: &mut Vec<Run>, start: usize, end: usize) {
-    if end.saturating_sub(start) >= 2 {
-        runs.push((start, end));
+/// Shortest distance between the segment `a–b` and the polyline `path`.
+fn segment_distance_to_path(path: &[f32], a: [f32; 2], b: [f32; 2]) -> f32 {
+    let points = path.len() / 2;
+    if points == 1 {
+        return distance_to_segment(path[0], path[1], a[0], a[1], b[0], b[1]);
     }
+    let mut best = f32::MAX;
+    for index in 0..points - 1 {
+        let o = index * 2;
+        let c = [path[o], path[o + 1]];
+        let d = [path[o + 2], path[o + 3]];
+        let dist = segment_distance(a, b, c, d);
+        if dist < best {
+            best = dist;
+        }
+    }
+    best
+}
+
+/// Shortest distance between two segments: zero when they cross, else the best endpoint-to-segment distance.
+fn segment_distance(a: [f32; 2], b: [f32; 2], c: [f32; 2], d: [f32; 2]) -> f32 {
+    if segments_cross(a, b, c, d) {
+        return 0.0;
+    }
+    let candidates = [
+        distance_to_segment(a[0], a[1], c[0], c[1], d[0], d[1]),
+        distance_to_segment(b[0], b[1], c[0], c[1], d[0], d[1]),
+        distance_to_segment(c[0], c[1], a[0], a[1], b[0], b[1]),
+        distance_to_segment(d[0], d[1], a[0], a[1], b[0], b[1]),
+    ];
+    candidates.into_iter().fold(f32::MAX, f32::min)
+}
+
+/// True when the segments properly cross (touching and collinear cases are covered by the endpoint distances).
+fn segments_cross(a: [f32; 2], b: [f32; 2], c: [f32; 2], d: [f32; 2]) -> bool {
+    let side = |p: [f32; 2], q: [f32; 2], r: [f32; 2]| {
+        (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+    };
+    let (d1, d2) = (side(a, b, c), side(a, b, d));
+    let (d3, d4) = (side(c, d, a), side(c, d, b));
+    ((d1 > 0.0 && d2 < 0.0) || (d1 < 0.0 && d2 > 0.0))
+        && ((d3 > 0.0 && d4 < 0.0) || (d3 < 0.0 && d4 > 0.0))
 }
 
 /// Shortest distance from `(x, y)` to the polyline `path` (`x, y` interleaved, one point per pair).
@@ -166,5 +219,32 @@ mod tests {
         assert!((distance_to_segment(5.0, 5.0, 0.0, 0.0, 10.0, 0.0) - 5.0).abs() < 1e-4);
         assert!((distance_to_segment(-5.0, 0.0, 0.0, 0.0, 10.0, 0.0) - 5.0).abs() < 1e-4);
         assert!((distance_to_segment(3.0, 4.0, 0.0, 0.0, 0.0, 0.0) - 5.0).abs() < 1e-4);
+    }
+}
+
+#[cfg(test)]
+mod segment_tests {
+    use super::*;
+
+    fn line(x0: f32, y0: f32, x1: f32, y1: f32) -> Vec<f32> {
+        vec![x0, y0, 0.5, 0.0, 0.0, x1, y1, 0.5, 0.0, 0.0]
+    }
+
+    #[test]
+    fn a_two_sample_line_crossed_in_the_middle_is_removed() {
+        let samples = line(0.0, 0.0, 100.0, 0.0);
+        // Both endpoints are 50 px from the eraser, yet the line is cut: the old sample rule kept it whole.
+        let runs = surviving_runs(&samples, 2, &[50.0, -20.0, 50.0, 20.0], 2, 5.0);
+        assert!(runs.is_empty());
+    }
+
+    #[test]
+    fn a_two_sample_line_grazed_at_the_radius_is_removed_and_just_outside_is_kept() {
+        let samples = line(0.0, 0.0, 100.0, 0.0);
+        assert!(surviving_runs(&samples, 2, &[50.0, 10.0], 1, 10.0).is_empty());
+        assert_eq!(
+            vec![(0, 2)],
+            surviving_runs(&samples, 2, &[50.0, 10.5], 1, 10.0)
+        );
     }
 }

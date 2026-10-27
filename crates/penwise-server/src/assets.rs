@@ -10,7 +10,7 @@ use std::sync::Arc;
 use sha2::{Digest, Sha256};
 
 /// Largest accepted upload, in bytes.
-const MAX_BYTES: usize = 24 * 1024 * 1024;
+pub(crate) const MAX_BYTES: usize = 24 * 1024 * 1024;
 /// Largest accepted side, in pixels.
 const MAX_SIDE: u32 = 10_000;
 const PNG_SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];

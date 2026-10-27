@@ -7,6 +7,7 @@
 //! `strokeFree`. Handles are not thread-safe: Kotlin must not use one handle from two threads at once.
 #![allow(unsafe_code)] // JNI entry points need `#[unsafe(no_mangle)]` and the boxed-handle round trip.
 
+mod cut;
 mod erase;
 mod stroke;
 
@@ -39,15 +40,21 @@ fn new_float_array<'local>(
     Ok(array)
 }
 
-/// Precise erase: `[run_count, start0, end0, start1, end1, …]` of sample indices that survive the sweep.
+/// Precise erase of one flat stroke, as ints (floats travel as their bit patterns).
 ///
-/// `samples` is interleaved x, y, pressure, tilt, azimuth; `path` is interleaved x, y. The caller slices the
-/// stroke's arrays with the runs, so one stroke at a time is all a drag needs.
+/// `[-1]` when the sweep leaves the stroke untouched; otherwise `[fragmentCount, then per fragment: n and
+/// n × (x, y, pressure, tilt, azimuth as float bits, time)]`. `fragmentCount == 0` means nothing survives.
+/// `samples` is interleaved x, y, pressure, tilt, azimuth; `path` is interleaved x, y.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the JNI signature is fixed by `Native.preciseErase`"
+)]
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_penwise_core_Native_preciseErase<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     samples: JFloatArray<'local>,
+    times: JIntArray<'local>,
     count: jint,
     path: JFloatArray<'local>,
     path_count: jint,
@@ -58,24 +65,51 @@ pub extern "system" fn Java_dev_penwise_core_Native_preciseErase<'local>(
         if !samples_buf.is_empty() {
             samples.get_region(env, 0, &mut samples_buf)?;
         }
+        let mut times_buf = vec![0; times.len(env)?];
+        if !times_buf.is_empty() {
+            times.get_region(env, 0, &mut times_buf)?;
+        }
         let mut path_buf = vec![0.0; path.len(env)?];
         if !path_buf.is_empty() {
             path.get_region(env, 0, &mut path_buf)?;
         }
         let count = usize::try_from(count.max(0)).unwrap_or(0);
         let path_count = usize::try_from(path_count.max(0)).unwrap_or(0);
-        let runs = erase::surviving_runs(&samples_buf, count, &path_buf, path_count, radius);
-        let mut flat: Vec<jint> = Vec::with_capacity(1 + runs.len() * 2);
-        flat.push(jint::try_from(runs.len()).unwrap_or(0));
-        for (start, end) in runs {
-            flat.push(jint::try_from(start).unwrap_or(0));
-            flat.push(jint::try_from(end).unwrap_or(0));
-        }
+        let result = cut::cut(
+            &samples_buf,
+            &times_buf,
+            count,
+            &path_buf,
+            path_count,
+            radius,
+        );
+        let flat = encode_cut(&result);
         let array = env.new_int_array(flat.len())?;
         array.set_region(env, 0, &flat)?;
         Ok(array.into_raw())
     })
     .resolve::<ThrowRuntimeExAndDefault>()
+}
+
+/// Flattens a [`cut::Cut`] into the int layout documented on `preciseErase`.
+fn encode_cut(result: &cut::Cut) -> Vec<jint> {
+    let cut::Cut::Pieces(pieces) = result else {
+        return vec![-1];
+    };
+    let mut flat: Vec<jint> = vec![jint::try_from(pieces.len()).unwrap_or(0)];
+    for piece in pieces {
+        flat.push(jint::try_from(piece.times.len()).unwrap_or(0));
+        for (index, time) in piece.times.iter().enumerate() {
+            let o = index * erase::STRIDE;
+            flat.extend(
+                piece.samples[o..o + erase::STRIDE]
+                    .iter()
+                    .map(|v| v.to_bits().cast_signed()),
+            );
+            flat.push(*time);
+        }
+    }
+    flat
 }
 
 #[unsafe(no_mangle)]

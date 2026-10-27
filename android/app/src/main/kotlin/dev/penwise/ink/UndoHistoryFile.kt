@@ -1,14 +1,11 @@
 package dev.penwise.ink
 
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.BufferedInputStream
-import java.io.BufferedOutputStream
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.EOFException
 import java.io.File
-import java.io.FileOutputStream
 
 /** One undoable step: strokes appended, removed (with their positions), or swapped for fragments. */
 sealed interface HistoryStep {
@@ -43,7 +40,7 @@ class UndoHistoryFile(
 
     /** Steps already on disk: `(undo, redo)`, oldest first. */
     suspend fun load(): Pair<List<HistoryStep>, List<HistoryStep>> =
-        withContext(Dispatchers.IO) {
+        withContext(PageIo) {
             if (!file.isFile) return@withContext emptyList<HistoryStep>() to emptyList()
             try {
                 DataInputStream(BufferedInputStream(file.inputStream())).use { input ->
@@ -67,22 +64,16 @@ class UndoHistoryFile(
     suspend fun save(
         undo: List<HistoryStep>,
         redo: List<HistoryStep>,
-    ) = withContext(Dispatchers.IO) {
+    ) = withContext(PageIo) {
         if (undo.isEmpty() && redo.isEmpty()) {
             file.delete()
             return@withContext
         }
-        file.parentFile?.mkdirs()
-        val staging = File(file.parentFile, "${file.name}.tmp")
-        DataOutputStream(BufferedOutputStream(FileOutputStream(staging))).use { out ->
+        writeAtomically(file) { out ->
             out.write(MAGIC)
             out.writeByte(VERSION)
             writeSteps(out, undo)
             writeSteps(out, redo)
-        }
-        if (!staging.renameTo(file)) {
-            staging.copyTo(file, overwrite = true)
-            staging.delete()
         }
     }
 

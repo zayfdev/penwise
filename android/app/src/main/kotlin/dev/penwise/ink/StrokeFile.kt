@@ -2,6 +2,7 @@ package dev.penwise.ink
 
 import dev.penwise.core.InkGeometry
 import dev.penwise.core.InkStroke
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.BufferedInputStream
@@ -11,6 +12,9 @@ import java.io.DataOutputStream
 import java.io.EOFException
 import java.io.File
 import java.io.FileOutputStream
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 
 /**
  * One finished stroke as stored on disk: everything [InkStroke] needs to rebuild its geometry byte for byte
@@ -78,10 +82,8 @@ internal object SavedStrokeCodec {
     /**
      * Next record, or `null` at a clean end of stream. Throws [IllegalStateException] on a malformed record.
      *
-     * Two layouts exist in the wild, both under the same file version: the current one stores each sample's five
-     * floats and then the time array, while builds before 2026-10-25 interleaved the time into the sample record.
-     * Reading an old file with the new layout silently turns ink into noise (and made a page look empty after a
-     * clear), so the layout is detected from the data: recorded times only ever increase.
+     * One layout only, the one every writer has produced: per sample the five floats
+     * (`x, y, pressure, tilt, azimuth`) and then its `time` int.
      */
     fun read(input: DataInputStream): SavedStroke? {
         val tag =
@@ -97,41 +99,6 @@ internal object SavedStrokeCodec {
         val seed = input.readLong()
         val count = input.readInt()
         check(count in 0..MAX_SAMPLES) { "bad sample count $count" }
-        input.mark(count * RECORD_BYTES + BYTE_MARGIN)
-        val split = readSplit(input, preset, argb, scale, seed, count)
-        if (split.times.areOrdered()) return split
-        input.reset()
-        val interleaved = readInterleaved(input, preset, argb, scale, seed, count)
-        return interleaved
-    }
-
-    private fun readSplit(
-        input: DataInputStream,
-        preset: Int,
-        argb: Int,
-        scale: Float,
-        seed: Long,
-        count: Int,
-    ): SavedStroke {
-        val samples = FloatArray(count * STRIDE)
-        val times = IntArray(count)
-        // Every sample's floats first (the block the current writer emits), then every time.
-        for (i in 0 until count) {
-            for (k in 0 until STRIDE) samples[i * STRIDE + k] = input.readFloat()
-        }
-        for (i in 0 until count) times[i] = input.readInt()
-        return SavedStroke(preset, argb, scale, seed, samples, times, count)
-    }
-
-    /** The pre-2026-10-25 layout: `x, y, pressure, tilt, azimuth, time` per sample. */
-    private fun readInterleaved(
-        input: DataInputStream,
-        preset: Int,
-        argb: Int,
-        scale: Float,
-        seed: Long,
-        count: Int,
-    ): SavedStroke {
         val samples = FloatArray(count * STRIDE)
         val times = IntArray(count)
         for (i in 0 until count) {
@@ -140,16 +107,35 @@ internal object SavedStrokeCodec {
         }
         return SavedStroke(preset, argb, scale, seed, samples, times, count)
     }
-
-    /** Bytes per sample on disk, for both layouts: five floats and one time. */
-    private const val RECORD_BYTES = 24
-    private const val BYTE_MARGIN = 8
 }
 
-/** True when the recorded times never go backwards, which is what a correctly read stroke looks like. */
-private fun IntArray.areOrdered(): Boolean {
-    for (index in 1 until size) if (this[index] < this[index - 1]) return false
-    return size == 0 || this[0] >= 0
+/**
+ * The single dispatcher every page and undo file read or write runs on. One thread means appends, rewrites and
+ * loads happen in the order they were requested, so a rewrite can never overtake (or interleave with) an append.
+ */
+internal val PageIo: CoroutineDispatcher = Dispatchers.IO.limitedParallelism(1)
+
+/**
+ * Writes `target` atomically: a sibling temp file is written and fsynced, then renamed over the target. A crash
+ * leaves either the old file or the new one, never a torn mix.
+ */
+internal fun writeAtomically(
+    target: File,
+    write: (DataOutputStream) -> Unit,
+) {
+    target.parentFile?.mkdirs()
+    val staging = File(target.parentFile, "${target.name}.tmp")
+    FileOutputStream(staging).use { stream ->
+        val out = DataOutputStream(BufferedOutputStream(stream))
+        write(out)
+        out.flush()
+        stream.fd.sync()
+    }
+    try {
+        Files.move(staging.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE)
+    } catch (_: AtomicMoveNotSupportedException) {
+        Files.move(staging.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+    }
 }
 
 /** Page file: every stroke of one page, in drawing order. */
@@ -161,7 +147,7 @@ class StrokeFile(
 
     /** Strokes already on disk. A torn or corrupt tail keeps everything before it. */
     suspend fun load(): List<SavedStroke> =
-        withContext(Dispatchers.IO) {
+        withContext(PageIo) {
             val target = file
             if (!target.isFile) return@withContext emptyList()
             val out = ArrayList<SavedStroke>()
@@ -186,7 +172,7 @@ class StrokeFile(
 
     /** Adds one stroke; creates the file with its header when it does not exist yet. */
     suspend fun append(stroke: SavedStroke) =
-        withContext(Dispatchers.IO) {
+        withContext(PageIo) {
             file.parentFile?.mkdirs()
             val target = file
             val fresh = !target.isFile || target.length() == 0L
@@ -196,11 +182,10 @@ class StrokeFile(
             }
         }
 
-    /** Replaces the whole page file (undo, clear, erase). */
+    /** Replaces the whole page file (undo, clear, erase) atomically. */
     suspend fun rewrite(strokes: List<SavedStroke>) =
-        withContext(Dispatchers.IO) {
-            file.parentFile?.mkdirs()
-            DataOutputStream(BufferedOutputStream(file.outputStream())).use { out ->
+        withContext(PageIo) {
+            writeAtomically(file) { out ->
                 writeHeader(out)
                 strokes.forEach { SavedStrokeCodec.write(out, it) }
             }

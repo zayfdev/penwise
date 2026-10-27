@@ -52,13 +52,16 @@ internal class StylusStrokeController(
 
     /** Shape previews go to the mirror at most this often; the tablet itself still redraws every event. */
     private val previewGate = PreviewGate(PREVIEW_MIN_INTERVAL_MS)
-    private var shapeStart: FloatArray? = null
-    private var shapeTemp: InkStroke? = null
+    private val shape = ShapeDrag<InkStroke>()
     private var erasing = false
+
+    /** The mirror sees eraser positions at most once per display frame, not once per digitizer point. */
+    private val eraseFrames =
+        EraseFrameThrottle(ERASE_FRAME_MS) { x, y -> liveOut?.erasing(x, y, brushes.eraserRadiusPx) }
     private var erasePoints = FloatArray(INITIAL_ERASE_POINTS * 2)
     private var eraseCount = 0
 
-    val isDrawing: Boolean get() = stroke != null || shapeStart != null
+    val isDrawing: Boolean get() = stroke != null || shape.active
 
     /** Returns true when the event belongs to an active or starting pen gesture. */
     fun onTouchEvent(event: MotionEvent): Boolean {
@@ -77,9 +80,7 @@ internal class StylusStrokeController(
         penId = NO_POINTER
         erasing = false
         eraseCount = 0
-        shapeStart = null
-        shapeTemp?.close()
-        shapeTemp = null
+        shape.abandon()
     }
 
     private fun maybeBegin(event: MotionEvent) {
@@ -90,6 +91,7 @@ internal class StylusStrokeController(
         if (brushes.eraserMode) {
             erasing = true
             eraseCount = 0
+            eraseFrames.reset()
             addErasePoints(event, index)
             erase(persist = false)
             return
@@ -97,7 +99,7 @@ internal class StylusStrokeController(
         val brush = brushes.current()
         if (brushes.shapeMode != null) {
             previewGate.reset()
-            shapeStart = floatArrayOf(event.getX(index), event.getY(index))
+            shape.begin(event.getX(index), event.getY(index))
             publishShapePreview(event.getX(index), event.getY(index))
             return
         }
@@ -118,8 +120,7 @@ internal class StylusStrokeController(
     }
 
     private fun move(event: MotionEvent) {
-        val start = shapeStart
-        if (start != null) {
+        if (shape.active) {
             val index = event.findPointerIndex(penId)
             if (index >= 0) publishShapePreview(event.getX(index), event.getY(index))
             return
@@ -140,13 +141,12 @@ internal class StylusStrokeController(
         val index = event.actionIndex
         if (event.getPointerId(index) != penId) return
         val canceled = event.flags and MotionEvent.FLAG_CANCELED != 0
-        val start = shapeStart
+        val start = shape.start
         if (start != null) {
-            shapeStart = null
-            val temp = shapeTemp
-            shapeTemp = null
+            val temp = shape.finish()
             if (canceled || temp == null) {
                 temp?.close()
+                liveOut?.end(cancelled = true)
                 sink.cancelStroke()
             } else {
                 val brush = brushes.current()
@@ -170,10 +170,11 @@ internal class StylusStrokeController(
         }
         if (erasing) {
             if (canceled) {
-                release()
+                cancel()
             } else {
                 addErasePoints(event, index)
                 erase(persist = false)
+                eraseFrames.flush()
                 store.commitErase()
                 erasing = false
                 eraseCount = 0
@@ -276,14 +277,13 @@ internal class StylusStrokeController(
         x: Float,
         y: Float,
     ) {
-        val start = shapeStart ?: return
+        val start = shape.start ?: return
         val mode = brushes.shapeMode ?: return
         val built = ShapeSamples.build(mode, start[0], start[1], x, y) ?: return
-        shapeTemp?.close()
         val brush = brushes.current()
         val preview = InkStroke(brush.presetIndex, PREVIEW_SEED, brush.argb, brush.sizeScale)
         preview.push(built.first, built.second, built.second.size)
-        shapeTemp = preview
+        shape.replaceTemp(preview)
         live.reset()
         live.publish(LiveFrame(++strokeId, preview.snapshot()))
         if (previewGate.allow(android.os.SystemClock.uptimeMillis())) {
@@ -317,16 +317,18 @@ internal class StylusStrokeController(
         sink.commitStroke()
     }
 
+    /** Abandons whatever gesture is in flight: nothing is committed and every piece of gesture state resets. */
     private fun cancel() {
-        if (stroke != null) {
+        if (stroke != null || shape.active) {
             liveOut?.end(cancelled = true)
-            release()
             sink.cancelStroke()
         }
         if (erasing) {
+            // Precise cuts were already applied per event; fold them into one undo step like a finished sweep.
+            eraseFrames.flush()
             store.commitErase()
-            release()
         }
+        release()
     }
 
     private fun addErasePoints(
@@ -348,7 +350,7 @@ internal class StylusStrokeController(
         erasePoints[eraseCount * 2] = x
         erasePoints[eraseCount * 2 + 1] = y
         eraseCount++
-        liveOut?.erasing(x, y, brushes.eraserRadiusPx)
+        eraseFrames.point(x, y, android.os.SystemClock.uptimeMillis())
     }
 
     private fun erase(persist: Boolean) {
@@ -359,15 +361,23 @@ internal class StylusStrokeController(
         }
     }
 
-    /** Cuts every stroke the sweep touches, swapping it for its fragments in one undo step. */
+    /**
+     * Cuts every stroke the sweep touches, swapping it for its fragments in one undo step. A stroke the cut
+     * leaves whole is skipped: replacing it with a copy would add an op, an undo step and a file rewrite per event.
+     */
     private fun preciseErase() {
         if (eraseCount == 0) return
-        for (stroke in store.snapshot()) {
-            if (!EraseHit.hits(stroke, erasePoints, eraseCount, brushes.eraserRadiusPx)) continue
-            val pieces = PreciseErase.fragments(stroke, erasePoints, eraseCount, brushes.eraserRadiusPx)
-            pieces?.forEach { it.rebuild() }
-            store.replace(listOf(stroke.seed), pieces.orEmpty())
-        }
+        val radius = brushes.eraserRadiusPx
+        store
+            .snapshot()
+            .filter { EraseHit.hits(it, erasePoints, eraseCount, radius) }
+            .forEach { stroke ->
+                val cut = PreciseErase.cut(stroke, erasePoints, eraseCount, radius)
+                if (cut is EraseCut.Pieces) {
+                    cut.pieces.forEach { it.rebuild() }
+                    store.replace(listOf(stroke.seed), cut.pieces)
+                }
+            }
     }
 
     private fun isStylus(
@@ -381,6 +391,9 @@ internal class StylusStrokeController(
     private companion object {
         const val NO_POINTER = -1
         const val PREVIEW_MIN_INTERVAL_MS = 40L
+
+        /** One display frame at 60 Hz. */
+        const val ERASE_FRAME_MS = 16L
 
         /** Distance between preview points while the pen is down; the committed stroke keeps them all. */
         const val PREVIEW_SPACING_PX = 3.5f

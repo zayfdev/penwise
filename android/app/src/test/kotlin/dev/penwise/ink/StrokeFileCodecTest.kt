@@ -108,7 +108,7 @@ class StrokeFileCodecTest {
     }
 }
 
-/** Files written before 2026-10-25 interleaved each sample's time; reading them with the current layout loses ink. */
+/** The one on-disk layout: each sample's five floats then its time, interleaved. */
 class LegacyStrokeLayoutTest {
     /** Writes one record the way the old builds did: `x, y, pressure, tilt, azimuth, time` per sample. */
     private fun legacyRecord(

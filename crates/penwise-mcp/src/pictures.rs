@@ -1,7 +1,7 @@
 //! Picture tools: place a screenshot or component cut-out on the page, list and remove them.
 
 use crate::endpoint::Endpoint;
-use crate::{arguments, error, get_text, text_content};
+use crate::{arguments, encode_segment, error, get_text, text_content};
 
 /// The three picture tools, kept out of [`call_tool`] so each stays readable.
 pub(crate) fn picture_tool(
@@ -97,7 +97,7 @@ fn place_image(
     )
 }
 
-/// The page named in the arguments, else the library's active page.
+/// The page named in the arguments, else the library's active page, percent-encoded for use in a request path.
 fn resolve_page(
     endpoint: &Endpoint,
     request: &serde_json::Value,
@@ -106,7 +106,7 @@ fn resolve_page(
         .get("page")
         .and_then(serde_json::Value::as_str)
     {
-        return Ok(page.to_owned());
+        return Ok(encode_segment(page));
     }
     let body = endpoint
         .get("/pages")
@@ -115,7 +115,7 @@ fn resolve_page(
         serde_json::from_slice(&body).map_err(|failure| error(-32603, &failure.to_string()))?;
     meta.get("active")
         .and_then(serde_json::Value::as_str)
-        .map(str::to_owned)
+        .map(encode_segment)
         .ok_or_else(|| error(-32603, "the server reported no active page"))
 }
 

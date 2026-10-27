@@ -20,6 +20,7 @@ use std::sync::Arc;
 use tokio::sync::{RwLock, broadcast};
 
 pub use anchors::Anchor;
+pub(crate) use legacy::MAX_STROKE_SAMPLES;
 pub use model::{
     AGENT_LAYER, BACKGROUND_SPACING_PX, Background, Frame, ImageMsg, Meta, NewPage, Notebook,
     PageContent, PageKind, PageMeta, PagePatch, StrokeMsg,
@@ -314,3 +315,6 @@ impl Library {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod edit_tests;

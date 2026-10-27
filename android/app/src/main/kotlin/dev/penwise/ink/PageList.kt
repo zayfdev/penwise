@@ -239,7 +239,8 @@ class PageStore(
         runCatching { legacy.copyTo(target) }
     }
 
-    /** Writes the library atomically; failures leave the previous file intact. */
+    /** Writes the library atomically; failures leave the previous file intact. One writer at a time. */
+    @Synchronized
     fun save(list: PageList) {
         dir.mkdirs()
         val staging = File(dir, "meta.json.tmp")

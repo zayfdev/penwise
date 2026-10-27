@@ -1,6 +1,6 @@
 //! Server-side archives of a page's objects: the undo a client cannot reach.
 
-use rusqlite::{OptionalExtension, params};
+use rusqlite::{OptionalExtension, Transaction, params};
 
 use super::model::PageContent;
 use super::store::{HISTORY_KEEP, Store, read_objects};
@@ -13,29 +13,9 @@ impl Store {
     pub(crate) fn archive(&self, page: &str) -> Result<usize, String> {
         let mut conn = self.conn.lock().map_err(|error| error.to_string())?;
         let tx = conn.transaction().map_err(|error| error.to_string())?;
-        let stamp = i64::try_from(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|since| since.as_millis())
-                .unwrap_or(0),
-        )
-        .unwrap_or(0);
-        let archived = tx
-            .execute(
-                "INSERT INTO object_history (page, stamp, id, kind, layer, z, codec, payload)
-                 SELECT page, ?2, id, kind, layer, z, codec, payload FROM objects WHERE page = ?1",
-                params![page, stamp],
-            )
-            .map_err(|error| error.to_string())?;
+        let archived = archive_in(&tx, page)?;
         if archived > 0 {
-            tx.execute(
-                "DELETE FROM object_history WHERE page = ?1 AND stamp NOT IN (
-                     SELECT DISTINCT stamp FROM object_history WHERE page = ?1
-                     ORDER BY stamp DESC LIMIT ?2
-                 )",
-                params![page, HISTORY_KEEP],
-            )
-            .map_err(|error| error.to_string())?;
+            prune_in(&tx, page)?;
         }
         tx.commit().map_err(|error| error.to_string())?;
         Ok(archived)
@@ -72,24 +52,31 @@ impl Store {
     }
 
     /// Puts the newest archive (or the one at `stamp`) back, replacing the page's objects.
+    ///
+    /// `None` (and nothing changed) when there is no such archive. The current objects are archived first, in
+    /// the same transaction, so a restore is itself undoable.
     pub(crate) fn restore(&self, page: &str, stamp: Option<i64>) -> Result<Option<usize>, String> {
         let mut conn = self.conn.lock().map_err(|error| error.to_string())?;
+        let tx = conn.transaction().map_err(|error| error.to_string())?;
         let chosen: Option<i64> = match stamp {
-            Some(stamp) => Some(stamp),
-            None => conn
+            Some(stamp) => tx
                 .query_row(
-                    "SELECT MAX(stamp) FROM object_history WHERE page = ?1",
-                    params![page],
+                    "SELECT stamp FROM object_history WHERE page = ?1 AND stamp = ?2 LIMIT 1",
+                    params![page, stamp],
                     |row| row.get(0),
                 )
-                .optional()
-                .map_err(|error| error.to_string())?
-                .flatten(),
-        };
+                .optional(),
+            None => tx.query_row(
+                "SELECT MAX(stamp) FROM object_history WHERE page = ?1",
+                params![page],
+                |row| row.get::<_, Option<i64>>(0),
+            ),
+        }
+        .map_err(|error| error.to_string())?;
         let Some(stamp) = chosen else {
             return Ok(None);
         };
-        let tx = conn.transaction().map_err(|error| error.to_string())?;
+        archive_in(&tx, page)?;
         tx.execute("DELETE FROM objects WHERE page = ?1", params![page])
             .map_err(|error| error.to_string())?;
         let restored = tx
@@ -100,7 +87,47 @@ impl Store {
                 params![page, stamp],
             )
             .map_err(|error| error.to_string())?;
+        prune_in(&tx, page)?;
         tx.commit().map_err(|error| error.to_string())?;
         Ok(Some(restored))
     }
+}
+
+/// Copies the page's objects into `object_history` under a stamp newer than every existing one (two edits in
+/// one millisecond must not collide). Returns how many objects were copied.
+fn archive_in(tx: &Transaction<'_>, page: &str) -> Result<usize, String> {
+    let now = i64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|since| since.as_millis())
+            .unwrap_or(0),
+    )
+    .unwrap_or(0);
+    let newest: Option<i64> = tx
+        .query_row(
+            "SELECT MAX(stamp) FROM object_history WHERE page = ?1",
+            params![page],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    let stamp = newest.map_or(now, |newest| now.max(newest.saturating_add(1)));
+    tx.execute(
+        "INSERT INTO object_history (page, stamp, id, kind, layer, z, codec, payload)
+         SELECT page, ?2, id, kind, layer, z, codec, payload FROM objects WHERE page = ?1",
+        params![page, stamp],
+    )
+    .map_err(|error| error.to_string())
+}
+
+/// Keeps only the newest [`HISTORY_KEEP`] archives of a page.
+fn prune_in(tx: &Transaction<'_>, page: &str) -> Result<(), String> {
+    tx.execute(
+        "DELETE FROM object_history WHERE page = ?1 AND stamp NOT IN (
+             SELECT DISTINCT stamp FROM object_history WHERE page = ?1
+             ORDER BY stamp DESC LIMIT ?2
+         )",
+        params![page, HISTORY_KEEP],
+    )
+    .map(|_| ())
+    .map_err(|error| error.to_string())
 }

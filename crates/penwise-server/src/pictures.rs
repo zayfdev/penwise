@@ -10,8 +10,10 @@ use axum::routing::{get, post};
 
 use crate::AppState;
 use crate::AuthQuery;
+use crate::assets;
 use crate::auth;
 use crate::library;
+use axum::extract::DefaultBodyLimit;
 
 /// `GET /page.png`'s pictures, with their bytes loaded once.
 pub(crate) async fn load_images(app: &AppState, page: &str) -> Vec<(library::ImageMsg, Vec<u8>)> {
@@ -140,13 +142,76 @@ pub struct IdsRequest {
     pub ids: Vec<String>,
 }
 
-/// The picture routes.
+/// The picture routes. Only the upload takes a body this large; every other route keeps axum's small default.
 pub(crate) fn routes() -> Router<AppState> {
     Router::new()
-        .route("/assets", post(asset_upload))
+        .route(
+            "/assets",
+            post(asset_upload).layer(DefaultBodyLimit::max(assets::MAX_BYTES)),
+        )
         .route("/assets/{id}", get(asset_get))
         .route(
             "/pages/{id}/images",
             get(image_list).post(image_place).delete(image_remove),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::assets::Assets;
+    use crate::pairing::Pairing;
+
+    /// A PNG header (IHDR only) padded with zeros to `total` bytes: enough for the upload route to accept.
+    fn padded_png(total: usize) -> Vec<u8> {
+        let mut bytes = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        bytes.extend_from_slice(&13u32.to_be_bytes());
+        bytes.extend_from_slice(b"IHDR");
+        bytes.extend_from_slice(&64u32.to_be_bytes());
+        bytes.extend_from_slice(&32u32.to_be_bytes());
+        bytes.extend_from_slice(&[8, 6, 0, 0, 0, 0, 0, 0, 0]);
+        bytes.resize(total, 0);
+        bytes
+    }
+
+    async fn serve(name: &str) -> (String, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("penwise-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let app = AppState {
+            library: library::Library::load(dir.clone()),
+            assets: Assets::load(dir.join("assets")),
+            web: Arc::new(dir.clone()),
+            token: Arc::new("t".to_owned()),
+            pairing: Arc::new(Pairing::new()),
+            urls: Arc::new(Vec::new()),
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let router = routes().with_state(app);
+        tokio::spawn(async move { axum::serve(listener, router).await });
+        (format!("http://{addr}/assets?token=t"), dir)
+    }
+
+    #[tokio::test]
+    async fn an_upload_over_the_json_limit_is_accepted_up_to_24_mib() {
+        let (url, dir) = serve("upload-limit").await;
+        let client = reqwest::Client::new();
+        let ok = client
+            .post(&url)
+            .body(padded_png(3 * 1024 * 1024))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(200, ok.status().as_u16(), "3 MiB fits the 24 MiB limit");
+        let too_big = client
+            .post(&url)
+            .body(padded_png(assets::MAX_BYTES + 1024))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(413, too_big.status().as_u16(), "above 24 MiB is refused");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

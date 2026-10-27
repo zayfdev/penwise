@@ -20,12 +20,15 @@ internal object Native {
     external fun strokeFree(handle: Long)
 
     /**
-     * Which sample runs of one stroke survive an eraser sweep: `[runCount, start0, end0, start1, end1, …]`.
+     * Cuts one stroke at an eraser sweep. `[-1]` when the sweep leaves it untouched; otherwise
+     * `[fragmentCount, then per fragment: n, n × (x, y, pressure, tilt, azimuth as float bits, time)]`.
+     * Long segments under the eraser are subdivided natively, so a fragment may have more samples than the input.
      *
      * `samples` is interleaved x, y, pressure, tilt, azimuth; `path` is interleaved x, y (page px).
      */
     external fun preciseErase(
         samples: FloatArray,
+        times: IntArray,
         count: Int,
         path: FloatArray,
         pathCount: Int,

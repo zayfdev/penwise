@@ -167,10 +167,10 @@ async fn on_text(library: &Library, session: u64, page: &mut String, text: &str)
                 Ok(target) => target,
                 Err(reply) => return Some(reply),
             };
-            let strokes = frame
-                .get("strokes")
-                .and_then(|s| serde_json::from_value::<Vec<StrokeMsg>>(s.clone()).ok())
-                .unwrap_or_default();
+            let strokes = match parse_strokes(frame.get("strokes")) {
+                Ok(strokes) => strokes,
+                Err(reply) => return Some(reply),
+            };
             let count = library.replace(&target, strokes).await;
             library.fan_out(None, live_end(session));
             Some(json!({ "t": "ack", "strokes": count }).to_string())
@@ -180,6 +180,17 @@ async fn on_text(library: &Library, session: u64, page: &mut String, text: &str)
             None
         }
     }
+}
+
+/// A frame's `strokes` list. `Err` carries the error reply: a list that is missing or does not parse must
+/// never be read as "empty", because both callers replace ink with it (an empty list is legitimate, a broken
+/// one would wipe the page).
+fn parse_strokes(value: Option<&Value>) -> Result<Vec<StrokeMsg>, String> {
+    let Some(value) = value else {
+        return Err(error_frame("missing strokes"));
+    };
+    serde_json::from_value(value.clone())
+        .map_err(|error| error_frame(&format!("malformed strokes: {error}")))
 }
 
 /// Applies one `{"t":"op","op":{"k":…}}` frame; returns the reply for the client.
@@ -202,10 +213,10 @@ async fn apply_op(library: &Library, page: &str, frame: &Value) -> String {
             json!({ "t": "ack", "removed": removed }).to_string()
         }
         Some("replace") => {
-            let strokes = op
-                .get("strokes")
-                .and_then(|value| serde_json::from_value::<Vec<StrokeMsg>>(value.clone()).ok())
-                .unwrap_or_default();
+            let strokes = match parse_strokes(op.get("strokes")) {
+                Ok(strokes) => strokes,
+                Err(reply) => return reply,
+            };
             let total = library.replace_strokes(page, &seeds(), strokes).await;
             json!({ "t": "ack", "strokes": total }).to_string()
         }
@@ -293,5 +304,43 @@ mod tests {
         let text = with_session(&frame, 7);
         let parsed: Value = serde_json::from_str(&text).unwrap();
         assert_eq!(7, parsed["session"]);
+    }
+
+    fn wire_stroke(seed: &str) -> Value {
+        json!({ "preset": 0, "argb": -1, "scale": 1.0, "seed": seed,
+                "samples": [0.0, 0.0, 0.5, 0.0, 0.0, 9.0, 9.0, 0.5, 0.0, 0.0], "times": [0, 8000] })
+    }
+
+    #[tokio::test]
+    async fn broken_strokes_in_a_page_or_replace_frame_are_rejected_not_applied_as_empty() {
+        let dir = std::env::temp_dir().join(format!("penwise-ws-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let library = Library::load(dir.clone());
+        let mut page = library.active().await;
+        let seed = serde_json::from_value::<StrokeMsg>(wire_stroke("1")).unwrap();
+        assert!(library.append(&page, seed).await);
+
+        let broken = [
+            json!({ "t": "page" }),
+            json!({ "t": "page", "strokes": [{ "seed": "x" }] }),
+            json!({ "t": "page", "strokes": [wire_stroke("2"), { "seed": 5 }] }),
+            json!({ "t": "op", "op": { "k": "replace", "seeds": ["1"] } }),
+            json!({ "t": "op", "op": { "k": "replace", "seeds": ["1"], "strokes": "no" } }),
+        ];
+        for frame in broken {
+            let reply = on_text(&library, 1, &mut page, &frame.to_string()).await;
+            let reply: Value = serde_json::from_str(&reply.expect("a reply")).unwrap();
+            assert_eq!("error", reply["t"], "{frame}");
+        }
+        assert_eq!(1, library.strokes(&page).await.len(), "ink untouched");
+
+        let empty = json!({ "t": "page", "strokes": [] }).to_string();
+        let reply = on_text(&library, 1, &mut page, &empty).await.expect("ack");
+        assert_eq!("ack", serde_json::from_str::<Value>(&reply).unwrap()["t"]);
+        assert!(
+            library.strokes(&page).await.is_empty(),
+            "an empty list is legitimate"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

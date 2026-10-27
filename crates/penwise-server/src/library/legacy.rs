@@ -7,9 +7,27 @@ use std::path::Path;
 
 use super::model::{Background, Meta, Notebook, PageKind, PageMeta, StrokeMsg, new_id};
 
-/// A stroke is only storable when its sample and time arrays agree and it has samples.
+/// Most samples one stroke may carry; a longer one is a malformed or hostile frame, not handwriting.
+pub(crate) const MAX_STROKE_SAMPLES: usize = 100_000;
+/// Size-scale range the tablet (0.5–3) and the browser slider (1–40 over 4) can produce.
+const MIN_STROKE_SCALE: f32 = 0.25;
+const MAX_STROKE_SCALE: f32 = 10.0;
+
+/// A stroke is only storable when its sample and time arrays agree, it has samples, and it is not absurdly long.
 pub(crate) fn is_well_formed(stroke: &StrokeMsg) -> bool {
-    stroke.samples.len() == stroke.times.len() * 5 && !stroke.times.is_empty()
+    stroke.scale.is_finite()
+        && !stroke.times.is_empty()
+        && stroke.times.len() <= MAX_STROKE_SAMPLES
+        && stroke.samples.len() == stroke.times.len() * 5
+}
+
+/// The stroke as it will be stored: `None` when malformed, otherwise with `scale` clamped to the UI ranges.
+pub(crate) fn accepted(mut stroke: StrokeMsg) -> Option<StrokeMsg> {
+    if !is_well_formed(&stroke) {
+        return None;
+    }
+    stroke.scale = stroke.scale.clamp(MIN_STROKE_SCALE, MAX_STROKE_SCALE);
+    Some(stroke)
 }
 
 /// One page's strokes as the old `pages/<id>.json` stored them.

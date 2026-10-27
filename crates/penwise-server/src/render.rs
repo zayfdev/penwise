@@ -302,10 +302,20 @@ fn pixel_span(page: f32, scale: f32) -> u32 {
     (page * scale).round().max(1.0) as u32
 }
 
+/// The brush seed of a wire seed: the tablet sends its signed `Long` as decimal text and the FFI bit-casts it to
+/// `u64` (`penwise-ffi`), so a negative seed must land on the same `u64` here or its jitter differs. Text that
+/// is not a number falls back to 0.
+fn seed_of(text: &str) -> u64 {
+    text.parse::<i64>()
+        .map(i64::cast_unsigned)
+        .or_else(|_| text.parse::<u64>())
+        .unwrap_or(0)
+}
+
 /// Rebuilds one stored stroke; its stored colour replaces the preset's, opacity and blend stay the brush's.
 fn geometry_of(stroke: &StrokeMsg) -> StrokeGeometry {
     let params = params_for(stroke);
-    let seed = stroke.seed.parse::<u64>().unwrap_or(0);
+    let seed = seed_of(&stroke.seed);
     let mut builder = StrokeBuilder::new(&params, seed);
     let count = (stroke.samples.len() / SAMPLE_STRIDE).min(stroke.times.len());
     let mut batch = Vec::with_capacity(count);
@@ -407,6 +417,45 @@ mod tests {
             png.len() < 4_000_000,
             "capped image stays small ({} bytes)",
             png.len()
+        );
+    }
+
+    #[test]
+    fn a_negative_seed_renders_as_its_u64_bit_cast() {
+        let page = page_fixture();
+        let render = |preset: u32, seed: &str| {
+            let mut s = stroke(100.0, 100.0);
+            s.preset = preset;
+            s.scale = 4.0;
+            s.samples = (0..40u8)
+                .flat_map(|i| {
+                    let i = f32::from(i);
+                    [
+                        100.0 + 12.0 * i,
+                        200.0 + 30.0 * (i / 4.0).sin(),
+                        0.6,
+                        0.0,
+                        0.0,
+                    ]
+                })
+                .collect();
+            s.times = (0..40).map(|i| i * 8_000).collect();
+            seed.clone_into(&mut s.seed);
+            page_png(&[s], &[], 0.25, &page).unwrap()
+        };
+        assert_eq!(u64::MAX, seed_of("-1"));
+        let mut collapsed_everywhere = true;
+        for preset in 0..u32::try_from(Preset::ALL.len()).unwrap() {
+            assert_eq!(
+                render(preset, "18446744073709551615"),
+                render(preset, "-1"),
+                "-1 is the same brush seed as u64::MAX (preset {preset})"
+            );
+            collapsed_everywhere &= render(preset, "0") == render(preset, "-1");
+        }
+        assert!(
+            !collapsed_everywhere,
+            "-1 must not collapse to seed 0 on a seed-dependent brush"
         );
     }
 

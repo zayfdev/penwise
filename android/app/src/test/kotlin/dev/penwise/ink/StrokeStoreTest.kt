@@ -201,3 +201,35 @@ class LegacySeedTest {
         assertTrue(store.assignMissingSeeds().isEmpty())
     }
 }
+
+/** The server echoes this device's own ops back; applying the echo must not duplicate strokes. */
+class RemoteEchoTest {
+    private fun stroke(seed: Long) = SavedStroke(0, -0x1000000, 1f, seed, FloatArray(10), intArrayOf(0, 1000), 2)
+
+    private fun storeWith(vararg seeds: Long) = StrokeStore().apply { seeds.forEach { add(stroke(it)) } }
+
+    @Test
+    fun an_echoed_replace_does_not_duplicate_fragments() {
+        val store = storeWith(1, 2)
+        val fragments = listOf(stroke(10), stroke(11))
+        store.replace(listOf(1L), fragments)
+        assertEquals(listOf(2L, 10L, 11L), store.snapshot().map { it.seed })
+        val changed = store.applyRemote(RemoteOp.Replace(setOf(1L), fragments.map { stroke(it.seed) }))
+        assertFalse("the echo changes nothing", changed)
+        assertEquals(listOf(2L, 10L, 11L), store.snapshot().map { it.seed })
+    }
+
+    @Test
+    fun a_replace_from_elsewhere_still_applies_once() {
+        val store = storeWith(1, 2)
+        assertTrue(store.applyRemote(RemoteOp.Replace(setOf(1L), listOf(stroke(10), stroke(10)))))
+        assertEquals(listOf(2L, 10L), store.snapshot().map { it.seed })
+    }
+
+    @Test
+    fun an_echoed_add_is_ignored() {
+        val store = storeWith(1)
+        assertFalse(store.applyRemote(RemoteOp.Add(listOf(stroke(1)))))
+        assertEquals(listOf(1L), store.snapshot().map { it.seed })
+    }
+}

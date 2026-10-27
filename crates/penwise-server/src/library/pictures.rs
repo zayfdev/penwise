@@ -45,23 +45,28 @@ impl Library {
         if ids.is_empty() {
             return 0;
         }
-        let removed = {
+        let (content, removed) = {
             let mut pages = self.pages.write().await;
             let Some(content) = pages.get_mut(page) else {
                 return 0;
             };
-            let before = content.images.len();
-            content.images.retain(|image| !ids.contains(&image.id));
-            before - content.images.len()
+            let doomed: Vec<String> = content
+                .images
+                .iter()
+                .filter(|image| ids.contains(&image.id))
+                .map(|image| image.id.clone())
+                .collect();
+            if doomed.is_empty() {
+                return 0;
+            }
+            self.archived(page);
+            if let Err(error) = self.store.remove(page, &doomed) {
+                tracing::error!(page, %error, "image delete failed");
+                return 0;
+            }
+            content.images.retain(|image| !doomed.contains(&image.id));
+            (content.clone(), doomed.len())
         };
-        if removed == 0 {
-            return 0;
-        }
-        self.archived(page);
-        if let Err(error) = self.store.remove(page, ids) {
-            tracing::error!(page, %error, "image delete failed");
-        }
-        let content = self.content(page).await.unwrap_or_default();
         self.fan_out(Some(page.to_owned()), page_frame(page, &content));
         removed
     }
@@ -73,22 +78,23 @@ impl Library {
         self.store.history(page)
     }
 
-    /// Puts an archive back; returns how many objects came back, or `None` when there is no archive.
+    /// Puts an archive back; returns how many objects came back, or `None` when the page or the archive does
+    /// not exist (nothing changes then). The current state is archived first, so a restore can be undone.
     pub async fn restore(&self, page: &str, stamp: Option<i64>) -> Result<Option<usize>, String> {
-        let restored = self.store.restore(page, stamp)?;
-        if let Some(restored) = restored {
-            let content = self.store.content(page)?;
-            self.pages
-                .write()
-                .await
-                .insert(page.to_owned(), content.clone());
-            self.fan_out(
-                Some(page.to_owned()),
-                super::model::page_frame(page, &content),
-            );
-            return Ok(Some(restored));
+        if !self.has_page(page).await {
+            return Ok(None);
         }
-        Ok(None)
+        let (restored, content) = {
+            let mut pages = self.pages.write().await;
+            let Some(restored) = self.store.restore(page, stamp)? else {
+                return Ok(None);
+            };
+            let content = self.store.content(page)?;
+            pages.insert(page.to_owned(), content.clone());
+            (restored, content)
+        };
+        self.fan_out(Some(page.to_owned()), page_frame(page, &content));
+        Ok(Some(restored))
     }
 }
 

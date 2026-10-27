@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use super::legacy::is_well_formed;
+use super::legacy::accepted;
 use super::model::{AGENT_LAYER, op_frame, page_frame, remove_op, replace_op, stroke_frame};
 use super::{Library, PageContent, StrokeMsg};
 
@@ -55,7 +55,10 @@ impl Library {
 
     /// Appends a stroke to `page`, persists, and fans it out. False for a malformed stroke or unknown page.
     pub async fn append(&self, page: &str, stroke: StrokeMsg) -> bool {
-        if !is_well_formed(&stroke) || !self.has_page(page).await {
+        let Some(stroke) = accepted(stroke) else {
+            return false;
+        };
+        if !self.has_page(page).await {
             return false;
         }
         {
@@ -83,7 +86,7 @@ impl Library {
 
     /// Appends several strokes with one save and one snapshot broadcast (agent annotations).
     pub async fn append_many(&self, page: &str, strokes: Vec<StrokeMsg>) -> usize {
-        let strokes: Vec<StrokeMsg> = strokes.into_iter().filter(is_well_formed).collect();
+        let strokes: Vec<StrokeMsg> = strokes.into_iter().filter_map(accepted).collect();
         if strokes.is_empty() || !self.has_page(page).await {
             return 0;
         }
@@ -124,6 +127,10 @@ impl Library {
         added
     }
 
+    // The destructive edits below share one order: archive, commit to the database, only then change the
+    // cache and fan out. A failed write changes nothing and tells nobody, so clients never see an edit the
+    // database refused (it would come back on the next restart). They return 0 in that case.
+
     /// Removes every agent-authored stroke from `page`; returns how many were removed.
     pub async fn clear_agent(&self, page: &str) -> usize {
         let (all, removed) = {
@@ -131,17 +138,23 @@ impl Library {
             let Some(current) = pages.get_mut(page) else {
                 return 0;
             };
-            let before = current.strokes.len();
-            current.strokes.retain(|stroke| stroke.layer != AGENT_LAYER);
-            (current.clone(), before - current.strokes.len())
-        };
-        if removed > 0 {
+            let removed = current
+                .strokes
+                .iter()
+                .filter(|stroke| stroke.layer == AGENT_LAYER)
+                .count();
+            if removed == 0 {
+                return 0;
+            }
             self.archived(page);
             if let Err(error) = self.store.remove_agent_strokes(page) {
                 tracing::error!(page, %error, "agent clear failed");
+                return 0;
             }
-            self.fan_out(Some(page.to_owned()), page_frame(page, &all));
-        }
+            current.strokes.retain(|stroke| stroke.layer != AGENT_LAYER);
+            (current.clone(), removed)
+        };
+        self.fan_out(Some(page.to_owned()), page_frame(page, &all));
         removed
     }
 
@@ -150,60 +163,80 @@ impl Library {
         if seeds.is_empty() {
             return 0;
         }
-        let removed = {
+        let doomed: Vec<String> = {
             let mut pages = self.pages.write().await;
             let Some(current) = pages.get_mut(page) else {
                 return 0;
             };
-            let before = current.strokes.len();
+            // Only seeds that name strokes here: an id of another object kind must not be deleted through
+            // a stroke `remove`.
+            let doomed: Vec<String> = current
+                .strokes
+                .iter()
+                .filter(|stroke| seeds.contains(&stroke.seed))
+                .map(|stroke| stroke.seed.clone())
+                .collect();
+            if doomed.is_empty() {
+                return 0;
+            }
+            self.archived(page);
+            if let Err(error) = self.store.remove(page, &doomed) {
+                tracing::error!(page, %error, "stroke delete failed");
+                return 0;
+            }
             current
                 .strokes
-                .retain(|stroke| !seeds.iter().any(|seed| seed == &stroke.seed));
-            before - current.strokes.len()
+                .retain(|stroke| !doomed.contains(&stroke.seed));
+            doomed
         };
-        if removed == 0 {
-            return 0;
-        }
-        self.archived(page);
-        if let Err(error) = self.store.remove(page, seeds) {
-            tracing::error!(page, %error, "stroke delete failed");
-        }
-        self.fan_out(Some(page.to_owned()), op_frame(page, &remove_op(seeds)));
+        self.fan_out(Some(page.to_owned()), op_frame(page, &remove_op(&doomed)));
         self.resolve_anchors(page).await;
-        removed
+        doomed.len()
     }
 
     /// Replaces the given strokes with `strokes` (a split erase); broadcasts the replacement.
+    ///
+    /// Replacements whose seed the page already holds (or that repeat inside the batch) are dropped, so the
+    /// cache and the database always list the same strokes. Returns the page's stroke count afterwards.
     pub async fn replace_strokes(
         &self,
         page: &str,
         seeds: &[String],
         strokes: Vec<StrokeMsg>,
     ) -> usize {
-        let strokes: Vec<StrokeMsg> = strokes.into_iter().filter(is_well_formed).collect();
-        let all = {
+        let incoming: Vec<StrokeMsg> = strokes.into_iter().filter_map(accepted).collect();
+        let (total, added) = {
             let mut pages = self.pages.write().await;
             let Some(current) = pages.get_mut(page) else {
                 return 0;
             };
-            if !seeds.is_empty() {
-                current
-                    .strokes
-                    .retain(|stroke| !seeds.iter().any(|seed| seed == &stroke.seed));
+            let mut next: Vec<StrokeMsg> = current
+                .strokes
+                .iter()
+                .filter(|stroke| !seeds.contains(&stroke.seed))
+                .cloned()
+                .collect();
+            let mut seen: HashSet<String> = next.iter().map(|stroke| stroke.seed.clone()).collect();
+            let added: Vec<StrokeMsg> = incoming
+                .into_iter()
+                .filter(|stroke| seen.insert(stroke.seed.clone()))
+                .collect();
+            next.extend(added.iter().cloned());
+            self.archived(page);
+            if let Err(error) = self.store.replace_strokes(page, &next) {
+                tracing::error!(page, %error, "stroke replace failed");
+                return 0;
             }
-            current.strokes.extend(strokes.clone());
-            current.clone()
+            let total = next.len();
+            current.strokes = next;
+            (total, added)
         };
-        self.archived(page);
-        if let Err(error) = self.store.replace_strokes(page, &all.strokes) {
-            tracing::error!(page, %error, "stroke replace failed");
-        }
         self.fan_out(
             Some(page.to_owned()),
-            op_frame(page, &replace_op(seeds, &strokes)),
+            op_frame(page, &replace_op(seeds, &added)),
         );
         self.resolve_anchors(page).await;
-        all.strokes.len()
+        total
     }
 
     /// Empties one page (the tablet's clear).
@@ -214,26 +247,36 @@ impl Library {
                 return 0;
             };
             let before = current.strokes.len() + current.images.len();
+            if before == 0 {
+                return 0;
+            }
+            self.archived(page);
+            if let Err(error) = self.store.clear(page) {
+                tracing::error!(page, %error, "page clear failed");
+                return 0;
+            }
             current.strokes.clear();
             current.images.clear();
             before
         };
-        if removed > 0 {
-            self.archived(page);
-            if let Err(error) = self.store.clear(page) {
-                tracing::error!(page, %error, "page clear failed");
-            }
-            self.fan_out(
-                Some(page.to_owned()),
-                op_frame(page, &serde_json::json!({ "k": "clear" })),
-            );
-        }
+        self.fan_out(
+            Some(page.to_owned()),
+            op_frame(page, &serde_json::json!({ "k": "clear" })),
+        );
         removed
     }
 
     /// Replaces every stroke on `page` (tablet undo, clear or erase) and fans the snapshot out.
+    ///
+    /// Strokes repeating a seed are dropped after the first. Returns the stroke count now on the page, 0 when
+    /// the page is unknown or the database refused.
     pub async fn replace(&self, page: &str, strokes: Vec<StrokeMsg>) -> usize {
-        let strokes: Vec<StrokeMsg> = strokes.into_iter().filter(is_well_formed).collect();
+        let mut seen = HashSet::new();
+        let strokes: Vec<StrokeMsg> = strokes
+            .into_iter()
+            .filter_map(accepted)
+            .filter(|stroke| seen.insert(stroke.seed.clone()))
+            .collect();
         let count = strokes.len();
         let content = {
             let mut pages = self.pages.write().await;
@@ -242,13 +285,14 @@ impl Library {
                 .map(|content| content.images.clone())
                 .unwrap_or_default();
             let content = PageContent { strokes, images };
+            self.archived(page);
+            if let Err(error) = self.store.replace_strokes(page, &content.strokes) {
+                tracing::error!(page, %error, "page replace failed");
+                return 0;
+            }
             pages.insert(page.to_owned(), content.clone());
             content
         };
-        self.archived(page);
-        if let Err(error) = self.store.replace_strokes(page, &content.strokes) {
-            tracing::error!(page, %error, "page replace failed");
-        }
         self.fan_out(Some(page.to_owned()), page_frame(page, &content));
         self.resolve_anchors(page).await;
         count

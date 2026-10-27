@@ -3,11 +3,12 @@
 //! Keeping them as strokes means they render, persist, appear in the PNG and can be cleared as a set — without a
 //! second rendering path. Sampling is the same dense-walk the shape tool uses, so marks look like drawn ink.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::collections::hash_map::RandomState;
+use std::hash::{BuildHasher, Hasher};
 
 use serde::Deserialize;
 
-use crate::library::{AGENT_LAYER, StrokeMsg};
+use crate::library::{AGENT_LAYER, MAX_STROKE_SAMPLES, StrokeMsg};
 
 /// Distance between synthesised samples along a segment, page px.
 const STEP_PX: f32 = 4.0;
@@ -23,8 +24,6 @@ const PRESET: u32 = 0;
 const DEFAULT_ARGB: i32 = 0xFFE0_3131_u32.cast_signed();
 /// Ballpoint's nominal width, used to turn a requested width into a size scale.
 const NOMINAL_WIDTH: f32 = 3.2;
-
-static SEEDS: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Deserialize)]
 pub struct AnnotateRequest {
@@ -65,6 +64,9 @@ fn stroke_of(annotation: &AnnotatedStroke) -> Option<StrokeMsg> {
     let mut times = Vec::new();
     for pair in points.windows(2) {
         append_segment(pair[0], pair[1], &mut samples, &mut times);
+        if times.len() > MAX_STROKE_SAMPLES {
+            return None;
+        }
     }
     if times.is_empty() {
         return None;
@@ -80,27 +82,44 @@ fn stroke_of(annotation: &AnnotatedStroke) -> Option<StrokeMsg> {
             .as_deref()
             .map_or(DEFAULT_ARGB, parse_color),
         scale,
-        seed: SEEDS.fetch_add(1, Ordering::Relaxed).to_string(),
+        seed: new_seed().to_string(),
         samples,
         times,
     })
 }
 
+/// A random seed from the OS generator, 63 bits so the tablet's signed `Long` parses it.
+///
+/// Seeds are stroke identity on a page, so a counter restarting at 1 after every server start collided with the
+/// strokes already stored. `RandomState` draws its keys from the OS RNG (and steps them per instance), which is
+/// all the entropy an identity needs without a new dependency.
+fn new_seed() -> i64 {
+    let bits = RandomState::new().build_hasher().finish();
+    i64::try_from(bits >> 1).unwrap_or(0)
+}
+
 /// Appends samples along one segment, excluding the start and including the end (the first point of the first
 /// segment is seeded by the caller never being empty: the stroke starts at its first sample).
+///
+/// A segment never adds more than `MAX_STROKE_SAMPLES + 1` samples, however long (or infinite) it is, so the
+/// caller can reject an oversized stroke after the fact without having allocated it.
 fn append_segment(from: [f32; 2], to: [f32; 2], samples: &mut Vec<f32>, times: &mut Vec<i32>) {
     let dx = to[0] - from[0];
     let dy = to[1] - from[1];
     let length = (dx * dx + dy * dy).sqrt();
-    if length <= MIN_SEGMENT_PX {
+    if !length.is_finite() || length <= MIN_SEGMENT_PX {
         return;
     }
     #[allow(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
-        reason = "length is finite and positive here; the ceiling of a small ratio fits usize"
+        clippy::cast_precision_loss,
+        reason = "length is finite and positive; the ceiling is capped to a count that fits usize and f32"
     )]
-    let steps = ((length / STEP_PX).ceil() as usize).max(1);
+    let steps = ((length / STEP_PX)
+        .ceil()
+        .min((MAX_STROKE_SAMPLES + 1) as f32) as usize)
+        .max(1);
     for step in 1..=steps {
         let t = ratio(step, steps);
         samples.extend_from_slice(&[from[0] + dx * t, from[1] + dy * t, PRESSURE, 0.0, 0.0]);
@@ -219,5 +238,43 @@ mod tests {
         let a = to_strokes(&request(line(vec![[0.0, 0.0], [10.0, 0.0]], None, None)));
         let b = to_strokes(&request(line(vec![[0.0, 0.0], [10.0, 0.0]], None, None)));
         assert_ne!(a[0].seed, b[0].seed);
+    }
+
+    #[test]
+    fn seeds_are_non_negative_63_bit_numbers() {
+        for _ in 0..200 {
+            let strokes = to_strokes(&request(line(vec![[0.0, 0.0], [10.0, 0.0]], None, None)));
+            assert!(strokes[0].seed.parse::<i64>().expect("fits a signed Long") >= 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn an_annotation_after_a_server_restart_is_not_dropped_as_a_duplicate() {
+        let dir = std::env::temp_dir().join(format!("penwise-annotate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let draw = || to_strokes(&request(line(vec![[0.0, 0.0], [10.0, 0.0]], None, None)));
+        let library = crate::library::Library::load(dir.clone());
+        let page = library.active().await;
+        assert_eq!(1, library.append_many(&page, draw()).await);
+        drop(library);
+
+        let restarted = crate::library::Library::load(dir.clone());
+        assert_eq!(
+            1,
+            restarted.append_many(&page, draw()).await,
+            "added, not skipped"
+        );
+        assert_eq!(2, restarted.strokes(&page).await.len());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn absurdly_long_annotations_are_rejected_without_allocating_them() {
+        let far = request(line(vec![[0.0, 0.0], [3.0e38, 0.0]], None, None));
+        assert!(to_strokes(&far).is_empty(), "infinite-length segment");
+        let huge = request(line(vec![[0.0, 0.0], [1.0e9, 0.0]], None, None));
+        assert!(to_strokes(&huge).is_empty(), "250M samples is over the cap");
+        let fine = request(line(vec![[0.0, 0.0], [300_000.0, 0.0]], None, None));
+        assert_eq!(1, to_strokes(&fine).len(), "75k samples is within the cap");
     }
 }

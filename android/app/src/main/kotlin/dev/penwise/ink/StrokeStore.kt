@@ -105,31 +105,36 @@ class StrokeStore {
      * two-client page would ping-pong the same removal forever.
      */
     fun applyRemote(op: RemoteOp): Boolean {
-        val before = entries.size
-        when (op) {
-            is RemoteOp.Remove -> {
-                entries.removeAll { it.seed in op.seeds }
-            }
+        val changed =
+            when (op) {
+                is RemoteOp.Remove -> {
+                    entries.removeAll { it.seed in op.seeds }
+                }
 
-            is RemoteOp.Clear -> {
-                entries.clear()
-            }
+                is RemoteOp.Clear -> {
+                    entries.isNotEmpty().also { entries.clear() }
+                }
 
-            is RemoteOp.Replace -> {
-                entries.removeAll { it.seed in op.seeds }
-                entries.addAll(op.fragments)
-            }
+                is RemoteOp.Replace -> {
+                    val removed = entries.removeAll { it.seed in op.seeds }
+                    addUnknown(op.fragments) or removed
+                }
 
-            is RemoteOp.Add -> {
-                val known = entries.mapTo(HashSet()) { it.seed }
-                entries.addAll(op.strokes.filter { it.seed !in known })
+                is RemoteOp.Add -> {
+                    addUnknown(op.strokes)
+                }
             }
-        }
-        if (entries.size == before && op !is RemoteOp.Replace) return false
+        if (!changed) return false
         publish()
         onPageChanged?.invoke()
         persist()
         return true
+    }
+
+    /** Appends the strokes whose seed is not on the page yet; the server echoes this device's own ops back. */
+    private fun addUnknown(incoming: List<SavedStroke>): Boolean {
+        val known = entries.mapTo(HashSet()) { it.seed }
+        return entries.addAll(incoming.filter { known.add(it.seed) })
     }
 
     /**
