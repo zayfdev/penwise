@@ -16,6 +16,7 @@ use crate::notebook::PageChange;
 use crate::op::{AnyOp, SeqOp};
 use crate::snapshot::{Scope, SnapshotChunk};
 
+mod adopt;
 mod page;
 
 pub use page::PageReplica;
@@ -187,9 +188,14 @@ impl Replica {
         Ok(applied)
     }
 
-    /// Ends a snapshot taken at `head_seq`: the cursor becomes `max(cursor, head_seq)`.
-    pub fn end_snapshot(&mut self, head_seq: u64) {
-        self.advance_to(head_seq);
+    /// Ends a snapshot of `scope` taken at `head_seq`. `All` and `Catalog` snapshots move the cursor to
+    /// `max(cursor, head_seq)`. A `Page` snapshot does not: it covers one page only, so ops of other pages and
+    /// of the catalog between the cursor and `head_seq` are still to be delivered (the server's cursor does not
+    /// advance either).
+    pub fn end_snapshot(&mut self, scope: Scope, head_seq: u64) {
+        if !matches!(scope, Scope::Page(_)) {
+            self.advance_to(head_seq);
+        }
     }
 
     /// Highest applied `seq` (the client's `last_seen_seq`).

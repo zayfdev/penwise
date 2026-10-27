@@ -88,6 +88,16 @@ pub struct Appended {
     pub duplicate: bool,
 }
 
+/// What a page restore did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Restored {
+    /// The compensating ops, in one batch (empty when nothing differed).
+    pub appended: Vec<Appended>,
+    /// Items that changed after `to_seq` but could not be rolled back: their `Add` was compacted away, so
+    /// their state at `to_seq` is unknowable. They keep their current state.
+    pub skipped: Vec<penwise_core::item::ItemId>,
+}
+
 /// Which ops a session wants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OpFilter {

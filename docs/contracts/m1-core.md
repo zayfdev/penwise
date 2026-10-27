@@ -1,3 +1,5 @@
+> **Historical contract (pre-rewrite fan-out); current behavior: docs/rewrite-design.md, docs/pages.md and the code.**
+
 # M1 contract: `penwise-core` ink engine
 
 Status: committed contract for the M1 fan-out (PLAN "Phase loop" step 2). Implementers code against it and never

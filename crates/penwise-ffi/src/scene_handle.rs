@@ -20,10 +20,10 @@ pub use tools::{
 
 use penwise_core::edit::{Edit, UndoStack, undo::DEFAULT_DEPTH};
 use penwise_core::item::{ItemId, LayerSet, Scene};
-use penwise_proto::PageId;
+use penwise_proto::outbox::check_edit_size;
+use penwise_proto::{IdMint, PageId};
 
 use crate::error::SyncError;
-use crate::ids::IdMint;
 use crate::sync_core::SyncCore;
 use dirty::Dirty;
 
@@ -116,6 +116,27 @@ impl SceneHandle {
         Ok(edits)
     }
 
+    /// Commits `edits` (just applied to this scene by a tool, undo or redo) to `core` for this page. When the
+    /// commit fails the scene is reloaded from the replica, so it never keeps an edit the replica refused.
+    ///
+    /// # Errors
+    /// The commit's error (`OpTooLarge`, validation, replica).
+    pub fn commit_into(
+        &mut self,
+        core: &mut SyncCore,
+        edits: &[Edit],
+        now_ms: u64,
+    ) -> Result<(), SyncError> {
+        if edits.is_empty() {
+            return Ok(());
+        }
+        if let Err(error) = core.commit_edits(self.page, edits, now_ms) {
+            let _ = self.reload(core);
+            return Err(error);
+        }
+        Ok(())
+    }
+
     /// Takes the ids whose render data changed since the last call (see [`dirty`]): byte 0 is `1` when the
     /// whole scene changed, then 16-byte ids.
     pub fn take_dirty(&mut self) -> Vec<u8> {
@@ -131,6 +152,9 @@ impl SceneHandle {
     /// Applies `edits` as local recorded edits; Adds go first and Deletes last so a mid-gesture disconnect can
     /// only duplicate ink, never lose it (design §1.3).
     fn local(&mut self, mut edits: Vec<Edit>) -> Result<Vec<Edit>, SyncError> {
+        for edit in &edits {
+            check_edit_size(edit).map_err(SyncError::OpTooLarge)?;
+        }
         edits.sort_by_key(|e| matches!(e, Edit::Delete(_)));
         self.dirty.mark_edits(&self.scene, &edits);
         self.undo.apply_local(&mut self.scene, &edits)?;

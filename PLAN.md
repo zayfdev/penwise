@@ -178,6 +178,17 @@ Two brush families in `penwise-core`, both deterministic on every surface:
 | M5 | MCP | All stage-1 tools usable from an agent; annotations appear live on tablet + browser |
 | M6 | Recognition | Scan button + auto-scan produce text layer; `get_page_text` returns it |
 
+**Status** (as of the op-log rewrite, HEAD 48d30e4; details in `docs/rewrite-design.md`, `docs/next-iteration.md`):
+
+- **M0 — done.** Toolchain and `just check` gate.
+- **M1 — done.** Both brush families, deterministic geometry, codec round-trips; gate record `docs/gates/M1.md` (historical).
+- **M2 — done in `penwise-core`** (erasers, fill, shapes, lasso, undo). The tablet and browser do not expose the fill bucket; the tablet has no shape-resize UI.
+- **M3 — done, rewritten.** Server on schema v4: op log + HLC + per-field LWW, one writer thread, binary `/sync`, snapshots and 7-day retention, restore, pairing code/QR, static viewer; `penwise-wasm` + `web/` viewer. No mDNS advertisement. Single shared token, cleartext (S7 pending).
+- **M4 — done, rewritten.** Thin Kotlin shell over `penwise-ffi` (`SceneHandle`, `SyncCore`); persisted outbox, offline drawing syncs on reconnect. Gaps: state file is the whole replica per commit, lasso move shows only a frame, no fill/shape-resize UI.
+- **M5 — done with a different shape.** `penwise-mcp` is a stdio server over the HTTP API (not `rmcp`); tools are `penwise_*` (`docs/mcp.md`), not the names in "MCP tools (stage 1)" above. Annotations reach tablet and browser live as ops from the server device.
+- **M6 — partial.** Server-side handwriting → text-layer items via a local Ollama model, `GET /text`, `GET /search`, MCP `penwise_page_text` / `penwise_search`. Not built: tablet scan button, auto-scan, a `Recognizer` trait / worker, `request_scan`.
+- **Browser drawing (post-M3, not in the original plan)** — pen/mouse ink with undo, text panel, search, pairing panel (`docs/draw.md`).
+
 ## Build process
 
 | Part | Build | Output |

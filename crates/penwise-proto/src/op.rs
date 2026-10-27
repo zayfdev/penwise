@@ -129,6 +129,17 @@ impl AnyOp {
         }
     }
 
+    /// The same op under a new stamp (re-stamping a refused op; `hlc.device` must stay the author's).
+    #[must_use]
+    pub fn with_hlc(mut self, hlc: Hlc) -> Self {
+        match &mut self {
+            Self::Item(op) => op.hlc = hlc,
+            Self::Page(op) => op.hlc = hlc,
+            Self::Notebook(op) => op.hlc = hlc,
+        }
+        self
+    }
+
     /// Page an item/page op belongs to; `None` for notebook ops.
     #[must_use]
     pub fn page(&self) -> Option<PageId> {

@@ -8,18 +8,16 @@ import { attachHistoryKeys } from "../input/keys";
 import { PenInput } from "../input/pen";
 import { Api } from "../net/api";
 import { Connection, type ConnectionState } from "../net/connection";
-import { clearToken, resolveDevice, resolveToken } from "../net/credentials";
+import { clearToken, resolveToken } from "../net/credentials";
 import { browserOptions } from "../net/socket";
 import { type DrawData, EMPTY_DRAW, readDrawList } from "../render/drawdata";
-import { GrainCache } from "../render/grain";
+import { PaperGrain } from "../render/grain";
 import { ImageCache } from "../render/images";
 import { PageView } from "../render/pageview";
-import { PairingPanel } from "../ui/pairing-panel";
-import { SearchPanel } from "../ui/search-panel";
+import { attachSidePanels } from "../ui/side-panels";
 import { Sidebar } from "../ui/sidebar";
 import { attachStage } from "../ui/stage";
 import { StatusPill } from "../ui/status";
-import { TextPanel } from "../ui/text-panel";
 import { Toolbar } from "../ui/toolbar";
 import { Unlock } from "../ui/unlock";
 import { fitView, type Viewport } from "../view";
@@ -27,7 +25,9 @@ import { MessageKind, type Received, type Viewer, type Wasm } from "../wasm";
 import { Actions } from "./actions";
 import { choosePage, findPage, type NotebookGroup, readCatalog } from "./catalog";
 import { type FollowMode, planReceived, SnapshotTracker } from "./follow";
+import { historyState, stepHistory } from "./history";
 import { exposeProbe } from "./probe";
+import { Unsent } from "./unsent";
 
 /** All layers of a page (core `LayerSet` bits). */
 const ALL_LAYERS = 0b111;
@@ -45,6 +45,7 @@ export class App {
   private readonly unlock: Unlock;
   private readonly stage: HTMLElement;
   private readonly actions: Actions;
+  private readonly unsent: Unsent;
   private token = "";
   private groups: NotebookGroup[] = [];
   private current: string | null = null;
@@ -58,16 +59,22 @@ export class App {
   private connState: ConnectionState = "closed";
   private readonly snapshots = new SnapshotTracker();
 
-  constructor(private readonly wasm: Wasm) {
+  constructor(
+    private readonly wasm: Wasm,
+    device: string,
+  ) {
     this.stage = byId("stage", HTMLElement);
     this.viewer = new wasm.Viewer();
-    const random = (bytes: Uint8Array): Uint8Array => {
-      crypto.getRandomValues(bytes as Uint8Array<ArrayBuffer>);
-      return bytes;
-    };
-    const device = resolveDevice(sessionStorage, wasm, Date.now(), random);
     const entropy = new BigUint64Array(crypto.getRandomValues(new Uint8Array(8)).buffer)[0] ?? 1n;
-    this.viewer.identify(device, entropy);
+    this.unsent = new Unsent(
+      this.viewer,
+      localStorage,
+      device,
+      byId("dead-panel", HTMLElement),
+      (message) => this.status.problem(message),
+      () => this.refreshStatus(),
+    );
+    this.unsent.restoreOrIdentify(device, entropy);
     this.token = resolveToken(location.search, localStorage) ?? "";
     this.api = new Api(() => this.token);
     this.actions = new Actions(this.api, {
@@ -84,7 +91,7 @@ export class App {
     });
     this.status = new StatusPill(byId("status", HTMLElement));
     this.unlock = new Unlock(byId("unlock", HTMLElement), (code) => this.actions.pair(code));
-    const grain = new GrainCache(wasm);
+    const grain = new PaperGrain();
     const images = new ImageCache(
       (hash) => this.api.asset(hash),
       () => this.pageView.invalidateCommitted(),
@@ -129,14 +136,11 @@ export class App {
         void this.actions.createPage(template, notebook, title),
       newNotebook: (title) => void this.actions.createNotebook(title),
     });
-    new TextPanel(byId("text-panel", HTMLElement), this.api, () => this.current);
-    new SearchPanel(byId("search-panel", HTMLElement), this.api, (page) => this.userSelect(page));
-    const pairing = new PairingPanel(byId("pair-panel", HTMLElement), this.api);
-    byId("pair-toggle", HTMLButtonElement).addEventListener("click", () => {
-      const panel = byId("pair-panel", HTMLElement);
-      panel.hidden = !panel.hidden;
-      if (!panel.hidden) void pairing.load(false);
-    });
+    attachSidePanels(
+      this.api,
+      () => this.current,
+      (page) => this.userSelect(page),
+    );
     this.connection = this.makeConnection();
     attachStage(this.stage, {
       pen: this.pen,
@@ -148,6 +152,7 @@ export class App {
       resized: (viewport, dpr) => this.resized(viewport, dpr),
     });
     attachHistoryKeys(window, (redo) => this.step(redo));
+    window.addEventListener("beforeunload", (event) => this.unsent.warn(event));
     exposeProbe(this.pageView.stats, () => ({
       page: this.current,
       view: this.pageView.transform,
@@ -278,27 +283,18 @@ export class App {
   }
 
   private step(redo: boolean): void {
-    if (this.current === null) return;
-    try {
-      const count = redo
-        ? this.viewer.redo(this.current, Date.now())
-        : this.viewer.undo(this.current, Date.now());
-      if (count > 0) this.connection.flush();
-    } catch (error) {
-      this.status.problem(`${redo ? "redo" : "undo"} failed: ${String(error)}`);
+    if (this.current !== null) {
+      const flush = () => this.connection.flush();
+      stepHistory(this.viewer, this.current, redo, flush, (m) => this.status.problem(m));
     }
     this.afterLocalEdit();
   }
 
   private refreshHistory(): void {
-    const page = this.current;
-    this.toolbar.setHistory(
-      page !== null && this.viewer.can_undo(page),
-      page !== null && this.viewer.can_redo(page),
-    );
+    this.toolbar.setHistory(...historyState(this.viewer, this.current));
   }
 
   private refreshStatus(): void {
-    this.status.show(this.connState, this.viewer.pending_ops());
+    this.status.show(this.connState, this.viewer.pending_ops(), this.unsent.sync());
   }
 }

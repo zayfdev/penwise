@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { falloff } from "./dabs";
 import {
   commandAt,
   commandCount,
@@ -11,7 +10,6 @@ import {
   runRange,
   styleAt,
 } from "./drawdata";
-import { GrainCache } from "./grain";
 import { apply, mul, scaleOf, viewMatrix } from "./matrix";
 import { wrapLines } from "./paint";
 import { rulings, visibleRect } from "./paper";
@@ -37,19 +35,6 @@ describe("draw data accessors", () => {
     expect(cssColor(style)).toBe("rgb(255 128 0)");
     expect(isEmpty(data)).toBe(false);
     expect(isEmpty(EMPTY_DRAW)).toBe(true);
-  });
-});
-
-describe("dab falloff (core dab_falloff)", () => {
-  it("is 1 at the centre, 0 outside, hard for hardness 1", () => {
-    expect(falloff(0, 0.5)).toBe(1);
-    expect(falloff(1.01, 0.5)).toBe(0);
-    expect(falloff(0.99, 1)).toBe(1);
-    expect(falloff(0.5, 0)).toBe(0);
-  });
-  it("is the two-segment MyPaint curve", () => {
-    expect(falloff(0.5, 0.5)).toBeCloseTo(0.5);
-    expect(falloff(0.75, 0.5)).toBeCloseTo(0.25);
   });
 });
 
@@ -85,12 +70,5 @@ describe("wrapLines", () => {
     expect(wrapLines("aaa bbb ccc", 7, measure)).toEqual(["aaa bbb", "ccc"]);
     expect(wrapLines("a\nb", 10, measure)).toEqual(["a", "b"]);
     expect(wrapLines("longerword x", 3, measure)).toEqual(["longerword", "x"]);
-  });
-});
-
-describe("GrainCache", () => {
-  it("shares patterns between strokes whose grain differs by less than a bucket", () => {
-    expect(GrainCache.key(1, 0.5, 0.1, 0.8)).toBe(GrainCache.key(1, 0.501, 0.1, 0.799));
-    expect(GrainCache.key(1, 0.5, 0.1, 0.8)).not.toBe(GrainCache.key(2, 0.5, 0.1, 0.8));
   });
 });

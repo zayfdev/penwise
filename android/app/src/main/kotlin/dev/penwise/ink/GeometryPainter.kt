@@ -16,15 +16,14 @@ import dev.penwise.core.InkGeometry
 
 /** Draws render data on a Canvas. Not thread-safe: one instance per render layer. */
 internal class GeometryPainter(
-    private val grain: GrainMasks,
     private val images: () -> PageImages? = { null },
 ) {
     private val path = Path()
     private val bounds = RectF()
-    private val shaders = DabShaders()
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
-    private val dabPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK }
+    private val stampPaint = Paint()
     private val layerPaint = Paint()
+    private val stampBuffer = StampBuffer()
     private val maskPaint =
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
@@ -44,12 +43,8 @@ internal class GeometryPainter(
         geometry: InkGeometry,
     ) {
         if (geometry.isStamps) {
-            geometry.boundsInto(bounds)
-            val d = geometry.dabs
-            val strength = if (d.size >= Dab.STRIDE) d[Dab.GRAIN_STRENGTH] else 0f
-            val level = if (d.size >= Dab.STRIDE) d[Dab.GRAIN_LEVEL] else 0f
-            val grainParams = Grain(1f, strength, level)
-            stamps(canvas, geometry.dabs, geometry.argb, geometry.opacity, geometry.multiply, grainParams)
+            val grain = GrainStyle(geometry.grainScale, geometry.grainSoftness)
+            stamps(canvas, geometry.dabs, geometry.argb, geometry.opacity, geometry.multiply, grain)
         } else {
             val (points, ends) = geometry.outline to geometry.contourEnds
             outline(canvas, points, ends, geometry.argb, geometry.opacity, false, geometry.multiply, null)
@@ -82,15 +77,13 @@ internal class GeometryPainter(
     ) {
         when (part) {
             is RenderPart.Outline -> {
-                outline(canvas, part.points, part.contourEnds, part.argb, part.opacity, part.evenOdd, multiply, part)
+                val blend = multiply && !part.normalBlend
+                outline(canvas, part.points, part.contourEnds, part.argb, part.opacity, part.evenOdd, blend, part)
             }
 
             is RenderPart.Stamps -> {
-                setBounds(part.dabs)
-                val first = part.dabs
-                val level = if (first.size >= Dab.STRIDE) first[Dab.GRAIN_LEVEL] else 0f
-                val grainParams = Grain(part.grainScale, part.grainStrength, level, part.grainSoftness)
-                stamps(canvas, part.dabs, part.argb, part.opacity, multiply, grainParams)
+                val grain = GrainStyle(part.grainScale, part.grainSoftness)
+                stamps(canvas, part.dabs, part.argb, part.opacity, multiply, grain)
             }
 
             is RenderPart.Mask -> {}
@@ -130,58 +123,26 @@ internal class GeometryPainter(
         canvas.drawPath(target, fillPaint)
     }
 
-    /** Dabs accumulate inside one layer, so overlaps never exceed the stroke opacity applied at restore. */
+    /**
+     * One stamp stroke: coverage computed per pixel by [StampRaster] (core's per-dab falloff, grain and minimum
+     * fade, union rule), drawn as an alpha mask tinted with the stroke color at the stroke opacity. Only the part
+     * of the stroke under the canvas clip is rasterized.
+     */
     private fun stamps(
         canvas: Canvas,
         d: FloatArray,
         argb: Int,
         opacity: Float,
         multiply: Boolean,
-        grainParams: Grain,
+        grain: GrainStyle,
     ) {
-        if (bounds.isEmpty) return
-        layerPaint.alpha = alpha255(Color.alpha(argb) / MAX_ALPHA * opacity)
-        layerPaint.blendMode = if (multiply) BlendMode.MULTIPLY else null
-        val save = canvas.saveLayer(bounds, layerPaint)
-        var i = 0
-        while (i + Dab.STRIDE <= d.size) {
-            dab(canvas, d, i)
-            i += Dab.STRIDE
-        }
-        grain.paint(grainParams.strength, grainParams.level, grainParams.softness, grainParams.scale)?.let {
-            canvas.drawRect(bounds, it)
-        }
-        canvas.drawColor(argb or OPAQUE, BlendMode.SRC_IN)
-        canvas.restoreToCount(save)
-    }
-
-    private fun dab(
-        canvas: Canvas,
-        d: FloatArray,
-        o: Int,
-    ) {
-        val rx = d[o + Dab.RADIUS_X]
-        val ry = d[o + Dab.RADIUS_Y]
-        if (rx <= 0f || ry <= 0f) return
-        dabPaint.shader = shaders.forHardness(d[o + Dab.HARDNESS])
-        dabPaint.alpha = alpha255(d[o + Dab.OPACITY])
-        canvas.withTranslation(d[o + Dab.X], d[o + Dab.Y]) {
-            rotate(Math.toDegrees(d[o + Dab.ANGLE].toDouble()).toFloat())
-            scale(rx, ry)
-            drawCircle(0f, 0f, 1f, dabPaint)
-        }
-    }
-
-    private fun setBounds(dabs: FloatArray) {
-        val b = Bounds()
-        var i = 0
-        while (i + Dab.STRIDE <= dabs.size) {
-            val r = maxOf(dabs[i + Dab.RADIUS_X], dabs[i + Dab.RADIUS_Y])
-            b.add(dabs[i + Dab.X] - r, dabs[i + Dab.Y] - r)
-            b.add(dabs[i + Dab.X] + r, dabs[i + Dab.Y] + r)
-            i += Dab.STRIDE
-        }
-        if (b.isEmpty) bounds.setEmpty() else bounds.set(b.left, b.top, b.right, b.bottom)
+        val alpha = alpha255(Color.alpha(argb) / MAX_ALPHA * opacity)
+        if (alpha == 0) return
+        val clip = canvas.clipBounds.let { PixelRect(it.left, it.top, it.right, it.bottom) }
+        val bitmap = stampBuffer.rasterize(d, if (grain.scale > 0f) grain else null, clip) ?: return
+        stampPaint.color = (argb and RGB_MASK) or (alpha shl ALPHA_SHIFT)
+        stampPaint.blendMode = if (multiply) BlendMode.MULTIPLY else null
+        canvas.drawBitmap(bitmap, stampBuffer.left.toFloat(), stampBuffer.top.toFloat(), stampPaint)
     }
 
     private fun mask(
@@ -258,7 +219,8 @@ internal class GeometryPainter(
     }
 
     private companion object {
-        const val OPAQUE = -0x1000000
+        const val RGB_MASK = 0x00FFFFFF
+        const val ALPHA_SHIFT = 24
         const val FULL_ALPHA = 255
         const val MAX_ALPHA = 255f
         const val POLY = 6
@@ -284,17 +246,5 @@ private fun buildPath(
             into.close()
         }
         start = end
-    }
-}
-
-/** Paper-grain parameters of one stamp stroke. */
-internal class Grain(
-    val scale: Float,
-    val strength: Float,
-    val level: Float,
-    val softness: Float = DEFAULT_SOFTNESS,
-) {
-    companion object {
-        const val DEFAULT_SOFTNESS = 0.2f
     }
 }

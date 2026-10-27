@@ -87,6 +87,8 @@ pub struct TestDevice {
     pub(crate) conn: Option<RawSocket>,
     pub(crate) inflight: BTreeSet<OpId>,
     pub(crate) snapshotting: bool,
+    /// Scope of the snapshot in progress (a page snapshot does not move the cursor).
+    pub(crate) snapshot_scope: penwise_proto::Scope,
 }
 
 impl TestDevice {
@@ -114,6 +116,7 @@ impl TestDevice {
             conn: None,
             inflight: BTreeSet::new(),
             snapshotting: false,
+            snapshot_scope: penwise_proto::Scope::All,
         }
     }
 

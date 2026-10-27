@@ -11,6 +11,7 @@ import java.io.File
 import java.nio.file.Files
 
 /** The one-time import of the pre-rewrite files, with an old-layout `.bin` built by hand. */
+@Suppress("TooManyFunctions")
 class LegacyImportTest {
     private val open = ArrayList<AutoCloseable>()
 
@@ -90,13 +91,17 @@ class LegacyImportTest {
 
     @Test
     fun importing_twice_adds_nothing_and_the_marker_ends_the_pending_state() {
+        val server = TestServer.start().also(open::add)
         val dir = oldFiles(pages = arrayOf("pg_a" to pwst(listOf(1L, 2L))))
-        val tablet = device(dir)
+        val tablet = Device(dir, server).also(open::add)
+        tablet.connect()
+        eventually("caught up") { tablet.core.caughtUp() }
         tablet.engine.legacy.run(tablet.core)
         val again = tablet.engine.legacy.run(tablet.core)
         assertEquals(0, again.added)
         assertEquals(2, again.alreadyPresent)
-        tablet.engine.legacy.done()
+        assertTrue("running it does not end the pending state", tablet.engine.legacy.pending())
+        assertEquals(LegacyResult.DONE, tablet.engine.legacy.runWhenCaughtUp(tablet.core, tablet.engine::flush))
         assertFalse(tablet.engine.legacy.pending())
         assertTrue("the old files stay as a backup", File(dir, "pages/pg_a.bin").isFile)
         assertTrue(File(dir, "meta.json").isFile)
@@ -130,8 +135,7 @@ class LegacyImportTest {
         val first = Device(dir, server).also(open::add)
         first.connect()
         eventually("first catch-up") { first.recorder.caughtUp > 0 }
-        first.engine.legacy.run(first.core)
-        first.engine.flush()
+        assertEquals(LegacyResult.DONE, first.engine.legacy.runWhenCaughtUp(first.core, first.engine::flush))
         eventually("imported ops acknowledged") { first.pending() == 0 }
 
         val other = Device(server = server).also(open::add)
@@ -150,5 +154,50 @@ class LegacyImportTest {
                 .added,
         )
         assertEquals(0, twin.pending())
+    }
+
+    @Test
+    fun the_import_stays_pending_until_the_replica_is_really_caught_up() {
+        val dir = oldFiles(pages = arrayOf("pg_a" to pwst(listOf(1L, 2L))))
+        val offline = device(dir)
+        assertEquals(
+            "no server was ever reached",
+            LegacyResult.WAITING,
+            offline.engine.legacy.runWhenCaughtUp(offline.core, offline.engine::flush),
+        )
+        assertTrue("nothing was marked done", offline.engine.legacy.pending())
+        assertEquals("and nothing was imported", 0, offline.pending())
+    }
+
+    @Test
+    fun a_connected_but_not_yet_caught_up_replica_does_not_import() {
+        val server = TestServer.start().also(open::add)
+        val dir = oldFiles(pages = arrayOf("pg_a" to pwst(listOf(1L))))
+        val tablet = Device(dir, server).also(open::add)
+        // Before connecting the core has no Welcome, so it cannot be caught up, however long we wait.
+        Thread.sleep(QUIET_MS)
+        assertEquals(LegacyResult.WAITING, tablet.engine.legacy.runWhenCaughtUp(tablet.core, tablet.engine::flush))
+        tablet.connect()
+        eventually("caught up") { tablet.core.caughtUp() }
+        assertEquals(LegacyResult.DONE, tablet.engine.legacy.runWhenCaughtUp(tablet.core, tablet.engine::flush))
+    }
+
+    @Test
+    fun a_failed_state_write_keeps_the_import_pending() {
+        val server = TestServer.start().also(open::add)
+        val dir = oldFiles(pages = arrayOf("pg_a" to pwst(listOf(1L, 2L))))
+        val tablet = Device(dir, server).also(open::add)
+        tablet.connect()
+        eventually("caught up") { tablet.core.caughtUp() }
+        val result = tablet.engine.legacy.runWhenCaughtUp(tablet.core) { false }
+        assertEquals(LegacyResult.NOT_DURABLE, result)
+        assertTrue("no marker without a confirmed write", tablet.engine.legacy.pending())
+        // The next launch (or a retry) finishes it; everything dedupes by deterministic id.
+        assertEquals(LegacyResult.DONE, tablet.engine.legacy.runWhenCaughtUp(tablet.core, tablet.engine::flush))
+        assertFalse(tablet.engine.legacy.pending())
+    }
+
+    private companion object {
+        const val QUIET_MS = 1_000L
     }
 }

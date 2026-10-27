@@ -7,6 +7,7 @@ mod catalog;
 mod items;
 
 use penwise_proto::hlc::MAX_SKEW_MS;
+use penwise_proto::outbox::MAX_OP_BYTES;
 use penwise_proto::{AnyOp, DeviceId, Hlc, OpRejection, SeqOp, encode_op};
 use rusqlite::{OptionalExtension, Transaction, params};
 
@@ -39,12 +40,17 @@ impl From<OpRejection> for Fail {
     }
 }
 
+/// The log floor: an upper bound for the seq of any op whose log row is gone (compacted).
+pub(super) fn log_floor(tx: &Transaction<'_>) -> Result<u64, StorageError> {
+    Ok(super::read::head_and_floor(tx)?.1)
+}
+
 /// What materializing one op did.
 pub(crate) enum Done {
     /// Applied; the op needs its log row.
     Applied,
-    /// An `Add` whose item already exists with this creation stamp (its log row was compacted away): the
-    /// original seq.
+    /// A retry of an op that was already applied (same creation stamp / same register stamps) whose log row
+    /// was compacted away: the original seq (an upper bound, the log floor, when it is no longer known).
     Existing(u64),
 }
 
@@ -82,7 +88,12 @@ fn stateless(env: &FrameEnv<'_>, op: &AnyOp) -> Result<(), OpRejection> {
     if op.hlc().wall_ms > env.now_ms.saturating_add(MAX_SKEW_MS) {
         return Err(OpRejection::ClockSkew);
     }
-    op.validate()
+    op.validate()?;
+    // The same cap the clients enforce at authoring: every logged op fits an `OpsSince` frame with room to spare.
+    match encode_op(op) {
+        Ok(body) if body.len() <= MAX_OP_BYTES => Ok(()),
+        _ => Err(OpRejection::Invalid),
+    }
 }
 
 fn existing_seq(tx: &Transaction<'_>, op: &AnyOp) -> Result<Option<u64>, rusqlite::Error> {
@@ -182,8 +193,8 @@ fn apply_checked(
 pub(crate) fn materialize(tx: &Transaction<'_>, op: &AnyOp, seq: u64) -> Result<Done, Fail> {
     match op {
         AnyOp::Item(op) => items::apply(tx, op, seq),
-        AnyOp::Page(op) => catalog::apply_page(tx, op, seq).map(|()| Done::Applied),
-        AnyOp::Notebook(op) => catalog::apply_notebook(tx, op, seq).map(|()| Done::Applied),
+        AnyOp::Page(op) => catalog::apply_page(tx, op, seq),
+        AnyOp::Notebook(op) => catalog::apply_notebook(tx, op, seq),
     }
 }
 

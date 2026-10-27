@@ -1,8 +1,10 @@
 #![allow(clippy::cast_precision_loss, reason = "test fixture coordinates")]
 
+use penwise_core::brush::BrushParams;
 use penwise_core::edit::Edit;
 use penwise_core::item::{Affine, ImageItem, Item, ItemKind, Layer, LayerSet};
 use penwise_core::raster::render_scene;
+use penwise_proto::notebook::BACKGROUND_SPACING_PX;
 use penwise_proto::{Background, PageKind};
 use tiny_skia::{Pixmap, PixmapPaint, Transform};
 
@@ -230,4 +232,73 @@ async fn the_ink_crop_is_capped_for_the_model() {
         crop.width(),
         crop.height()
     );
+}
+
+/// A horizontal yellow highlighter stroke (multiply blend) at height `y`.
+fn highlighter(rig: &mut Rig, y: f32) -> Item {
+    let mut item = penwise_testkit::stroke_item(
+        rig.item_id(),
+        1,
+        Layer::Ink,
+        3,
+        &[[100.0, y], [180.0, y], [260.0, y], [340.0, y]],
+    );
+    if let ItemKind::Stroke(stroke) = &mut item.kind {
+        stroke.params = BrushParams::for_preset(5, 0xFFFF_FF00, 1.0);
+    }
+    item
+}
+
+#[tokio::test]
+async fn a_highlighter_multiplies_over_the_paper_so_the_ruling_shows_through() {
+    let mut rig = Rig::new();
+    let page = rig
+        .page(
+            PageKind::Fixed {
+                width: 600.0,
+                height: 300.0,
+            },
+            Background::Lined,
+        )
+        .await;
+    let item = highlighter(&mut rig, 94.0);
+    rig.edit(page, Edit::Add(item)).await;
+    let png = decode(&page_png(&rig.view(page).await, &rig.assets, 1.0).expect("render"));
+    // Row 94 is the rule (page y 93.7..94.7). Multiply keeps the rule's red/green; a normal composite would
+    // paint the highlighter's own yellow over it.
+    let on_rule = png.pixel(220, 94).expect("pixel").demultiply();
+    let off_rule = png.pixel(220, 100).expect("pixel").demultiply();
+    assert!(
+        on_rule.red() < 225 && on_rule.green() < 235,
+        "the rule shows through the highlighter: {on_rule:?}"
+    );
+    assert!(
+        off_rule.red() > 230 && off_rule.blue() < 200,
+        "yellow on bare paper: {off_rule:?}"
+    );
+}
+
+#[tokio::test]
+async fn ruling_phase_follows_page_coordinates_on_infinite_pages() {
+    let mut rig = Rig::new();
+    let page = rig.page(PageKind::Infinite, Background::Lined).await;
+    rig.stroke(page, Layer::Ink, 1, &[[5000.0, 5000.0], [5400.0, 5300.0]])
+        .await;
+    let view = rig.view(page).await;
+    let frame = page_frame(&view, 1.0);
+    let png = decode(&page_png(&view, &rig.assets, 1.0).expect("render"));
+    // A row holds some rule when its left-most pixel is not paper white (rules are anti-aliased on a fraction).
+    let rows: Vec<u32> = (0..png.height())
+        .filter(|&y| png.pixel(2, y).is_some_and(|p| p.red() < 250))
+        .collect();
+    assert!(rows.len() > 5, "ruled lines are drawn: {rows:?}");
+    for row in rows {
+        let page_y = frame.region.min_y + row as f32;
+        let k = (page_y / BACKGROUND_SPACING_PX).round();
+        // The row [page_y, page_y + 1) meets the rule [k·S, k·S + 1).
+        assert!(
+            (page_y - k * BACKGROUND_SPACING_PX).abs() < 1.0,
+            "row {row} (page y {page_y}) is not a multiple of {BACKGROUND_SPACING_PX}"
+        );
+    }
 }

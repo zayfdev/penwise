@@ -1,5 +1,5 @@
 //! Browser bindings for the ink engine: the replica viewer (frames in, draw lists out), the author side of
-//! browser drawing (pointer samples in, live deltas and ops out) and paper grain for the `Canvas2D` renderer.
+//! browser drawing (pointer samples in, live deltas and ops out).
 //!
 //! No geometry or sync rule lives here; this only converts between JS values and [`penwise_core`] /
 //! [`penwise_proto`].
@@ -8,8 +8,6 @@ pub mod decode;
 pub mod draw_list;
 pub mod encode;
 pub mod error;
-pub mod grain;
-pub mod mint;
 pub mod pointer;
 pub mod received;
 pub mod viewer;

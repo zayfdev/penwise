@@ -1,7 +1,7 @@
 package dev.penwise.core
 
 /**
- * JNI surface of `crates/penwise-ffi` (`libpenwise_ffi.so`). Wrapped by [InkStroke], [InkPresets], [PaperGrain],
+ * JNI surface of `crates/penwise-ffi` (`libpenwise_ffi.so`). Wrapped by [InkStroke], [InkPresets],
  * `PageScene` and the sync core wrapper; nothing else should call it. Native errors and panics surface as
  * `RuntimeException`.
  */
@@ -20,6 +20,9 @@ internal object Native {
     ): Long
 
     external fun strokeFree(handle: Long)
+
+    /** Empties the stroke (same brush and seed) so the handle and its buffers are reused. */
+    external fun strokeReset(handle: Long)
 
     /** `[isStamps, opacity, multiply]`, booleans as 0/1. */
     external fun strokeStyle(handle: Long): FloatArray
@@ -45,11 +48,6 @@ internal object Native {
     /** Default `0xAARRGGBB` color of every preset, in `Preset::ALL` order. */
     external fun presetDefaultArgb(): IntArray
 
-    external fun bakePaperTile(
-        scale: Float,
-        size: Int,
-    ): ByteArray
-
     // ---- SyncCore (`jni_sync`, `jni_sync_authoring`): see crates/penwise-ffi/src/sync_core for the blob layouts.
 
     external fun syncNew(
@@ -65,6 +63,46 @@ internal object Native {
     external fun syncFree(handle: Long)
 
     external fun syncExportState(handle: Long): ByteArray
+
+    /** True once the replica has everything the server had at `Welcome` (or a snapshot ended); false before. */
+    external fun syncCaughtUp(handle: Long): Boolean
+
+    /** True while a `Welcome` named a different server and the core waits for [syncResolveServerChange]. */
+    external fun syncServerChangePending(handle: Long): Boolean
+
+    /** `keep`: re-queue every item for the new server; otherwise drop acked ink. Returns an `Outcome` blob. */
+    external fun syncResolveServerChange(
+        handle: Long,
+        keep: Boolean,
+        nowMs: Long,
+    ): ByteArray
+
+    /** Changes whenever the persistable state changed; equal values mean nothing new to write. */
+    external fun syncRevision(handle: Long): Long
+
+    /** Clones the persistable state (call under the core lock); returns a snapshot handle for [syncStateEncode]. */
+    external fun syncStateBegin(handle: Long): Long
+
+    /** Encodes and frees a [syncStateBegin] snapshot; needs no lock. Call exactly once per snapshot. */
+    external fun syncStateEncode(snapshot: Long): ByteArray
+
+    /** Frees a [syncStateBegin] snapshot without encoding it. */
+    external fun syncStateDiscard(snapshot: Long)
+
+    /** Dead-letter list blob (layout in `sync_core/dead_letters`). */
+    external fun syncDeadLetters(handle: Long): ByteArray
+
+    /** The stored envelope bytes of one dead letter; empty when unknown. */
+    external fun syncDeadLetterBytes(
+        handle: Long,
+        opId: ByteArray,
+    ): ByteArray
+
+    /** Drops one dead letter. */
+    external fun syncDeadLetterRemove(
+        handle: Long,
+        opId: ByteArray,
+    )
 
     external fun syncDevice(handle: Long): ByteArray
 
@@ -163,7 +201,7 @@ internal object Native {
         nowMs: Long,
     )
 
-    /** Imports an old `PWST` page file; returns `[added, alreadyPresent, skipped]`. */
+    /** Imports an old `PWST` page file; returns `[added, alreadyPresent, skipped, seedCollisions]`. */
     external fun syncImportLegacyPage(
         handle: Long,
         pageText: String,
@@ -197,7 +235,8 @@ internal object Native {
         text: String,
     ): ByteArray
 
-    // ---- SceneHandle (`jni_scene`, `jni_scene_tools`): every tool returns an edit blob for [syncCommitEdits].
+    // ---- SceneHandle (`jni_scene`, `jni_scene_tools`): every tool commits its edits to the sync core (`core`,
+    // `nowMs`) in the same native call and returns the edit blob for undo bookkeeping.
 
     external fun sceneOpen(
         sync: Long,
@@ -233,9 +272,17 @@ internal object Native {
     /** Bit 0 can undo, bit 1 can redo. */
     external fun sceneHistory(handle: Long): Int
 
-    external fun sceneUndo(handle: Long): ByteArray
+    external fun sceneUndo(
+        handle: Long,
+        core: Long,
+        nowMs: Long,
+    ): ByteArray
 
-    external fun sceneRedo(handle: Long): ByteArray
+    external fun sceneRedo(
+        handle: Long,
+        core: Long,
+        nowMs: Long,
+    ): ByteArray
 
     /** Live item ids on [layers] (bit set: 1 ink, 2 agent, 4 text) in paint order, 16 bytes each. */
     external fun sceneRenderOrder(
@@ -259,6 +306,8 @@ internal object Native {
         seed: Long,
         samples: FloatArray,
         times: IntArray,
+        core: Long,
+        nowMs: Long,
     ): ByteArray
 
     /** [geometry] = `[x0, y0, x1, y1, kindParam]`, [style] = `[kind, constrain, preset, argb, fillArgb, hasFill]`. */
@@ -268,6 +317,8 @@ internal object Native {
         geometry: FloatArray,
         style: IntArray,
         scale: Float,
+        core: Long,
+        nowMs: Long,
     ): ByteArray
 
     @Suppress("LongParameterList")
@@ -278,6 +329,8 @@ internal object Native {
         x: Float,
         y: Float,
         constrain: Boolean,
+        core: Long,
+        nowMs: Long,
     ): ByteArray
 
     /** One eraser chunk; [path] is interleaved x, y (page px). */
@@ -287,6 +340,8 @@ internal object Native {
         radius: Float,
         precise: Boolean,
         layers: Int,
+        core: Long,
+        nowMs: Long,
     ): ByteArray
 
     /** Ids inside a lasso polygon (interleaved x, y), 16 bytes each, bottom to top. */
@@ -307,6 +362,8 @@ internal object Native {
     external fun sceneDeleteItems(
         handle: Long,
         ids: ByteArray,
+        core: Long,
+        nowMs: Long,
     ): ByteArray
 
     external fun sceneMoveItems(
@@ -314,6 +371,8 @@ internal object Native {
         ids: ByteArray,
         dx: Float,
         dy: Float,
+        core: Long,
+        nowMs: Long,
     ): ByteArray
 
     /** Ids whose render data changed since the last call: byte 0 = 1 when everything changed, then 16-byte ids. */
@@ -330,5 +389,7 @@ internal object Native {
         handle: Long,
         ids: ByteArray,
         layer: Int,
+        core: Long,
+        nowMs: Long,
     ): ByteArray
 }

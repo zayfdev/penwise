@@ -172,6 +172,21 @@ fn layer_of(text: &str) -> Layer {
 /// # Errors
 /// [`LegacyError`] for an empty/oversized/mismatched/non-finite stroke or one core rejects.
 pub fn stroke_to_item(page_text: &str, stroke: &LegacyStroke, z: i64) -> Result<Item, LegacyError> {
+    stroke_to_item_as(page_text, &stroke.seed, stroke, z)
+}
+
+/// As [`stroke_to_item`], with the item identity taken from `row_id` instead of the stroke's seed text. For
+/// page files whose strokes share a seed (the oldest files had none, so several carry seed `0`): the caller
+/// makes the identity unique (`"<seed>"`, then `"<seed>#1"`, …) while the brush seed stays the stroke's own.
+///
+/// # Errors
+/// As [`stroke_to_item`].
+pub fn stroke_to_item_as(
+    page_text: &str,
+    row_id: &str,
+    stroke: &LegacyStroke,
+    z: i64,
+) -> Result<Item, LegacyError> {
     let count = stroke.times.len();
     if count == 0 {
         return Err(LegacyError::NoSamples);
@@ -202,7 +217,7 @@ pub fn stroke_to_item(page_text: &str, stroke: &LegacyStroke, z: i64) -> Result<
     let preset = usize::try_from(stroke.preset).unwrap_or(usize::MAX);
     let params = BrushParams::for_preset(preset, stroke.argb.cast_unsigned(), stroke.scale);
     let item = Item {
-        id: legacy_item_id(page_text, &stroke.seed),
+        id: legacy_item_id(page_text, row_id),
         layer: layer_of(&stroke.layer),
         z,
         transform: Affine::IDENTITY,

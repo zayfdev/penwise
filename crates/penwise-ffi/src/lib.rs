@@ -16,11 +16,11 @@
 
 mod bytes;
 pub mod error;
-pub mod ids;
 mod jni_scene;
 mod jni_scene_tools;
 mod jni_sync;
 mod jni_sync_authoring;
+mod jni_sync_state;
 mod jni_util;
 pub mod render_floats;
 pub mod scene_handle;
@@ -29,9 +29,8 @@ pub mod sync_core;
 
 use jni::EnvUnowned;
 use jni::errors::ThrowRuntimeExAndDefault;
-use jni::objects::{JByteArray, JFloatArray, JIntArray, JObject};
+use jni::objects::{JFloatArray, JIntArray, JObject};
 use jni::sys::{jfloat, jint, jlong};
-use penwise_core::stamp::texture;
 use penwise_core::{Preset, Seed};
 
 use crate::stroke::{FfiError, SAMPLE_FLOATS, Stroke};
@@ -126,6 +125,20 @@ pub extern "system" fn Java_dev_penwise_core_Native_strokePush<'local>(
     .resolve::<ThrowRuntimeExAndDefault>();
 }
 
+/// Restarts the stroke with the same brush and seed (keeps the handle and scratch buffers).
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_penwise_core_Native_strokeReset<'local>(
+    mut env: EnvUnowned<'local>,
+    _this: JObject<'local>,
+    handle: jlong,
+) {
+    env.with_env(|_env| -> Result<(), FfiError> {
+        stroke_mut(handle)?.reset();
+        Ok(())
+    })
+    .resolve::<ThrowRuntimeExAndDefault>();
+}
+
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_penwise_core_Native_strokeSnapshot<'local>(
     mut env: EnvUnowned<'local>,
@@ -192,28 +205,6 @@ pub extern "system" fn Java_dev_penwise_core_Native_presetDefaultArgb<'local>(
         let array = env.new_int_array(colors.len())?;
         array.set_region(env, 0, &colors)?;
         Ok(array)
-    })
-    .resolve::<ThrowRuntimeExAndDefault>()
-}
-
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_bakePaperTile<'local>(
-    mut env: EnvUnowned<'local>,
-    _this: JObject<'local>,
-    scale: jfloat,
-    size: jint,
-) -> JByteArray<'local> {
-    env.with_env(|env| -> Result<_, FfiError> {
-        let size = u32::try_from(size)
-            .ok()
-            .filter(|s| (1..=texture::MAX_TILE_SIZE).contains(s))
-            .ok_or(FfiError::BadArgument("tile size out of range"))?;
-        let mut tile = Vec::new();
-        texture::bake_tile(scale, size, &mut tile);
-        if tile.is_empty() {
-            return Err(FfiError::BadArgument("tile allocation failed"));
-        }
-        Ok(env.byte_array_from_slice(&tile)?)
     })
     .resolve::<ThrowRuntimeExAndDefault>()
 }

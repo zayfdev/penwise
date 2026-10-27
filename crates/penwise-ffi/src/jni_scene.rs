@@ -1,7 +1,8 @@
 //! JNI exports of [`SceneHandle`]: lifecycle, mirroring, undo/redo and render data.
 //! Names are `Java_dev_penwise_core_Native_scene*`. Tools live in `jni_scene_tools`.
 //!
-//! Every tool returns the produced edits as an `encode_edits` blob; pass it to `syncCommitEdits`.
+//! Tools (`jni_scene_tools`), undo and redo commit to the `SyncCore` in the same call and return the edits as
+//! an `encode_edits` blob (informational: they are already committed).
 #![allow(unsafe_code)] // `#[unsafe(no_mangle)]` entry points.
 
 use jni::EnvUnowned;
@@ -133,9 +134,17 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneUndo<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
+    core: jlong,
+    now_ms: jlong,
 ) -> JByteArray<'local> {
     guarded(&mut env, |env| {
-        let edits = handle_mut::<SceneHandle>(handle)?.undo()?;
+        let scene = handle_mut::<SceneHandle>(handle)?;
+        let edits = scene.undo()?;
+        scene.commit_into(
+            handle_mut::<SyncCore>(core)?,
+            &edits,
+            now_ms.cast_unsigned(),
+        )?;
         bytes_out(env, &encode_edits(&edits))
     })
 }
@@ -145,9 +154,17 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneRedo<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
+    core: jlong,
+    now_ms: jlong,
 ) -> JByteArray<'local> {
     guarded(&mut env, |env| {
-        let edits = handle_mut::<SceneHandle>(handle)?.redo()?;
+        let scene = handle_mut::<SceneHandle>(handle)?;
+        let edits = scene.redo()?;
+        scene.commit_into(
+            handle_mut::<SyncCore>(core)?,
+            &edits,
+            now_ms.cast_unsigned(),
+        )?;
         bytes_out(env, &encode_edits(&edits))
     })
 }

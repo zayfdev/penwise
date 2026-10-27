@@ -15,8 +15,8 @@ use super::random::random_u128;
 use super::read::ReadPool;
 use super::rows::{meta_get, meta_put, meta_put_u64, parse_hlc, to_i64};
 use super::{
-    Appended, DeviceInfo, FaultPlan, Inner, NowMs, RETENTION_DAYS, Storage, StorageConfig, restore,
-    schema,
+    Appended, DeviceInfo, FaultPlan, Inner, NowMs, RETENTION_DAYS, Restored, Storage,
+    StorageConfig, restore, schema,
 };
 
 pub(crate) enum Command {
@@ -40,7 +40,7 @@ pub(crate) enum Command {
     Restore {
         page: PageId,
         to_seq: u64,
-        reply: oneshot::Sender<Result<Vec<Appended>, RestoreError>>,
+        reply: oneshot::Sender<Result<Restored, RestoreError>>,
     },
     Compact {
         reply: oneshot::Sender<Result<CompactReport, StorageError>>,
@@ -60,7 +60,7 @@ pub(crate) struct Writer {
 pub(crate) fn start(config: StorageConfig) -> Result<Storage, StorageError> {
     let mut conn = schema::open_writer(&config.path)?;
     schema::ensure_current(&mut conn)?;
-    let (server_id, server_device) = load_identity(&conn, &config.now_ms)?;
+    let (server_id, server_device) = load_identity(&mut conn, &config.now_ms)?;
     let clock = match meta_get(&conn, "clock_hlc")? {
         Some(bytes) => HlcClock::resume(parse_hlc(&bytes)?),
         None => HlcClock::new(server_device),
@@ -97,7 +97,10 @@ pub(crate) fn start(config: StorageConfig) -> Result<Storage, StorageError> {
 }
 
 /// Reads or creates `server_id` / `server_device` and the other bootstrap `server_meta` keys.
-fn load_identity(conn: &Connection, now_ms: &NowMs) -> Result<(ServerId, DeviceId), StorageError> {
+fn load_identity(
+    conn: &mut Connection,
+    now_ms: &NowMs,
+) -> Result<(ServerId, DeviceId), StorageError> {
     if let (Some(id), Some(device)) = (
         meta_get(conn, "server_id")?,
         meta_get(conn, "server_device")?,
@@ -111,7 +114,10 @@ fn load_identity(conn: &Connection, now_ms: &NowMs) -> Result<(ServerId, DeviceI
     let now = now_ms();
     let id = ServerId::from_parts(now, random_u128());
     let device = DeviceId::from_parts(now, random_u128());
-    seed_meta(conn, id, device, now)?;
+    // One transaction: a crash in between must not leave a `server_id` without its device (or the reverse).
+    let tx = conn.transaction()?;
+    seed_meta(&tx, id, device, now)?;
+    tx.commit()?;
     Ok((id, device))
 }
 

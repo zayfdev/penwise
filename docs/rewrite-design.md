@@ -402,6 +402,17 @@ deleted (their ops already gone). Consequence rules:
 - A client with `last_seen_seq < log_floor` receives a snapshot (never a partial diff) — explicit, tested.
 - An op targeting a purged item → `UnknownItem`; client moves it to `dead_letter` (Add-only history of that stroke
   is gone by design; typical case: undo of something deleted > 30 days ago).
+- A purged item is remembered: compaction records `(id, created_hlc, purged_ms)` in `purged_items`, and an `Add` for
+  such an id is refused as `Duplicate`, so an erased stroke cannot be re-added by a late or replayed push (a
+  migrated stroke re-imported by a tablet, an idle device retrying). The table is additive within schema v4
+  (`CREATE TABLE IF NOT EXISTS` at open).
+- A retry of an already applied op whose log row was compacted away (same creation stamp for `Create`/`Add`, every
+  register already stamped with the op's own stamp for `Update`/`Delete`) is answered as `duplicate` with the log
+  floor as its seq and is not logged again.
+- Ops whose encoded size exceeds `outbox::MAX_OP_BYTES` (1 MiB, the clients' authoring cap too) are refused
+  (`Invalid`): a logged op that did not fit an `OpsSince` frame would stall every session reading past it.
+- Device acks are recorded at `Hello` and again at disconnect (the session's delivery cursor; browsers never hold the
+  floor).
 - A device unseen for > 90 d no longer holds the floor back; on return it gets a snapshot and re-pushes its
   outbox (Adds always apply; stale Updates are rejected into `dead_letter`).
 

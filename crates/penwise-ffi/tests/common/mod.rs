@@ -98,6 +98,10 @@ pub struct Tablet {
     welcome_head: u64,
     pub apply_errors: u32,
     pub reconnects: u32,
+    /// How many times a different server answered (held until resolved).
+    pub server_changes: u32,
+    /// `Some(keep)`: resolve a server change at once; `None`: leave it held for the test to decide.
+    pub on_server_change: Option<bool>,
 }
 
 pub fn now() -> u64 {
@@ -123,6 +127,8 @@ impl Tablet {
             welcome_head: 0,
             apply_errors: 0,
             reconnects: 0,
+            server_changes: 0,
+            on_server_change: Some(false),
         }
     }
 
@@ -212,8 +218,31 @@ impl Tablet {
         if let Some(scene) = self.scene.as_mut() {
             scene.refresh(&self.core, &changes).expect("refresh");
         }
+        if outcome.server_changed && self.core.server_change_pending() {
+            self.server_changes += 1;
+            if let Some(keep) = self.on_server_change {
+                self.resolve(keep);
+            }
+            return true;
+        }
         self.flush().await;
         true
+    }
+
+    /// Settles a held server change and drops the socket (the core asks for a reconnect).
+    pub fn resolve(&mut self, keep: bool) {
+        let outcome = self
+            .core
+            .resolve_server_change(keep, now())
+            .expect("a server change is pending");
+        assert!(outcome.reconnect, "resolving asks for a reconnect");
+        self.reconnects += 1;
+        self.ws = None;
+        if let Some(scene) = self.scene.as_mut() {
+            scene
+                .refresh(&self.core, &outcome.changes)
+                .expect("refresh");
+        }
     }
 
     /// Pumps until the session is settled at the `Welcome` head (or fails after 10 s).
@@ -221,7 +250,7 @@ impl Tablet {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             self.flush().await;
-            if self.ws.is_none() {
+            if self.ws.is_none() || self.core.server_change_pending() {
                 return;
             }
             if self.core.is_settled() && self.core.head_seq() >= self.welcome_head {

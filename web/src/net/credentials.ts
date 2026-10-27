@@ -5,6 +5,7 @@
  */
 
 import type { Wasm } from "../wasm";
+import { OUTBOX_KEY_PREFIX } from "./outbox-store";
 
 /** Storage key of the access token. */
 export const TOKEN_KEY = "penwise.token.v1";
@@ -29,17 +30,65 @@ export function clearToken(storage: Pick<Storage, "removeItem">): void {
   storage.removeItem(TOKEN_KEY);
 }
 
-/** The tab's device id, minted once per tab session. */
-export function resolveDevice(
-  storage: Pick<Storage, "getItem" | "setItem">,
+/** The slice of `navigator.locks` device claiming uses. */
+export interface DeviceLocks {
+  request(
+    name: string,
+    options: { ifAvailable: true },
+    callback: (lock: unknown) => Promise<void>,
+  ): Promise<unknown>;
+}
+
+/**
+ * Claims `device` for the lifetime of this page: a Web Lock held until the tab goes away, so no other tab
+ * adopts the same device id. False when another live tab holds it.
+ */
+export function holdDevice(locks: DeviceLocks, device: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    void locks.request(`penwise-device-${device}`, { ifAvailable: true }, (lock) => {
+      resolve(lock !== null);
+      return lock === null ? Promise.resolve() : new Promise<void>(() => {});
+    });
+  });
+}
+
+/** Devices that left unsent edits in `storage` (see `OutboxStore`), newest key order unspecified. */
+function strandedDevices(storage: Pick<Storage, "length" | "key">): string[] {
+  const found: string[] = [];
+  for (let i = 0; i < storage.length; i++) {
+    const key = storage.key(i);
+    if (key?.startsWith(OUTBOX_KEY_PREFIX) && !key.endsWith(".unreadable"))
+      found.push(key.slice(OUTBOX_KEY_PREFIX.length));
+  }
+  return found;
+}
+
+/**
+ * This page's device id. Order: the tab's own id (survives a reload), then a device whose saved outbox no live
+ * tab holds (a tab closed with unsent drawing: its ink is delivered by this one), else a freshly minted id.
+ * Two live tabs never share an id (ops are stamped per device). Without Web Locks only the first and last apply.
+ */
+export async function claimDevice(
+  session: Pick<Storage, "getItem" | "setItem">,
+  persistent: Pick<Storage, "length" | "key">,
+  locks: DeviceLocks | undefined,
   wasm: Pick<Wasm, "new_device_id">,
   nowMs: number,
   random: (bytes: Uint8Array) => Uint8Array,
-): string {
-  const existing = storage.getItem(DEVICE_KEY);
-  if (existing) return existing;
+): Promise<string> {
+  const own = session.getItem(DEVICE_KEY);
+  if (own && (!locks || (await holdDevice(locks, own)))) return own;
+  if (locks) {
+    for (const device of strandedDevices(persistent)) {
+      if (await holdDevice(locks, device)) {
+        session.setItem(DEVICE_KEY, device);
+        return device;
+      }
+    }
+  }
   const device = wasm.new_device_id(nowMs, random(new Uint8Array(10)));
-  storage.setItem(DEVICE_KEY, device);
+  if (locks) await holdDevice(locks, device);
+  session.setItem(DEVICE_KEY, device);
   return device;
 }
 

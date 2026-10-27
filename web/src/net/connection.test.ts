@@ -162,4 +162,40 @@ describe("Connection", () => {
     const { connection } = rig();
     expect(connection.send(new Uint8Array([1]))).toBe(false);
   });
+
+  it("reconnects when the viewer rebuilt its replica after refused ops", () => {
+    const sockets: FakeSocket[] = [];
+    const clock = new FakeClock();
+    const problems: string[] = [];
+    const ack = { kind: MessageKind.Ack, resync: true, rejected: 2, apply_errors: 0 };
+    const session = {
+      begin_session: () => new Uint8Array([1]),
+      end_session: () => {},
+      poll_push: () => undefined,
+      receive: () => ack as unknown as Received,
+    };
+    const connection = new Connection(
+      session,
+      wasm,
+      { state: () => {}, received: () => {}, problem: (m) => problems.push(m) },
+      {
+        url: "ws://test/sync",
+        token: () => "t",
+        now: () => clock.now,
+        createSocket: () => {
+          const socket = new FakeSocket();
+          sockets.push(socket);
+          return socket;
+        },
+        timers: clock,
+      },
+    );
+    connection.start();
+    sockets[0]?.onopen?.();
+    sockets[0]?.deliver(new Uint8Array([0]));
+    expect(sockets[0]?.closed).toBe(true);
+    expect(problems.join()).toContain("2 op(s) were refused");
+    clock.advance(RECONNECT_DELAYS_MS[0] ?? 500);
+    expect(sockets).toHaveLength(2);
+  });
 });

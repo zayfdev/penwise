@@ -298,3 +298,43 @@ async fn history_lists_batches_and_restore_below_the_floor_is_gone() {
         .await;
     assert_eq!(status, StatusCode::GONE, "{body}");
 }
+
+/// Review finding #8: a restore that cannot roll an item back (its `Add` was compacted away) says so.
+#[tokio::test]
+async fn restore_reports_the_items_it_could_not_roll_back() {
+    let server = TestServer::start().await;
+    let api = Api::new(&server);
+    let mut a = server.tablet(1);
+    let nb = a.create_notebook("N");
+    let page = a.create_page(nb, "P");
+    let old = a.draw(page, &line(10.0, 10.0, 10));
+    converge(&server, &mut [&mut a]).await;
+    let checkpoint = server.head();
+
+    server.advance(8 * DAY_MS);
+    a.offline();
+    a.online().await.expect("refresh last seen");
+    a.delete_item(page, old);
+    a.settle(Duration::from_secs(10)).await.expect("settle");
+    server.storage.compact().await.expect("compact");
+    let floor = server.storage.status().await.unwrap().log_floor;
+    assert!(
+        floor >= 1 && floor <= checkpoint,
+        "floor {floor} vs {checkpoint}"
+    );
+
+    let (status, body) = api
+        .post(
+            &format!("/pages/{page}/restore?to_seq={checkpoint}"),
+            json!({}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let skipped = body["skipped"].as_array().expect("skipped list");
+    assert_eq!(
+        skipped,
+        &[json!(penwise_proto::ItemRef::from(old).to_string())],
+        "{body}"
+    );
+    assert_eq!(body["restored"], 0);
+}

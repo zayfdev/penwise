@@ -11,9 +11,13 @@
 use std::collections::BTreeSet;
 
 use penwise_core::edit::Edit;
-use penwise_proto::{AnyOp, ItemRef, PageId, Scope, SeqOp, ServerMsg, decode_server};
+use penwise_proto::message::OpRejected;
+use penwise_proto::{
+    AnyOp, ItemRef, OpId, PageId, Scope, SeqOp, ServerMsg, SnapshotChunk, decode_server,
+    newest_stamp,
+};
 
-use super::Viewer;
+use super::{Viewer, author::Author};
 use crate::error::WasmError;
 use crate::received::{MessageKind, Received, error_name, reject_name};
 
@@ -67,17 +71,14 @@ impl Viewer {
                     self.apply_logged(seq_op, &mut out, &mut touched);
                 }
                 self.replica.advance_to(*upto_seq);
+                if !*more && self.author.as_mut().is_some_and(Author::take_restored) {
+                    self.replay_pending(&mut out, &mut touched);
+                }
             }
             ServerMsg::SnapshotBegin { scope, .. } => {
                 self.begin_snapshot(*scope, &mut out, &mut touched);
             }
-            ServerMsg::SnapshotChunk(chunk) => match self.replica.apply_snapshot_chunk(chunk) {
-                Ok(applied) => {
-                    out.catalog_changed |= applied.catalog_changed;
-                    touched.changed.extend(applied.pages);
-                }
-                Err(_) => out.apply_errors += 1,
-            },
+            ServerMsg::SnapshotChunk(chunk) => self.apply_chunk(chunk, &mut out, &mut touched),
             ServerMsg::SnapshotEnd { head_seq } => self.end_snapshot(*head_seq, &mut touched),
             ServerMsg::StrokeDelta { device, delta } => {
                 let _ = self.live.apply_delta(*device, delta);
@@ -101,13 +102,7 @@ impl Viewer {
             ServerMsg::Ping { nonce } | ServerMsg::Pong { nonce } => out.nonce = *nonce,
             ServerMsg::Ack {
                 op_ids, rejected, ..
-            } => {
-                if let Some(author) = self.author.as_mut() {
-                    author.on_ack(op_ids, rejected);
-                }
-                out.acked = u32::try_from(op_ids.len()).unwrap_or(u32::MAX);
-                out.rejected = u32::try_from(rejected.len()).unwrap_or(u32::MAX);
-            }
+            } => self.apply_ack(op_ids, rejected, &mut out),
         }
         if !matches!(msg, ServerMsg::Welcome { .. } | ServerMsg::OpsSince { .. }) {
             out.head_seq = self.replica.head_seq();
@@ -115,6 +110,34 @@ impl Viewer {
         out.changed_pages = touched.changed.iter().map(ToString::to_string).collect();
         out.live_pages = touched.live.iter().map(ToString::to_string).collect();
         out
+    }
+
+    fn apply_chunk(&mut self, chunk: &SnapshotChunk, out: &mut Received, touched: &mut Touched) {
+        if let (Some(author), Some(newest)) = (self.author.as_mut(), newest_stamp(chunk)) {
+            author.observe(newest);
+        }
+        match self.replica.apply_snapshot_chunk(chunk) {
+            Ok(applied) => {
+                out.catalog_changed |= applied.catalog_changed;
+                touched.changed.extend(applied.pages);
+            }
+            Err(_) => out.apply_errors += 1,
+        }
+    }
+
+    /// `Ack`: acknowledged ops leave the outbox; refused ones become dead letters and their effects are
+    /// rebuilt out of the replica (the caller reconnects so the server's log refills it).
+    fn apply_ack(&mut self, op_ids: &[OpId], rejected: &[OpRejected], out: &mut Received) {
+        if let Some(author) = self.author.as_mut()
+            && author.on_ack(op_ids, rejected) > 0
+        {
+            self.replica.rebuild_from(&author.pending_ops());
+            self.live.clear();
+            out.resync = true;
+            out.catalog_changed = true;
+        }
+        out.acked = u32::try_from(op_ids.len()).unwrap_or(u32::MAX);
+        out.rejected = u32::try_from(rejected.len()).unwrap_or(u32::MAX);
     }
 
     fn apply_logged(&mut self, seq_op: &SeqOp, out: &mut Received, touched: &mut Touched) {
@@ -145,6 +168,7 @@ impl Viewer {
             Scope::Catalog => "catalog".to_owned(),
             Scope::Page(page) => page.to_string(),
         });
+        self.snapshot_scope = Some(scope);
         if self.replica.begin_snapshot(scope).is_err() {
             out.apply_errors += 1;
             return;
@@ -159,14 +183,34 @@ impl Viewer {
 
     /// Snapshot done: local ops the server has not acknowledged go back on top (the snapshot replaced what
     /// they had changed), and pushes resume.
+    ///
+    /// A `Scope::Page` snapshot does not move the cursor (see `Replica::end_snapshot`): catalog ops logged up to
+    /// its `head_seq` were never sent to this client.
     fn end_snapshot(&mut self, head_seq: u64, touched: &mut Touched) {
-        self.replica.end_snapshot(head_seq);
+        if let Some(scope) = self.snapshot_scope.take() {
+            self.replica.end_snapshot(scope, head_seq);
+        }
         let Some(author) = self.author.as_mut() else {
             return;
         };
         author.set_snapshotting(false);
+        author.take_restored();
         for op in author.pending_ops() {
             if let Ok(applied) = self.replica.apply(&op) {
+                touched.changed.extend(applied.page);
+            }
+        }
+    }
+
+    /// Shows the ops restored from storage on the replica the server just caught up (re-applying one the
+    /// server already echoed changes nothing).
+    fn replay_pending(&mut self, out: &mut Received, touched: &mut Touched) {
+        let Some(author) = self.author.as_ref() else {
+            return;
+        };
+        for op in author.pending_ops() {
+            if let Ok(applied) = self.replica.apply(&op) {
+                out.catalog_changed |= applied.catalog_changed;
                 touched.changed.extend(applied.page);
             }
         }

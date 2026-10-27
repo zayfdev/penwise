@@ -97,12 +97,22 @@ pub fn user_version(conn: &Connection) -> Result<i64, StorageError> {
     Ok(conn.pragma_query_value(None, "user_version", |row| row.get(0))?)
 }
 
+/// Ids of items whose tombstone was purged by compaction (with their creation stamp): an `Add` for one of
+/// them is a resurrection attempt and is refused as `Duplicate`. Additive within v4 (`IF NOT EXISTS`), created
+/// by every open so a v4 database made before the table existed gains it.
+const PURGED_DDL: &str = "
+CREATE TABLE IF NOT EXISTS purged_items (
+  id BLOB PRIMARY KEY, created_hlc BLOB NOT NULL, purged_ms INTEGER NOT NULL
+) STRICT;
+";
+
 /// Creates the v4 tables inside `tx` (no version bump).
 ///
 /// # Errors
 /// `Sqlite`.
 pub fn create_v4(tx: &Transaction<'_>) -> Result<(), StorageError> {
     tx.execute_batch(V4_DDL)?;
+    tx.execute_batch(PURGED_DDL)?;
     Ok(())
 }
 
@@ -113,7 +123,10 @@ pub fn create_v4(tx: &Transaction<'_>) -> Result<(), StorageError> {
 /// `NeedsMigration` for v1–3, `FutureSchema` for a newer database, else `Sqlite`.
 pub fn ensure_current(conn: &mut Connection) -> Result<(), StorageError> {
     match user_version(conn)? {
-        SCHEMA_VERSION => Ok(()),
+        SCHEMA_VERSION => {
+            conn.execute_batch(PURGED_DDL)?;
+            Ok(())
+        }
         0 => {
             let tx = conn.transaction()?;
             create_v4(&tx)?;

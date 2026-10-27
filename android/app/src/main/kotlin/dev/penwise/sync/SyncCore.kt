@@ -76,15 +76,48 @@ class SyncCore private constructor(
     /** The persistable state blob (clock, outbox, replica, server pin). */
     fun exportState(): ByteArray = guarded { Native.syncExportState(handle) }
 
-    /** Queues the edit blob a `PageScene` tool produced; [page] is the 16 id bytes. */
-    override fun commit(
-        page: ByteArray,
-        edits: ByteArray,
-        nowMs: Long,
-    ) {
-        guarded { Native.syncCommitEdits(handle, page, edits, nowMs) }
+    /**
+     * Like [exportState], but the lock is held only to clone the state; the postcard encoding runs outside it, so
+     * the pen and render threads never wait on it.
+     */
+    fun exportStateOffLock(): ByteArray = Native.syncStateEncode(guarded { Native.syncStateBegin(handle) })
+
+    /** Changes whenever the persistable state changed (the persister skips writes when it did not). */
+    fun revision(): Long = guarded { Native.syncRevision(handle) }
+
+    /** True once the replica holds everything the server had at its `Welcome` (or a snapshot ended). */
+    fun caughtUp(): Boolean = guarded { Native.syncCaughtUp(handle) }
+
+    /** Ops the server refused for good, oldest first. */
+    fun deadLetters(): List<DeadLetter> = DeadLetter.parseAll(guarded { Native.syncDeadLetters(handle) })
+
+    /** The stored bytes of one dead letter (for export); empty when unknown. */
+    fun deadLetterBytes(opId: ByteArray): ByteArray = guarded { Native.syncDeadLetterBytes(handle, opId) }
+
+    /** Forgets a dead letter once the user exported or dismissed it. */
+    fun removeDeadLetter(opId: ByteArray) {
+        guarded { Native.syncDeadLetterRemove(handle, opId) }
         mutated()
     }
+
+    /** True while a `Welcome` named a different server and the core waits for [resolveServerChange]. */
+    fun serverChangePending(): Boolean = guarded { Native.syncServerChangePending(handle) }
+
+    /** Answers the "different server" question: `keep` re-sends the tablet's ink to it, otherwise it is dropped. */
+    fun resolveServerChange(keep: Boolean): Outcome {
+        val outcome = guarded { Outcome.parse(Native.syncResolveServerChange(handle, keep, clock())) }
+        mutated()
+        return outcome
+    }
+
+    /**
+     * Runs [block] with the native handle while holding [lock], failing with `IllegalStateException` once the core
+     * is closed: a scene opened from a stale handle would dereference freed memory.
+     */
+    fun <T> whileOpen(block: (handle: Long) -> T): T = guarded { block(handle) }
+
+    /** A `PageScene` tool committed edits inside its native call: persist and push. */
+    override fun committed() = mutated()
 
     /** `SwitchPage` frame: the browser follows the tablet. */
     fun switchPage(page: ByteArray): ByteArray = guarded { Native.syncSwitchPage(handle, page) }
@@ -181,14 +214,19 @@ class SyncCore private constructor(
         mutated()
     }
 
-    /** One-time import of an old `PWST` page file: `[added, alreadyPresent, skipped]`. */
+    /** One-time import of an old `PWST` page file. */
     fun importLegacyPage(
         pageText: String,
         file: ByteArray,
     ): ImportReport {
         val counts = guarded { Native.syncImportLegacyPage(handle, pageText, file, clock()) }
         mutated()
-        return ImportReport(added = counts[0], alreadyPresent = counts[1], skipped = counts[2])
+        return ImportReport(
+            added = counts[0],
+            alreadyPresent = counts[1],
+            skipped = counts[2],
+            seedCollisions = counts[3],
+        )
     }
 
     override fun close() {
@@ -233,4 +271,6 @@ data class ImportReport(
     val added: Int,
     val alreadyPresent: Int,
     val skipped: Int,
+    /** Strokes that shared a seed with an earlier one in the file and got a distinct identity. */
+    val seedCollisions: Int = 0,
 )

@@ -17,9 +17,9 @@ use axum::routing::get;
 use penwise_core::Bounds;
 use penwise_core::item::{ItemId, ItemKind, Layer, LayerSet, Scene};
 use penwise_core::raster::png::encode_png;
-use penwise_core::raster::{RasterError, render_scene};
+use penwise_core::raster::{RasterError, render_scene_onto, scene_pixmap};
 use penwise_proto::PageKind;
-use tiny_skia::{Pixmap, PixmapPaint, Transform};
+use tiny_skia::Pixmap;
 
 use crate::api::{ApiError, AppState, page_of};
 use crate::assets::{self, Assets};
@@ -62,24 +62,24 @@ pub(crate) fn page_png(
 ) -> Result<Vec<u8>, RenderError> {
     let scene = view.replica.scene();
     let frame = page_frame(view, scale);
-    let ink = render_scene(
+    // The paper goes down first and the ink is drawn onto it, so highlighter (multiply) strokes darken the
+    // paper like they do on the tablet and in the browser.
+    let mut paper = scene_pixmap(&frame.region, frame.scale)?;
+    paper.fill(tiny_skia::Color::WHITE);
+    paper::draw_background(
+        &mut paper,
+        view.page.background,
+        [frame.region.min_x, frame.region.min_y],
+        frame.scale,
+    );
+    render_scene_onto(
+        &mut paper,
         scene,
         LayerSet::ALL,
         &frame.region,
         frame.scale,
         &asset_pixmaps(scene, assets),
     )?;
-    let mut paper = Pixmap::new(ink.width(), ink.height()).ok_or(RenderError::Encode)?;
-    paper.fill(tiny_skia::Color::WHITE);
-    paper::draw_background(&mut paper, view.page.background, frame.scale);
-    paper.draw_pixmap(
-        0,
-        0,
-        ink.as_ref(),
-        &PixmapPaint::default(),
-        Transform::identity(),
-        None,
-    );
     encode_png(&paper).map_err(|_| RenderError::Encode)
 }
 
@@ -116,17 +116,9 @@ pub(crate) fn ink_crop_png(
     if longest * scale > OCR_MAX_SIDE {
         scale = (OCR_MAX_SIDE - 1.0) / longest;
     }
-    let ink = render_scene(&scene, LayerSet::INK, &region, scale, &())?;
-    let mut paper = Pixmap::new(ink.width(), ink.height()).ok_or(RenderError::Encode)?;
+    let mut paper = scene_pixmap(&region, scale)?;
     paper.fill(tiny_skia::Color::WHITE);
-    paper.draw_pixmap(
-        0,
-        0,
-        ink.as_ref(),
-        &PixmapPaint::default(),
-        Transform::identity(),
-        None,
-    );
+    render_scene_onto(&mut paper, &scene, LayerSet::INK, &region, scale, &())?;
     let png = encode_png(&paper).map_err(|_| RenderError::Encode)?;
     Ok(Some(InkCrop { png, bounds }))
 }

@@ -1,5 +1,7 @@
-//! JNI exports of the [`SceneHandle`] tools. Each returns an `encode_edits` blob for `syncCommitEdits`
-//! (the edits are already applied to the scene and recorded in the open undo gesture).
+//! JNI exports of the [`SceneHandle`] tools. Each applies its edits to the scene (recorded in the open undo
+//! gesture), commits them to the `SyncCore` (`core`, stamped with `now_ms`) in the same call, and returns the
+//! edits as an `encode_edits` blob. One call = one critical section: no refresh can land between the scene
+//! apply and the replica commit.
 #![allow(unsafe_code)] // `#[unsafe(no_mangle)]` entry points.
 
 use jni::EnvUnowned;
@@ -19,6 +21,7 @@ use crate::scene_handle::{
     shape_kind,
 };
 use crate::stroke::FfiError;
+use crate::sync_core::SyncCore;
 
 fn item_list(bytes: &[u8]) -> Result<Vec<ItemId>, FfiError> {
     Ok(ids_in(bytes)?.into_iter().map(ItemId).collect())
@@ -44,6 +47,8 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneAddStroke<'local>(
     seed: jlong,
     samples: JFloatArray<'local>,
     times: JIntArray<'local>,
+    core: jlong,
+    now_ms: jlong,
 ) -> JByteArray<'local> {
     guarded(&mut env, |env| {
         let (preset, argb) = match ints_in(env, &brush)?.as_slice() {
@@ -60,7 +65,13 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneAddStroke<'local>(
             samples: &samples,
             times: &times,
         };
-        let edits = handle_mut::<SceneHandle>(handle)?.add_stroke(&spec)?;
+        let scene = handle_mut::<SceneHandle>(handle)?;
+        let edits = scene.add_stroke(&spec)?;
+        scene.commit_into(
+            handle_mut::<SyncCore>(core)?,
+            &edits,
+            now_ms.cast_unsigned(),
+        )?;
         bytes_out(env, &encode_edits(&edits))
     })
 }
@@ -76,6 +87,8 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneAddShape<'local>(
     geometry: JFloatArray<'local>,
     style: JIntArray<'local>,
     scale: jfloat,
+    core: jlong,
+    now_ms: jlong,
 ) -> JByteArray<'local> {
     guarded(&mut env, |env| {
         let (geometry, style) = (floats_in(env, &geometry)?, ints_in(env, &style)?);
@@ -97,7 +110,13 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneAddShape<'local>(
             ),
             fill: (*has_fill != 0).then(|| Color::from_argb(fill_argb.cast_unsigned())),
         };
-        let edits = handle_mut::<SceneHandle>(handle)?.add_shape(&spec)?;
+        let scene = handle_mut::<SceneHandle>(handle)?;
+        let edits = scene.add_shape(&spec)?;
+        scene.commit_into(
+            handle_mut::<SyncCore>(core)?,
+            &edits,
+            now_ms.cast_unsigned(),
+        )?;
         bytes_out(env, &encode_edits(&edits))
     })
 }
@@ -117,13 +136,21 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneResizeShape<'local>(
     x: jfloat,
     y: jfloat,
     constrain: jboolean,
+    core: jlong,
+    now_ms: jlong,
 ) -> JByteArray<'local> {
     guarded(&mut env, |env| {
-        let edits = handle_mut::<SceneHandle>(handle)?.resize_shape(
+        let scene = handle_mut::<SceneHandle>(handle)?;
+        let edits = scene.resize_shape(
             item_in(env, &id)?,
             handle_from_code(handle_code)?,
             [x, y],
             constrain,
+        )?;
+        scene.commit_into(
+            handle_mut::<SyncCore>(core)?,
+            &edits,
+            now_ms.cast_unsigned(),
         )?;
         bytes_out(env, &encode_edits(&edits))
     })
@@ -139,11 +166,18 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneErase<'local>(
     radius: jfloat,
     precise: jboolean,
     layers: jint,
+    core: jlong,
+    now_ms: jlong,
 ) -> JByteArray<'local> {
     guarded(&mut env, |env| {
         let path = pairs(&floats_in(env, &path)?);
-        let edits =
-            handle_mut::<SceneHandle>(handle)?.erase(&path, radius, precise, layers_of(layers))?;
+        let scene = handle_mut::<SceneHandle>(handle)?;
+        let edits = scene.erase(&path, radius, precise, layers_of(layers))?;
+        scene.commit_into(
+            handle_mut::<SyncCore>(core)?,
+            &edits,
+            now_ms.cast_unsigned(),
+        )?;
         bytes_out(env, &encode_edits(&edits))
     })
 }
@@ -187,10 +221,18 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneDeleteItems<'local>(
     _this: JObject<'local>,
     handle: jlong,
     ids: JByteArray<'local>,
+    core: jlong,
+    now_ms: jlong,
 ) -> JByteArray<'local> {
     guarded(&mut env, |env| {
         let ids = item_list(&bytes_in(env, &ids)?)?;
-        let edits = handle_mut::<SceneHandle>(handle)?.delete_items(&ids)?;
+        let scene = handle_mut::<SceneHandle>(handle)?;
+        let edits = scene.delete_items(&ids)?;
+        scene.commit_into(
+            handle_mut::<SyncCore>(core)?,
+            &edits,
+            now_ms.cast_unsigned(),
+        )?;
         bytes_out(env, &encode_edits(&edits))
     })
 }
@@ -203,10 +245,18 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneMoveItems<'local>(
     ids: JByteArray<'local>,
     dx: jfloat,
     dy: jfloat,
+    core: jlong,
+    now_ms: jlong,
 ) -> JByteArray<'local> {
     guarded(&mut env, |env| {
         let ids = item_list(&bytes_in(env, &ids)?)?;
-        let edits = handle_mut::<SceneHandle>(handle)?.move_items(&ids, dx, dy)?;
+        let scene = handle_mut::<SceneHandle>(handle)?;
+        let edits = scene.move_items(&ids, dx, dy)?;
+        scene.commit_into(
+            handle_mut::<SyncCore>(core)?,
+            &edits,
+            now_ms.cast_unsigned(),
+        )?;
         bytes_out(env, &encode_edits(&edits))
     })
 }
@@ -219,6 +269,8 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneSetLayer<'local>(
     handle: jlong,
     ids: JByteArray<'local>,
     layer: jint,
+    core: jlong,
+    now_ms: jlong,
 ) -> JByteArray<'local> {
     guarded(&mut env, |env| {
         let layer = u8::try_from(layer)
@@ -226,7 +278,13 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneSetLayer<'local>(
             .and_then(Layer::from_code)
             .ok_or(SyncError::BadArgument("layer"))?;
         let ids = item_list(&bytes_in(env, &ids)?)?;
-        let edits = handle_mut::<SceneHandle>(handle)?.set_layer(&ids, layer)?;
+        let scene = handle_mut::<SceneHandle>(handle)?;
+        let edits = scene.set_layer(&ids, layer)?;
+        scene.commit_into(
+            handle_mut::<SyncCore>(core)?,
+            &edits,
+            now_ms.cast_unsigned(),
+        )?;
         bytes_out(env, &encode_edits(&edits))
     })
 }

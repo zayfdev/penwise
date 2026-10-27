@@ -28,6 +28,9 @@ pub enum SyncError {
     /// A legacy tablet stroke did not convert.
     #[error("legacy: {0}")]
     Legacy(#[from] LegacyError),
+    /// An op would exceed the size limit of one logged op (nothing was changed).
+    #[error("op too large ({0} bytes)")]
+    OpTooLarge(usize),
     /// The page is not in the local replica (sync the catalog first, or create it).
     #[error("unknown page")]
     UnknownPage,

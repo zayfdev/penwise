@@ -46,6 +46,21 @@ describe("packSamples", () => {
     const second = packSamples([pointer({ timeStamp: 9 })], view, rect, 0, first.times[0] ?? 0);
     expect([...first.times, ...second.times]).toEqual([10_000, 10_000]);
   });
+
+  it("keeps µs times monotonic past the int32 limit (36 min) and saturates at u32", () => {
+    const ms = (min: number) => min * 60_000;
+    const { times } = packSamples(
+      [
+        pointer({ timeStamp: ms(30) }),
+        pointer({ timeStamp: ms(40) }),
+        pointer({ timeStamp: ms(90) }),
+      ],
+      view,
+      rect,
+      0,
+    );
+    expect([...times]).toEqual([1_800_000_000, 2_400_000_000, 4_294_967_295]);
+  });
 });
 
 describe("expand", () => {

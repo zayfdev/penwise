@@ -58,7 +58,7 @@ function rig(page: string | null = "page"): { pen: PenInput; calls: Calls; deps:
         calls.begin.push(args);
         return "id";
       },
-      stroke_push: (samples: Float32Array, times: Int32Array) => {
+      stroke_push: (samples: Float32Array, times: Uint32Array) => {
         calls.pushes.push({ samples: [...samples], times: [...times] });
         return new Uint8Array([calls.pushes.length]);
       },

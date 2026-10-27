@@ -59,6 +59,7 @@ pub async fn run<S: SyncStore>(
         Err(stop) => Err(stop),
     };
     session.cancel_open_strokes();
+    session.record_disconnect().await;
     match result {
         Err(Stop::Protocol(code, detail)) => {
             let _ = out.send(&ServerMsg::Error { code, detail }).await;
@@ -83,6 +84,23 @@ impl<S: SyncStore> Session<S> {
             open: BTreeMap::new(),
             last_inbound: Instant::now(),
             ping_nonce: 0,
+        }
+    }
+
+    /// Records the delivery cursor as the device's ack (design: acks update at `Hello` and at disconnect). A
+    /// tablet or agent that missed frames in flight reconnects behind the cursor, which at worst turns into a
+    /// snapshot. Browsers hold no cursor.
+    async fn record_disconnect(&self) {
+        if self.kind == ClientKind::Browser || self.cursor == 0 {
+            return;
+        }
+        if let Err(error) = self
+            .hub
+            .store
+            .note_device(self.device, self.kind, self.cursor)
+            .await
+        {
+            tracing::warn!(%error, session = self.id, "device ack not recorded at disconnect");
         }
     }
 

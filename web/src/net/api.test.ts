@@ -1,13 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Api, ApiError, exchangePairingCode, pageBody } from "./api";
-import {
-  clearToken,
-  DEVICE_KEY,
-  resolveDevice,
-  resolveToken,
-  syncUrl,
-  TOKEN_KEY,
-} from "./credentials";
+import { clearToken, resolveToken, syncUrl, TOKEN_KEY } from "./credentials";
 
 interface Seen {
   url: string;
@@ -120,18 +113,6 @@ describe("credentials", () => {
     expect(resolveToken("", storage)).toBe("abc");
     clearToken(storage);
     expect(resolveToken("", storage)).toBeNull();
-  });
-
-  it("mints the device id once per tab session", () => {
-    const storage = memory();
-    let minted = 0;
-    const wasm = {
-      new_device_id: () => `dev${++minted}`,
-    };
-    const random = (b: Uint8Array) => b;
-    expect(resolveDevice(storage, wasm, 1, random)).toBe("dev1");
-    expect(resolveDevice(storage, wasm, 2, random)).toBe("dev1");
-    expect(storage.getItem(DEVICE_KEY)).toBe("dev1");
   });
 
   it("derives the socket URL from the page origin", () => {

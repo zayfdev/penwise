@@ -8,6 +8,7 @@
 import init, * as wasm from "./generated/penwise-wasm/penwise_wasm.js";
 
 export type {
+  DeadLetter,
   DrawList,
   NotebookEntry,
   PageEntry,

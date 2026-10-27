@@ -237,6 +237,20 @@ impl<S: SyncStore> Session<S> {
     pub(super) async fn on_watch(&mut self, page: Option<PageId>) -> Result<(), Stop> {
         if self.kind == ClientKind::Browser {
             if let Some(page) = page {
+                // Deliver every catalog op committed so far first: the page snapshot is taken at the head,
+                // and a client must never see a head past catalog ops it was not sent. A `Page` snapshot does
+                // not move the client's head (only `page_from_seq` here); ops committed during the snapshot
+                // follow through the broadcast.
+                let head = self
+                    .hub
+                    .store
+                    .status()
+                    .await
+                    .map_err(|e| Stop::internal(&e))?
+                    .head_seq;
+                if head > self.cursor {
+                    self.catch_up().await?;
+                }
                 // Filter switches only after the snapshot: ops of `page` at or below its head are inside it.
                 let head = self.send_snapshot(Scope::Page(page)).await?;
                 self.page_from_seq = head;

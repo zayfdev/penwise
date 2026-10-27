@@ -201,3 +201,51 @@ async fn switch_page_is_relayed_to_everyone_else_and_remembered() {
     };
     assert_eq!(current_page, Some(p));
 }
+
+#[tokio::test]
+async fn a_live_stroke_stays_on_the_page_of_its_first_delta() {
+    let store = FakeStore::new(16);
+    let hub = Hub::new(store, config());
+    let (p, q) = (page_id(1), page_id(2));
+    let a = tablet(&hub, device(1), Some(p)).await;
+    let mut on_p = tablet(&hub, device(2), Some(p)).await;
+    let mut on_q = tablet(&hub, device(3), Some(q)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+    a.send(&ClientMsg::StrokeDelta(delta(1, p, 0))).await;
+    assert!(matches!(on_p.next().await, ServerMsg::StrokeDelta { .. }));
+    // A continuation naming another page must not leak the stroke onto it.
+    a.send(&ClientMsg::StrokeDelta(delta(1, q, 1))).await;
+    assert!(on_q.quiet().await, "the other page never sees the stroke");
+    assert!(on_p.quiet().await, "the misaddressed delta is dropped");
+    a.send(&ClientMsg::StrokeDelta(delta(1, p, 1))).await;
+    assert!(matches!(on_p.next().await, ServerMsg::StrokeDelta { .. }));
+}
+
+#[tokio::test]
+async fn the_delivery_cursor_is_recorded_as_the_ack_at_disconnect() {
+    let store = FakeStore::new(16);
+    store.commit(vec![
+        item_op(2, 1, page_id(1), "a"),
+        item_op(2, 2, page_id(1), "b"),
+    ]);
+    let hub = Hub::new(store.clone(), config());
+    let mut rig = Rig::on(hub);
+    rig.connect(device(1), ClientKind::Tablet, 0).await;
+    collect_catch_up(&mut rig).await;
+    assert_eq!(store.noted(), vec![(device(1), ClientKind::Tablet, 0)]);
+    drop(rig.tx);
+    for _ in 0..50 {
+        if store.noted().len() == 2 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert_eq!(
+        store.noted(),
+        vec![
+            (device(1), ClientKind::Tablet, 0),
+            (device(1), ClientKind::Tablet, 2)
+        ],
+        "the cursor the session reached is the ack"
+    );
+}

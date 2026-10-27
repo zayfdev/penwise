@@ -7,7 +7,7 @@
 
 mod common;
 
-use common::{device, notebook_create, notebook_id, page_create, page_id};
+use common::{device, hlc, notebook_create, notebook_id, page_create, page_id};
 use penwise_core::edit::Edit;
 use penwise_core::sample::{ANGLE_STEP, Sample};
 use penwise_proto::message::OpRejected;
@@ -307,4 +307,191 @@ fn preset_names_follow_the_core_order() {
     let names = penwise_wasm::preset_names();
     assert_eq!(names.len(), penwise_core::brush::Preset::ALL.len());
     assert_eq!(names.first().map(String::as_str), Some("ballpoint"));
+}
+
+/// Catalog ops 1–2 (notebook 1 with page 2) as an `OpsSince` frame from the start of the log.
+fn catalog_frame() -> ServerMsg {
+    let mut clock = HlcClock::new(device(1));
+    let ops = vec![
+        notebook_create(&mut clock, NOW, notebook_id(1), "Notes", 0),
+        page_create(&mut clock, NOW, page_id(2), notebook_id(1), "p", 0),
+    ]
+    .into_iter()
+    .zip(1..)
+    .map(|(op, seq)| SeqOp { seq, op })
+    .collect();
+    ServerMsg::OpsSince {
+        from_seq: 0,
+        upto_seq: 2,
+        ops,
+        head_seq: 2,
+        more: false,
+    }
+}
+
+fn welcome() -> ServerMsg {
+    ServerMsg::Welcome {
+        protocol_version: 1,
+        server: ServerId::from_parts(1, 9),
+        device: device(7),
+        head_seq: 2,
+        log_floor: 0,
+        server_now_ms: NOW,
+        current_page: None,
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+fn unsent_ops_survive_a_reload() {
+    let (mut viewer, page) = ready();
+    draw(&mut viewer, &page);
+    viewer.stroke_end(NOW_F).unwrap();
+    let first = pushed_ops(&viewer.poll_push().unwrap().unwrap());
+    let state = viewer.export_state().unwrap();
+    assert!(viewer.state_revision() > 0.0);
+
+    // New page load: empty replica, same device, the outbox restored.
+    let mut reloaded = Viewer::new();
+    reloaded.restore_state(&state, 12345).unwrap();
+    assert_eq!(reloaded.pending_ops(), 1);
+    assert_eq!(reloaded.head_seq(), 0);
+    let hello = reloaded.begin_session("token", NOW_F).unwrap();
+    assert!(matches!(
+        decode_client(&hello).unwrap(),
+        ClientMsg::Hello { device: d, last_seen_seq: 0, .. } if d == device(7)
+    ));
+    send(&mut reloaded, &welcome());
+    send(&mut reloaded, &catalog_frame());
+    // The unsent stroke is on the page again, before the server has seen it.
+    assert!(
+        !reloaded
+            .render_page_paths(&page, ALL)
+            .unwrap()
+            .commands()
+            .is_empty()
+    );
+    let again = pushed_ops(&reloaded.poll_push().unwrap().unwrap());
+    assert_eq!(again[0].op_id(), first[0].op_id());
+
+    // Stamps after the reload still sort after the ones before it (same wall clock, fresh counter).
+    draw(&mut reloaded, &page);
+    reloaded.stroke_end(NOW_F).unwrap();
+    let newest = reloaded.pending_ops();
+    assert_eq!(newest, 2);
+    let blob = reloaded.export_state().unwrap();
+    let mut third = Viewer::new();
+    third.restore_state(&blob, 1).unwrap();
+    assert_eq!(third.pending_ops(), 2);
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+fn restored_clock_orders_new_ops_after_old_ones() {
+    let (mut viewer, page) = ready();
+    draw(&mut viewer, &page);
+    viewer.stroke_end(NOW_F).unwrap();
+    let old = pushed_ops(&viewer.poll_push().unwrap().unwrap())[0].hlc();
+    let mut reloaded = Viewer::new();
+    reloaded
+        .restore_state(&viewer.export_state().unwrap(), 4)
+        .unwrap();
+    reloaded.begin_session("t", NOW_F).unwrap();
+    send(&mut reloaded, &welcome());
+    send(&mut reloaded, &catalog_frame());
+    draw(&mut reloaded, &page);
+    reloaded.stroke_end(NOW_F).unwrap();
+    let ops = pushed_ops(&reloaded.poll_push().unwrap().unwrap());
+    let newest = ops.iter().map(AnyOp::hlc).max().unwrap();
+    assert!(newest > old);
+    assert!(ops.iter().filter(|o| o.hlc() > old).count() >= 1);
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+fn refused_ops_become_dead_letters_and_leave_the_replica() {
+    let (mut viewer, page) = ready();
+    draw(&mut viewer, &page);
+    viewer.stroke_end(NOW_F).unwrap();
+    let ops = pushed_ops(&viewer.poll_push().unwrap().unwrap());
+    let revision = viewer.state_revision();
+    let ack = send(
+        &mut viewer,
+        &ServerMsg::Ack {
+            op_ids: vec![],
+            seqs: vec![],
+            rejected: vec![OpRejected {
+                op_id: ops[0].op_id(),
+                reason: OpRejection::ClockSkew,
+            }],
+        },
+    );
+    assert!(
+        ack.resync,
+        "the caller must reconnect to refill the replica"
+    );
+    assert!(viewer.state_revision() > revision);
+    assert_eq!(viewer.head_seq(), 0);
+    assert!(
+        viewer.render_page_paths(&page, ALL).unwrap().is_empty(),
+        "the refused stroke is gone from the replica"
+    );
+    let letters = viewer.dead_letters();
+    assert_eq!(letters.len(), 1);
+    assert_eq!(letters[0].op_id, ops[0].op_id().to_string());
+    assert_eq!(letters[0].reason, "device clock too far ahead");
+    assert!(letters[0].summary.contains("item"));
+    let bytes = viewer
+        .dead_letter_bytes(&letters[0].op_id)
+        .unwrap()
+        .unwrap();
+    assert!(!bytes.is_empty());
+
+    // Dead letters are persisted with the outbox, and can be dismissed.
+    let mut reloaded = Viewer::new();
+    reloaded
+        .restore_state(&viewer.export_state().unwrap(), 3)
+        .unwrap();
+    assert_eq!(reloaded.dead_letters().len(), 1);
+    assert_eq!(reloaded.pending_ops(), 0);
+    assert!(reloaded.dismiss_dead_letter(&letters[0].op_id).unwrap());
+    assert!(reloaded.dead_letters().is_empty());
+    assert!(!reloaded.dismiss_dead_letter(&letters[0].op_id).unwrap());
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+fn a_log_stamp_far_ahead_is_reported_but_still_ordered_before_new_ops() {
+    let (mut viewer, page) = ready();
+    // A logged op stamped 10 minutes ahead of the calibrated clock.
+    let mut ahead = HlcClock::resume(hlc(NOW + 600_000, 0));
+    let op = page_create(
+        &mut ahead,
+        NOW + 600_000,
+        page_id(3),
+        notebook_id(1),
+        "f",
+        5,
+    );
+    let far = op.hlc();
+    send(
+        &mut viewer,
+        &ServerMsg::OpsSince {
+            from_seq: 2,
+            upto_seq: 3,
+            ops: vec![SeqOp { seq: 3, op }],
+            head_seq: 3,
+            more: false,
+        },
+    );
+    draw(&mut viewer, &page);
+    viewer.stroke_end(NOW_F).unwrap();
+    let skew = viewer.take_clock_skew_ms();
+    assert!((599_000.0..=601_000.0).contains(&skew), "skew {skew}");
+    assert!(viewer.take_clock_skew_ms() < 1.0, "reading resets it");
+    let ops = pushed_ops(&viewer.poll_push().unwrap().unwrap());
+    assert!(
+        ops[0].hlc() > far,
+        "the new op orders after the far-ahead stamp"
+    );
 }

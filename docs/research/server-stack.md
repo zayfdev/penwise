@@ -1,3 +1,5 @@
+> **Historical research (2026-10), written before the op-log rewrite; current server: docs/rewrite-design.md, docs/pages.md.**
+
 # penwise-server stack research (2026-10)
 
 Scope: crates and external services for `crates/penwise-server` (and the server-side half of `penwise-proto`).

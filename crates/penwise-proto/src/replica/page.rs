@@ -106,6 +106,22 @@ impl PageReplica {
         }
     }
 
+    /// Drops item `id` (state and scene), e.g. to replace it by the server's version. The scene is rebuilt
+    /// from the remaining items.
+    ///
+    /// # Errors
+    /// `Edit` when the remaining items no longer form a scene (never expected).
+    pub(crate) fn forget(&mut self, id: ItemId) -> Result<(), ReplicaError> {
+        if self.items.remove(&id).is_none() {
+            return Ok(());
+        }
+        self.scene = Scene::from_items(
+            self.scene.kind(),
+            self.items.values().map(|m| (m.item.clone(), m.deleted)),
+        )?;
+        Ok(())
+    }
+
     /// The page scene (render order, geometry, hit tests).
     #[must_use]
     pub fn scene(&self) -> &Scene {

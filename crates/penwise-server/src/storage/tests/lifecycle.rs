@@ -228,7 +228,7 @@ async fn restore_is_a_compensating_batch_and_can_be_undone() {
         .restore_page(page, checkpoint)
         .await
         .expect("restore");
-    assert_eq!(restored.len(), 3);
+    assert_eq!(restored.appended.len(), 3);
     let live = rig.storage.live_item_ids(page, None).await.expect("live");
     assert!(live.contains(&keep_id) && live.contains(&gone_id) && !live.contains(&late_id));
     let view = rig
@@ -247,7 +247,7 @@ async fn restore_is_a_compensating_batch_and_can_be_undone() {
         .restore_page(page, checkpoint + 3)
         .await
         .expect("undo");
-    assert_eq!(undo.len(), 3);
+    assert_eq!(undo.appended.len(), 3);
     let live = rig.storage.live_item_ids(page, None).await.expect("live");
     assert!(!live.contains(&gone_id) && live.contains(&late_id));
     // Nothing differs now: an empty batch.
@@ -256,6 +256,7 @@ async fn restore_is_a_compensating_batch_and_can_be_undone() {
             .restore_page(page, checkpoint + 3)
             .await
             .expect("noop")
+            .appended
             .is_empty()
     );
 }

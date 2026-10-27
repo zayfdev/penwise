@@ -1,12 +1,12 @@
-//! Id minting for the browser author: ULIDs from the caller's wall clock plus a seeded `splitmix64` stream.
+//! Id minting for clients: ULIDs from the caller's wall clock plus a seeded `splitmix64` stream.
 //!
-//! `penwise-proto` is pure (no RNG, no clock), so entropy comes from JS (`crypto.getRandomValues`) and the time
-//! from each call's `now_ms`. The stream is also seeded from the (unique) device id, so two tabs never collide.
-//! Same construction as the tablet's `IdMint` in `penwise-ffi`.
+//! Proto is pure (no RNG, no clock), so entropy comes from the host (Android `SecureRandom`, browser
+//! `crypto.getRandomValues`, tests: any number) and the time from each caller's `now_ms`. The stream is also
+//! seeded from the (unique) device id, so two devices never collide in practice: 80 random bits per id.
 
 use penwise_core::item::{IdSource, ItemId};
-use penwise_proto::ids::{ID_RANDOM_MASK, MAX_ID_TIMESTAMP_MS};
-use penwise_proto::{DeviceId, OpId};
+
+use crate::ids::{DeviceId, ID_RANDOM_MASK, MAX_ID_TIMESTAMP_MS, NotebookId, OpId, PageId};
 
 const GAMMA: u64 = 0x9E37_79B9_7F4A_7C15;
 
@@ -27,6 +27,12 @@ impl IdMint {
             word[..chunk.len()].copy_from_slice(chunk);
             seed = seed.rotate_left(17) ^ u64::from_le_bytes(word);
         }
+        Self::from_seed(seed)
+    }
+
+    /// Stream seeded from `seed` alone (tests: reproducible ids).
+    #[must_use]
+    pub fn from_seed(seed: u64) -> Self {
         Self {
             state: seed,
             now_ms: 0,
@@ -38,7 +44,7 @@ impl IdMint {
         self.now_ms = now_ms.min(MAX_ID_TIMESTAMP_MS);
     }
 
-    /// Next stream word (stroke seeds use it directly).
+    /// Next raw 64 bits of the stream (seeds, tie-break values).
     pub fn next_u64(&mut self) -> u64 {
         self.state = self.state.wrapping_add(GAMMA);
         let mut z = self.state;
@@ -56,6 +62,24 @@ impl IdMint {
     pub fn op(&mut self) -> OpId {
         let (ts, random) = self.parts();
         OpId::from_parts(ts, random)
+    }
+
+    /// Fresh notebook id.
+    pub fn notebook(&mut self) -> NotebookId {
+        let (ts, random) = self.parts();
+        NotebookId::from_parts(ts, random)
+    }
+
+    /// Fresh page id.
+    pub fn page(&mut self) -> PageId {
+        let (ts, random) = self.parts();
+        PageId::from_parts(ts, random)
+    }
+
+    /// Fresh device id.
+    pub fn device(&mut self) -> DeviceId {
+        let (ts, random) = self.parts();
+        DeviceId::from_parts(ts, random)
     }
 }
 

@@ -8,6 +8,7 @@
 
 mod lifecycle;
 mod lww;
+mod purge;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};

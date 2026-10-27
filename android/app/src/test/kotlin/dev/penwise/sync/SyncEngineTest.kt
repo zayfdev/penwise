@@ -132,8 +132,8 @@ class SyncEngineTest {
         assertEquals(0L, tablet.core.headSeq())
     }
 
-    @Test
-    fun a_different_server_keeps_unsent_work() {
+    /** A tablet that synced with a server which is then replaced by an empty one, plus one unsent notebook. */
+    private fun tabletAfterServerReplacement(): Device {
         val tablet = device()
         tablet.connect()
         val notebook = tablet.library.newNotebook("Old server")
@@ -154,11 +154,53 @@ class SyncEngineTest {
 
         val back = Device(dir = tablet.dir, server = fresh).also(open::add)
         back.connect()
+        eventually("the new server is held until the user decides") { back.core.serverChangePending() }
+        assertTrue(
+            "nothing was dropped yet",
+            back.library
+                .list(null)
+                .books
+                .map {
+                    it.title
+                }.containsAll(listOf("Old server", "Unsent")),
+        )
+        assertTrue(back.recorder.outcomes.any { it.serverChanged })
+        return back
+    }
+
+    @Test
+    fun a_different_server_asks_and_dropping_keeps_only_unsent_work() {
+        val back = tabletAfterServerReplacement()
+        back.engine.resolveServerChange(keep = false)
         eventually("replica reset to the new server, unsent notebook kept and pushed") {
             back.pending() == 0 && back.library
                 .list(null)
                 .books
                 .map { it.title } == listOf("Unsent")
+        }
+    }
+
+    @Test
+    fun a_different_server_asks_and_keeping_sends_the_acked_ink_to_the_new_server() {
+        val back = tabletAfterServerReplacement()
+        back.engine.resolveServerChange(keep = true)
+        eventually("everything is on the new server") { back.pending() == 0 }
+        assertEquals(
+            setOf("Old server", "Unsent"),
+            back.library
+                .list(null)
+                .books
+                .map { it.title }
+                .toSet(),
+        )
+        val fresh = Device(server = open.filterIsInstance<TestServer>().last()).also(open::add)
+        fresh.connect()
+        eventually("a new device sees the kept ink") {
+            fresh.library
+                .list(null)
+                .books
+                .map { it.title }
+                .toSet() == setOf("Old server", "Unsent")
         }
     }
 

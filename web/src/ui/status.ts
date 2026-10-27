@@ -13,10 +13,11 @@ const LABELS: Record<ConnectionState, string> = {
 export class StatusPill {
   constructor(private readonly node: HTMLElement) {}
 
-  show(state: ConnectionState, pending: number): void {
+  show(state: ConnectionState, pending: number, refused = 0): void {
     this.node.dataset.state = state;
     const queued = pending > 0 ? ` · ${pending} unsent` : "";
-    this.node.textContent = `${LABELS[state]}${queued}`;
+    const dead = refused > 0 ? ` · ${refused} refused` : "";
+    this.node.textContent = `${LABELS[state]}${queued}${dead}`;
   }
 
   problem(message: string): void {

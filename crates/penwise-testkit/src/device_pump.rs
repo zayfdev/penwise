@@ -97,7 +97,7 @@ impl TestDevice {
             ServerMsg::OpsSince { upto_seq, ops, .. } => {
                 for op in &ops {
                     self.events.delivered.push(op.seq);
-                    let _ = self.hlc.recv(op.op.hlc(), self.local_now());
+                    let _ = self.hlc.observe_logged(op.op.hlc(), self.local_now());
                     if let Err(e) = self.replica.apply_seq(op) {
                         self.events.apply_errors.push(e.to_string());
                     }
@@ -106,18 +106,21 @@ impl TestDevice {
             }
             ServerMsg::SnapshotBegin { scope, .. } => {
                 self.snapshotting = true;
+                self.snapshot_scope = scope;
                 self.inflight.clear();
                 if let Err(e) = self.replica.begin_snapshot(scope) {
                     self.events.apply_errors.push(e.to_string());
                 }
             }
             ServerMsg::SnapshotChunk(chunk) => {
+                let now = self.local_now();
+                let _ = penwise_proto::observe_snapshot_chunk(&mut self.hlc, &chunk, now);
                 if let Err(e) = self.replica.apply_snapshot_chunk(&chunk) {
                     self.events.apply_errors.push(e.to_string());
                 }
             }
             ServerMsg::SnapshotEnd { head_seq } => {
-                self.replica.end_snapshot(head_seq);
+                self.replica.end_snapshot(self.snapshot_scope, head_seq);
                 for op in self.outbox.pending_ops() {
                     let _ = self.replica.apply(&op);
                 }

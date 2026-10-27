@@ -55,4 +55,16 @@ impl Viewer {
             .as_ref()
             .map_or(0, |a| u32::try_from(a.pending()).unwrap_or(u32::MAX))
     }
+
+    /// How far (ms) the newest stamp from the server log was ahead of this clock at the last local stamp, then
+    /// resets to 0. Non-zero means new ops may be refused as `ClockSkew` until the clock catches up.
+    pub fn take_clock_skew_ms(&mut self) -> f64 {
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "a skew in ms stays far below 2^53"
+        )]
+        self.author
+            .as_mut()
+            .map_or(0.0, |a| a.take_clock_skew() as f64)
+    }
 }

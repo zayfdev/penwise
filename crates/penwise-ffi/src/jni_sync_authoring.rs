@@ -161,7 +161,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_syncUpdatePage<'local>(
     });
 }
 
-/// Imports an old `PWST` page file; returns `[added, alreadyPresent, skipped]`.
+/// Imports an old `PWST` page file; returns `[added, alreadyPresent, skipped, seedCollisions]`.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_penwise_core_Native_syncImportLegacyPage<'local>(
     mut env: EnvUnowned<'local>,
@@ -186,6 +186,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_syncImportLegacyPage<'local>
                 to_int(report.added),
                 to_int(report.already_present),
                 to_int(report.skipped),
+                to_int(report.seed_collisions),
             ],
         )
     })

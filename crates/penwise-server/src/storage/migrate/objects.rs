@@ -1,7 +1,10 @@
 //! Legacy `objects` rows → item `Add` ops, quarantine of what cannot convert, and the read-back check.
 
+use penwise_core::Sample;
 use penwise_core::codec::item::decode_item;
 use penwise_core::item::{Item, ItemKind};
+use penwise_core::sample::POSITION_LIMIT_PX;
+use penwise_core::{BrushParams, Preset};
 use penwise_proto::PageId;
 use penwise_proto::legacy::{
     LegacyImage, LegacyStroke, image_to_item, legacy_add_op, legacy_seed, stroke_to_item,
@@ -18,6 +21,8 @@ pub(super) struct ObjectCounts {
     pub(super) strokes: u64,
     pub(super) images: u64,
     pub(super) unmigrated: u64,
+    /// Strokes converted with a silent repair (clamped time/sample, unknown preset, unusable scale).
+    pub(super) adjusted: u64,
 }
 
 /// The JSON of an `image_v1` payload (`ImageMsg`; `id` and `layer` come from the row).
@@ -72,7 +77,7 @@ pub(super) fn migrate_objects(
                 let hlc = e.stamp();
                 e.emit(&legacy_add_op(page, e.device, hlc, item.clone()))?;
                 if let Some(stroke) = &stroke {
-                    verify_stroke(e.tx, &item, stroke, row.z)?;
+                    counts.adjusted += verify_stroke(e.tx, &item, stroke, row.z)?;
                     counts.strokes += 1;
                 } else {
                     counts.images += 1;
@@ -140,13 +145,31 @@ fn convert(page_text: &str, row: &ObjectRow) -> Result<Converted, String> {
     }
 }
 
-/// Reads the stored row back and compares it to the source (argb, seed, sample count, z, layer).
+/// Whether the conversion had to repair the source stroke (negative times clamped to 0, a preset index past
+/// the last preset, a scale that is not finite and positive, samples outside the quantization ranges).
+fn repaired(source: &LegacyStroke) -> bool {
+    const TILT_MAX: f32 = std::f32::consts::FRAC_PI_2;
+    let samples_clamped = source.samples.chunks_exact(5).any(|v| {
+        v[0].abs() > POSITION_LIMIT_PX
+            || v[1].abs() > POSITION_LIMIT_PX
+            || !(0.0..=1.0).contains(&v[2])
+            || !(0.0..=TILT_MAX).contains(&v[3])
+            || v[4].abs() > std::f32::consts::PI
+    });
+    source.times.iter().any(|&t| t < 0)
+        || usize::try_from(source.preset).map_or(true, |p| p >= Preset::ALL.len())
+        || !(source.scale.is_finite() && source.scale > 0.0)
+        || samples_clamped
+}
+
+/// Reads the stored row back and compares it to the source (argb, seed, samples, times, preset and scale,
+/// z, layer). Returns 1 when the conversion repaired the source silently (see [`repaired`]), else 0.
 fn verify_stroke(
     tx: &Transaction<'_>,
     item: &Item,
     source: &LegacyStroke,
     z: i64,
-) -> Result<(), StorageError> {
+) -> Result<u64, StorageError> {
     let (body, layer, stored_z): (Vec<u8>, i64, i64) = tx.query_row(
         "SELECT body, layer, z FROM items WHERE id = ?1",
         [&item.id.0[..]],
@@ -157,14 +180,36 @@ fn verify_stroke(
         return Err(fail("stored stroke has another kind"));
     };
     let want_layer = i64::from(u8::from(source.layer == "agent"));
+    let want_params = BrushParams::for_preset(
+        usize::try_from(source.preset).unwrap_or(usize::MAX),
+        source.argb.cast_unsigned(),
+        source.scale,
+    );
+    let samples_match = stroke.samples.len() == source.times.len()
+        && stroke
+            .samples
+            .iter()
+            .zip(source.samples.chunks_exact(5).zip(&source.times))
+            .all(|(stored, (v, &t))| {
+                *stored
+                    == (Sample {
+                        x: v[0],
+                        y: v[1],
+                        pressure: v[2],
+                        tilt: v[3],
+                        azimuth: v[4],
+                        t_us: u32::try_from(t.max(0)).unwrap_or(0),
+                    })
+                    .quantize()
+            });
     let same = decoded == *item
         && stroke.seed == legacy_seed(&source.seed)
-        && stroke.params.color.to_argb() == source.argb.cast_unsigned()
-        && stroke.samples.len() == source.times.len()
+        && stroke.params == want_params
+        && samples_match
         && stored_z == z
         && layer == want_layer;
     if same {
-        Ok(())
+        Ok(u64::from(repaired(source)))
     } else {
         Err(fail(format!("stroke {} does not round-trip", source.seed)))
     }

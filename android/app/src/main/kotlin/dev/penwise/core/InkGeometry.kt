@@ -20,4 +20,8 @@ class InkGeometry(
     val opacity: Float,
     /** Highlighter: multiply blend, drawn under other ink. */
     val multiply: Boolean,
+    /** Grain texture scale of the brush; 0 when the brush has no grain. */
+    val grainScale: Float = 0f,
+    /** Grain edge softness of the brush. */
+    val grainSoftness: Float = 0f,
 )

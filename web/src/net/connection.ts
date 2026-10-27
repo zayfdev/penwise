@@ -197,6 +197,11 @@ export class Connection {
       default:
         break;
     }
+    if (summary.resync) {
+      // Refused ops were rebuilt out of the replica (now empty): reconnect so the server log refills it.
+      this.events.problem(`${summary.rejected} op(s) were refused by the server`);
+      this.socket?.close();
+    }
     if (summary.apply_errors > 0) {
       this.events.problem(`${summary.apply_errors} item(s) from the server were refused`);
     }

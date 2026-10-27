@@ -62,6 +62,8 @@ internal sealed interface RenderPart {
         val evenOdd: Boolean,
         val contourEnds: IntArray,
         val points: FloatArray,
+        /** A shape's interior: core fills it with the Normal blend even when the outline multiplies. */
+        val normalBlend: Boolean = false,
     ) : RenderPart {
         /** The painter's tessellated `android.graphics.Path`, built on first draw and reused until the item changes. */
         var nativePath: Any? = null
@@ -114,6 +116,7 @@ internal class ItemRender(
         private const val KIND_MASK = 3
         private const val KIND_TEXT = 4
         private const val KIND_IMAGE = 5
+        private const val KIND_SHAPE_FILL = 6
         private const val PAD_PX = 2f
         private const val DAB = 9
         private const val HASH_BYTES = 32
@@ -145,8 +148,8 @@ internal class ItemRender(
             text: () -> String,
         ): RenderPart =
             when (kind) {
-                KIND_OUTLINE, KIND_EVEN_ODD -> {
-                    outline(f, o, kind == KIND_EVEN_ODD)
+                KIND_OUTLINE, KIND_EVEN_ODD, KIND_SHAPE_FILL -> {
+                    outline(f, o, kind == KIND_EVEN_ODD, kind == KIND_SHAPE_FILL)
                 }
 
                 KIND_STAMPS -> {
@@ -191,12 +194,14 @@ internal class ItemRender(
             f: FloatArray,
             o: Int,
             evenOdd: Boolean,
+            normalBlend: Boolean,
         ): RenderPart.Outline {
             val contours = f[o + 5].toInt()
             val ends = IntArray(contours) { f[o + 6 + it].toInt() }
             val pointCount = ends.lastOrNull() ?: 0
             val start = o + 6 + contours
-            return RenderPart.Outline(argb(f, o), f[o + 4], evenOdd, ends, f.copyOfRange(start, start + 2 * pointCount))
+            val points = f.copyOfRange(start, start + 2 * pointCount)
+            return RenderPart.Outline(argb(f, o), f[o + 4], evenOdd, ends, points, normalBlend)
         }
 
         private fun stamps(

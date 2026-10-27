@@ -1,4 +1,4 @@
-//! Client frame encoders, device ids and paper grain helpers.
+//! Client frame encoders and device ids.
 #![allow(
     clippy::unwrap_used,
     clippy::panic,
@@ -14,7 +14,6 @@ use penwise_wasm::encode::{
     switch_page_frame, watch_frame,
 };
 use penwise_wasm::error::WasmError;
-use penwise_wasm::grain::{bake_grain_tile, grain_coverage_lut, grain_period_px};
 
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
@@ -92,35 +91,5 @@ fn small_frames_round_trip() {
     assert_eq!(
         decode(encode_pong(9).unwrap()),
         ClientMsg::Pong { nonce: 9 }
-    );
-}
-
-#[cfg_attr(not(target_arch = "wasm32"), test)]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
-fn grain_period_is_clamped() {
-    assert_eq!(grain_period_px(1.0), 512);
-    assert_eq!(grain_period_px(0.0), 1);
-    assert_eq!(grain_period_px(-3.0), 1);
-    assert_eq!(grain_period_px(f32::NAN), 1);
-    assert_eq!(grain_period_px(1.0e9), 8192);
-    assert_eq!(grain_period_px(f32::INFINITY), 8192);
-}
-
-#[cfg_attr(not(target_arch = "wasm32"), test)]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
-fn grain_tile_and_lut_shapes() {
-    let tile = bake_grain_tile(1.0, 16);
-    assert_eq!(tile.len(), 256);
-    assert!(tile.iter().any(|&h| h != tile[0]), "paper has relief");
-    assert!(bake_grain_tile(1.0, 8193).is_empty());
-
-    let flat = grain_coverage_lut(0.5, 0.1, 0.0);
-    assert_eq!(flat, vec![255; 256], "strength 0 = no grain");
-    let lut = grain_coverage_lut(0.5, 0.1, 1.0);
-    assert_eq!(lut.len(), 256);
-    assert_eq!((lut[0], lut[255]), (0, 255));
-    assert!(
-        lut.windows(2).all(|w| w[0] <= w[1]),
-        "taller paper catches more ink"
     );
 }

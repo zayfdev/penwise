@@ -2,6 +2,7 @@
 
 use penwise_core::edit::undo::DEFAULT_DEPTH;
 use penwise_core::edit::{Edit, UndoStack};
+use penwise_proto::outbox::check_edit_size;
 use penwise_proto::{AnyOp, Op, PageId};
 use wasm_bindgen::prelude::{JsError, wasm_bindgen};
 
@@ -102,6 +103,7 @@ impl Viewer {
         let author = self.author.as_mut().ok_or(WasmError::NotIdentified)?;
         author.mint.set_now(now_ms);
         for edit in edits {
+            check_edit_size(edit).map_err(|_| WasmError::BadArgument("edit too large to sync"))?;
             let op = AnyOp::Item(Box::new(Op {
                 op_id: author.mint.op(),
                 device: author.device,

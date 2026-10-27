@@ -12,6 +12,11 @@
 //! | 3 `MASK` | `width, nPoints, points x y …` (round caps/joins, destination-out) |
 //! | 4 `TEXT` | `8 corner floats (tl tr br bl), r g b a, opacity, fontSize, boxW, boxH` (local box; the text itself via `item_text`) |
 //! | 5 `IMAGE` | `8 corner floats, 32 asset-hash bytes as floats` |
+//! | 6 `SHAPE_FILL` | as `OUTLINE`, but always drawn with the Normal blend, whatever `multiply` says (a shape's interior; core fills it Normal and only the outline strokes multiply) |
+//!
+//! `STAMPS` dabs are drawn exactly as core `raster::stamps` does (per-dab grain, minimum fade): the formulas live
+//! in that module's docs and are mirrored by the tablet painter (`StampRaster.kt`) and the browser (`stamps.ts`),
+//! which both replay `crates/penwise-core/tests/goldens/stamp_coverage.txt` generated from core.
 
 use penwise_core::brush::{BlendMode, Color};
 use penwise_core::geometry::{Outline, StrokeGeometry};
@@ -34,6 +39,7 @@ pub mod kind {
     pub const MASK: f32 = 3.0;
     pub const TEXT: f32 = 4.0;
     pub const IMAGE: f32 = 5.0;
+    pub const SHAPE_FILL: f32 = 6.0;
 }
 
 /// Floats per dab.
@@ -55,7 +61,7 @@ pub fn item_floats(scene: &Scene, id: ItemId) -> Option<Vec<f32>> {
         ItemGeometry::Shape(shape) => {
             multiply = shape.stroke.style().blend == BlendMode::Multiply;
             if let Some((color, outline)) = &shape.fill {
-                parts.push(outline_part(kind::OUTLINE, *color, 1.0, outline));
+                parts.push(outline_part(kind::SHAPE_FILL, *color, 1.0, outline));
             }
             parts.push(stroke_part(&shape.stroke));
         }

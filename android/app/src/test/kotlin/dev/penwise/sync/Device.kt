@@ -8,6 +8,7 @@ import java.nio.file.Files
 class Device(
     val dir: File = Files.createTempDirectory("penwise-tablet").toFile(),
     private val server: TestServer?,
+    clock: () -> Long = System::currentTimeMillis,
     private val token: () -> String = { server?.token.orEmpty() },
 ) : AutoCloseable {
     val recorder = Recorder()
@@ -17,6 +18,7 @@ class Device(
             endpoints = { listOfNotNull(server?.url) },
             token = token,
             listener = recorder,
+            clock = clock,
         )
     val core: SyncCore get() = engine.core
     val library: Library get() = engine.library

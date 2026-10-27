@@ -84,6 +84,16 @@ async fn ops_already_inside_the_page_snapshot_are_not_replayed() {
     // seq 3 commits (and is broadcast) before the Watch is processed; the page snapshot includes it.
     store.commit(vec![item_op(2, 10, p, "a")]);
     rig.send(&ClientMsg::Watch { page: Some(p) }).await;
+    // Everything committed so far is delivered (here: seq 3 is filtered out, only the cursor moves) before the
+    // snapshot, so the snapshot never carries the client past an op it was not sent.
+    assert!(matches!(
+        rig.next().await,
+        ServerMsg::OpsSince {
+            from_seq: 2,
+            upto_seq: 3,
+            ..
+        }
+    ));
     assert!(matches!(
         rig.next().await,
         ServerMsg::SnapshotBegin {
@@ -122,4 +132,27 @@ async fn browser_catch_up_after_lag_is_filtered_too() {
         }
     }
     assert_eq!(got, (0..8).map(|n| 4 + 2 * n).collect::<Vec<_>>());
+}
+
+#[tokio::test]
+async fn a_catalog_op_committed_before_the_watch_is_delivered_before_the_page_snapshot() {
+    let store = FakeStore::new(16);
+    let (p, fresh) = (page_id(1), page_id(2));
+    store.commit(vec![notebook_op(2, 1), page_op(2, 2, p)]);
+    let mut rig = browser(&store).await;
+    // Committed but not (yet) broadcast: the Watch finds it only in the log. The page snapshot is taken at
+    // head 3, so a client that adopted that head would never see this page.
+    store.commit_silently(vec![page_op(2, 3, fresh)]);
+    rig.send(&ClientMsg::Watch { page: Some(p) }).await;
+    let ServerMsg::OpsSince { ops, .. } = rig.next().await else {
+        panic!("the new page op comes first")
+    };
+    assert_eq!(ops.iter().map(|o| o.seq).collect::<Vec<_>>(), vec![3]);
+    assert!(matches!(
+        rig.next().await,
+        ServerMsg::SnapshotBegin {
+            head_seq: 3,
+            scope: Scope::Page(_)
+        }
+    ));
 }

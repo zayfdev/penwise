@@ -261,7 +261,7 @@ fn begin_snapshot_resets_exactly_what_the_scope_covers() {
         items: vec![row()],
     };
     replica.apply_snapshot_chunk(&chunk).unwrap();
-    replica.end_snapshot(9);
+    replica.end_snapshot(Scope::All, 9);
     assert_eq!(replica.page(page_id(1)).unwrap().items().count(), 1);
 
     replica.begin_snapshot(Scope::Page(page_id(1))).unwrap();

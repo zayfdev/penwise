@@ -34,8 +34,8 @@ pub use error::{AppendError, Rejected, RestoreError, StorageError};
 pub use schema::SCHEMA_VERSION;
 pub use types::{
     AliasTarget, Appended, DEVICE_IDLE_DAYS, DeviceInfo, FaultPlan, NowMs, OpFilter, OpsPage,
-    PageView, RETENTION_DAYS, SNAPSHOT_CHUNK_ITEMS, SnapshotStream, Status, StorageConfig,
-    system_now_ms,
+    PageView, RETENTION_DAYS, Restored, SNAPSHOT_CHUNK_ITEMS, SnapshotStream, Status,
+    StorageConfig, system_now_ms,
 };
 
 pub(crate) struct Inner {
@@ -226,15 +226,12 @@ impl Storage {
     }
 
     /// Restores `page` to its state at `to_seq` by appending compensating ops from the server device in one
-    /// batch (design §3.5). Returns what was appended (empty when nothing differs).
+    /// batch (design §3.5). Returns what was appended (empty when nothing differs) and the `skipped` items
+    /// whose history before the log floor is gone and that changed since `to_seq`.
     ///
     /// # Errors
     /// `UnknownPage` (404), `BelowFloor` (410), `Append`, `Storage`.
-    pub async fn restore_page(
-        &self,
-        page: PageId,
-        to_seq: u64,
-    ) -> Result<Vec<Appended>, RestoreError> {
+    pub async fn restore_page(&self, page: PageId, to_seq: u64) -> Result<Restored, RestoreError> {
         self.call(|reply| writer::Command::Restore {
             page,
             to_seq,

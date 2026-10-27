@@ -15,14 +15,14 @@ import {
   type Style,
   styleAt,
 } from "./drawdata";
-import type { GrainCache } from "./grain";
+import type { PaperGrain } from "./grain";
 import type { ImageCache } from "./images";
 import { context2d, type LayerPool } from "./layers";
 import { type Matrix, mul, setMatrix } from "./matrix";
 
 /** Everything a paint pass needs besides the draw list. */
 export interface PaintEnv {
-  readonly grain: GrainCache;
+  readonly grain: PaperGrain;
   readonly images: ImageCache;
   readonly layers: LayerPool;
   /** Page → device matrix of the target canvas. */

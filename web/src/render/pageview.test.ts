@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { PageEntry } from "../wasm";
 import { EMPTY_DRAW } from "./drawdata";
-import { GrainCache } from "./grain";
+import { PaperGrain } from "./grain";
 import { ImageCache } from "./images";
 import { PageView } from "./pageview";
 
@@ -23,16 +23,11 @@ const page = { fixed: true, width: 100, height: 100, background: 0 } as PageEntr
 
 function rig() {
   const frames: (() => void)[] = [];
-  const grain = {
-    grain_period_px: () => 1,
-    bake_grain_tile: () => new Uint8Array(1),
-    grain_coverage_lut: () => new Uint8Array(256),
-  };
   const view = new PageView(
     fakeCanvas(),
     fakeCanvas(),
     { page: () => page, committed: () => EMPTY_DRAW, live: () => EMPTY_DRAW },
-    new GrainCache(grain),
+    new PaperGrain(),
     new ImageCache(
       () => Promise.reject(new Error("no assets")),
       () => undefined,

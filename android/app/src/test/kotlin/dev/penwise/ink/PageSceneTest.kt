@@ -26,10 +26,54 @@ class PageSceneTest {
     }
 
     @Test
+    fun a_tool_edit_is_queued_in_the_same_call_that_applies_it() {
+        SceneHarness().use { h ->
+            val before = Native.syncOutboxCounts(h.sync)[0]
+            val samples =
+                FloatArray(10 * 5) {
+                    if (it % 5 ==
+                        0
+                    ) {
+                        20f + (it / 5) * 9f
+                    } else if (it % 5 == 1) {
+                        50f
+                    } else {
+                        0.5f
+                    }
+                }
+            val edits =
+                h.scene.addStroke(
+                    h.scene.newItemId(),
+                    0,
+                    0xFF000000.toInt(),
+                    1f,
+                    1L,
+                    samples,
+                    IntArray(10) {
+                        it *
+                            8_000
+                    },
+                )
+            assertFalse(PageScene.isEmpty(edits))
+            // Applied to the scene and queued on the core already: no second lock acquisition in between, so a
+            // remote refresh can never overwrite the stroke before it is on its way to the server.
+            assertEquals(1, h.scene.renderOrder().size / 16)
+            assertEquals(before + 1, Native.syncOutboxCounts(h.sync)[0])
+            assertEquals(
+                "announcing it adds nothing",
+                before + 1,
+                Native.syncOutboxCounts(h.sync)[0].also {
+                    h.scene.commit(edits)
+                },
+            )
+        }
+    }
+
+    @Test
     fun an_empty_edit_blob_is_not_committed() {
         SceneHarness().use { h ->
             assertFalse(h.scene.commit(h.scene.erase(floatArrayOf(300f, 300f), 10f, precise = true)))
-            assertTrue(h.committed.isEmpty())
+            assertEquals(0, h.commits)
             assertFalse(h.scene.undo())
         }
     }

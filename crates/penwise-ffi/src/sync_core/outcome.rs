@@ -3,7 +3,7 @@
 //! Layout (little-endian): `u8 version = 1`, `u8 kind` (index of the `ServerMsg` variant: `Welcome` 0,
 //! `Reject` 1, `Ack` 2, `OpsSince` 3, `SnapshotBegin` 4, `SnapshotChunk` 5, `SnapshotEnd` 6, `StrokeDelta` 7,
 //! `StrokeCancel` 8, `SwitchPage` 9, `Resync` 10, `Error` 11, `Ping` 12, `Pong` 13), `u8 flags` (bit0 catalog changed, bit1 reconnect,
-//! bit2 snapshot finished, bit3 `page` present), `u8 code` (Reject: 0 bad token, 1 unsupported protocol,
+//! bit2 snapshot finished, bit3 `page` present, bit4 server changed: a different server answered and the replica is held until `resolve_server_change`), `u8 code` (Reject: 0 bad token, 1 unsupported protocol,
 //! 2 malformed, 3 rate limited; Error: 0 malformed, 1 too large, 2 internal, 3 shutting down; else 0),
 //! `u64 head_seq`, `u32 applied`, `u32 apply_errors`, `u32 acked`, `u32 rejected`, `[16] page` when bit3,
 //! `u32 n` then `n × (u32 len, frame)` replies to send, `u32 m` then `m × ([16] page, [16] item)` changes
@@ -27,6 +27,10 @@ pub struct Change {
 }
 
 /// Summary of one `receive`.
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "one field per flag bit of the wire blob"
+)]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Outcome {
     pub kind: u8,
@@ -35,6 +39,7 @@ pub struct Outcome {
     pub catalog_changed: bool,
     pub reconnect: bool,
     pub snapshot_done: bool,
+    pub server_changed: bool,
     pub applied: u32,
     pub apply_errors: u32,
     pub acked: u32,
@@ -114,7 +119,8 @@ impl Outcome {
         let flags = u8::from(self.catalog_changed)
             | u8::from(self.reconnect) << 1
             | u8::from(self.snapshot_done) << 2
-            | u8::from(self.page.is_some()) << 3;
+            | u8::from(self.page.is_some()) << 3
+            | u8::from(self.server_changed) << 4;
         w.u8(flags);
         w.u8(self.code);
         w.u64(self.head_seq);

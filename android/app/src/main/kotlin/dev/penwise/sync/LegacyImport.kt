@@ -9,12 +9,26 @@ private const val OLDEST_FILE = "page0.bin"
 private const val DEFAULT_NOTEBOOK = "nb_local"
 private const val DEFAULT_PAGE = "pg_local"
 
+/** How far [LegacyImport.runWhenCaughtUp] got. */
+enum class LegacyResult {
+    /** The replica is not caught up with the server yet; nothing was imported, the import stays pending. */
+    WAITING,
+
+    /** Imported, but the state file could not be written; the marker was not written, the import stays pending. */
+    NOT_DURABLE,
+
+    /** Imported, durable, marker written. */
+    DONE,
+}
+
 /** What a legacy import found and did. */
 data class LegacyReport(
     val pages: Int,
     val added: Int,
     val alreadyPresent: Int,
     val skipped: Int,
+    /** Strokes that shared a seed with an earlier one in their file and were kept under distinct identities. */
+    val seedCollisions: Int = 0,
 )
 
 private class LegacyPage(
@@ -48,12 +62,34 @@ class LegacyImport(
     /** True when old files exist and the import has not completed yet. */
     fun pending(): Boolean = !marker.exists() && (File(filesDir, "meta.json").isFile || pageFileIds().isNotEmpty())
 
-    /** Imports everything; call after the first catch-up. Safe to repeat (everything dedupes). */
+    /**
+     * The only way the app imports: runs [run] when the core's own signal says the replica holds everything the
+     * server announced ([SyncCore.caughtUp]), then waits for [flush] (the state file write; true on success) and
+     * only then writes the marker. Anything else leaves the import pending, so a timeout, an unreachable server or
+     * a failing disk can never end with the marker written and the ops lost.
+     *
+     * Importing before catch-up would stamp the legacy ops with local stamps the server's migrated copies never
+     * match, so every edit other devices made before the import would lose against it on this tablet.
+     */
+    fun runWhenCaughtUp(
+        core: SyncCore,
+        flush: () -> Boolean,
+    ): LegacyResult {
+        if (!core.caughtUp()) return LegacyResult.WAITING
+        run(core)
+        if (!flush()) return LegacyResult.NOT_DURABLE
+        stateDir.mkdirs()
+        marker.writeText("done") // only now: the imported ops are confirmed on disk
+        return LegacyResult.DONE
+    }
+
+    /** Imports everything; call only once caught up (see [runWhenCaughtUp]). Safe to repeat (everything dedupes). */
     fun run(core: SyncCore): LegacyReport {
         var pages = 0
         var added = 0
         var present = 0
         var skipped = 0
+        var collisions = 0
         var position = 0L
         for (book in books()) {
             val notebook = ensureNotebook(core, book, position++)
@@ -65,15 +101,10 @@ class LegacyImport(
                 added += report.added
                 present += report.alreadyPresent
                 skipped += report.skipped
+                collisions += report.seedCollisions
             }
         }
-        return LegacyReport(pages, added, present, skipped)
-    }
-
-    /** Marks the import complete (call after the state file holds the imported ops). */
-    fun done() {
-        stateDir.mkdirs()
-        marker.writeText("done")
+        return LegacyReport(pages, added, present, skipped, collisions)
     }
 
     private fun ensureNotebook(

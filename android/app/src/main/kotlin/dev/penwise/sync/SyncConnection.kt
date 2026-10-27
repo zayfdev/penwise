@@ -28,13 +28,16 @@ interface SyncListener {
     fun onStatus(status: SyncStatus)
 
     /**
-     * The server went quiet after a `Welcome` (catch-up or snapshot is done). Fires once per connection; the
-     * outbox may still be flushing.
+     * The replica holds everything the server announced at `Welcome` (the stream also went quiet). Fires once per
+     * connection; the outbox may still be flushing.
      */
     fun onCaughtUp()
 
     /** The first connection attempt of this run failed (no server reachable). */
     fun onUnreachable()
+
+    /** The state file cannot be written (`true`, e.g. disk full) or writes work again (`false`). */
+    fun onStateFailing(failing: Boolean) {}
 }
 
 /**
@@ -73,7 +76,7 @@ class SyncConnection(
     private var running = false
     private var everWelcomed = false
     private var unreachableReported = false
-    private val quiet = QuietTimer(thread, QUIET_CATCH_UP_MS, listener::onCaughtUp)
+    private val quiet = QuietTimer(thread, QUIET_CATCH_UP_MS, ::quietElapsed)
     private var reconnect: ScheduledFuture<*>? = null
 
     /** Starts (or restarts, after a settings change) connecting. */
@@ -118,6 +121,14 @@ class SyncConnection(
         Log.i(TAG, "connecting to $url")
         status = SyncStatus.CONNECTING
         socket = client.newWebSocket(Request.Builder().url(url).build(), Link())
+    }
+
+    /**
+     * The server has been quiet for a while. That only counts as "caught up" when the replica really holds what the
+     * server announced at `Welcome` (or a snapshot ended); a slow or paused stream keeps waiting.
+     */
+    private fun quietElapsed() {
+        if (core.caughtUp()) listener.onCaughtUp() else quiet.rearm()
     }
 
     private fun closeSocket() {
@@ -181,6 +192,7 @@ class SyncConnection(
         if (link !== socket) return
         Log.i(TAG, "sync socket closed: $why")
         socket = null
+        quiet.cancel()
         core.offline()
         if (!everWelcomed && !unreachableReported) {
             unreachableReported = true

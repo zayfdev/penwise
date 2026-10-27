@@ -25,6 +25,26 @@ object FixtureReplay {
     private const val TAG = "PenwiseFixture"
     private const val STRIDE = 5
 
+    /** Replays [path] through [scene]: every stroke goes the scene → commit → sync path a pen stroke takes. */
+    fun replayOnto(
+        context: Context,
+        path: String,
+        scene: PageScene,
+    ): Int =
+        replay(context, path) { stroke ->
+            val edits =
+                scene.addStroke(
+                    scene.newItemId(),
+                    stroke.preset,
+                    stroke.argb,
+                    stroke.scale,
+                    stroke.seed,
+                    stroke.samples,
+                    stroke.times,
+                )
+            scene.commit(edits)
+        }
+
     /** Parses a page file and hands every stroke to [onStroke]; returns how many were found. */
     fun replay(
         context: Context,

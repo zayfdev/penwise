@@ -2,13 +2,14 @@
 //!
 //! Restore appends compensating ops from the server device, so it is an ordinary logged change and can itself be
 //! undone by restoring to an earlier seq. Unknown page → 404; a seq that was never logged → 404; a seq below the
-//! retained log → 410.
+//! retained log → 410. Items whose `Add` was compacted away and that changed after `to_seq` cannot be rolled back;
+//! the 200 answer lists their ids in `skipped` (empty when the restore was complete).
 
 use axum::Json;
 use axum::Router;
 use axum::extract::{Path, Query, State};
 use axum::routing::{get, post};
-use penwise_proto::{DeviceId, PageId};
+use penwise_proto::{DeviceId, ItemRef, PageId};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -47,11 +48,17 @@ async fn restore(
             "seq {to_seq} was never logged (head is {head})"
         )));
     }
-    let appended = app.storage.restore_page(page, to_seq).await?;
+    let restored = app.storage.restore_page(page, to_seq).await?;
+    let skipped: Vec<String> = restored
+        .skipped
+        .iter()
+        .map(|id| ItemRef::from(*id).to_string())
+        .collect();
     Ok(Json(json!({
-        "restored": appended.len(),
+        "restored": restored.appended.len(),
         "to_seq": to_seq,
-        "head_seq": appended.last().map_or(head, |a| a.seq),
+        "head_seq": restored.appended.last().map_or(head, |a| a.seq),
+        "skipped": skipped,
     })))
 }
 

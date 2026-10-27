@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.RectF
 import androidx.core.graphics.createBitmap
 import androidx.core.graphics.withClip
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * The committed page as one persistent bitmap (paper, pictures, ink): a commit draws only the new item into it, an
@@ -17,13 +18,11 @@ internal class DryLayer(
     private var bitmap: Bitmap? = null
     private var canvas: Canvas? = null
     private val clip = RectF()
-
-    @Volatile
-    private var stale = true
+    private val stale = AtomicBoolean(true)
 
     /** Marks the whole layer for repaint (paper style, picture arrival, page switch). */
     fun invalidate() {
-        stale = true
+        stale.set(true)
     }
 
     /** Brings the bitmap in line with the scene and the paper, then draws it onto [target]. */
@@ -34,15 +33,15 @@ internal class DryLayer(
     ) {
         val width = target.width
         val height = target.height
-        if (bitmap?.width != width || bitmap?.height != height) {
+        val resized = bitmap?.width != width || bitmap?.height != height
+        if (resized) {
             bitmap?.recycle()
             bitmap = createBitmap(width, height, Bitmap.Config.ARGB_8888)
             canvas = Canvas(requireNotNull(bitmap))
-            stale = true
         }
         val surface = canvas ?: return
-        val full = stale
-        stale = false
+        // One atomic step: an invalidate() landing after this read keeps the flag set for the next frame.
+        val full = stale.getAndSet(false) || resized
         val plan = cache?.update() ?: RenderPlan.Idle
         when {
             full || plan is RenderPlan.Full -> paintAll(surface, cache, style)

@@ -188,7 +188,7 @@ fn shapes_resize_and_report_masks_as_parts() {
     let floats = item_floats(scene.scene(), id).expect("drawable");
     assert_eq!(
         part_kinds(&floats),
-        [kind::OUTLINE, kind::OUTLINE],
+        [kind::SHAPE_FILL, kind::OUTLINE],
         "fill then outline"
     );
     let resize = scene

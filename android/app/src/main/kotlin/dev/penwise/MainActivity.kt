@@ -18,7 +18,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -31,12 +33,18 @@ import dev.penwise.ink.PageList
 import dev.penwise.ink.PageStrip
 import dev.penwise.ink.PageStyle
 import dev.penwise.ink.PageViewModel
+import dev.penwise.ink.SyncInfo
 import dev.penwise.ink.SyncService
 import dev.penwise.sync.SyncStatus
 import dev.penwise.tools.SyncDialog
+import dev.penwise.tools.SyncNotices
 import dev.penwise.tools.Toolbar
+import dev.penwise.tools.rememberFileExport
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 private const val TOOLBAR_MARGIN_DP = 12
+private const val INFO_REFRESH_MS = 1_000L
 
 class MainActivity : ComponentActivity() {
     private val page: PageViewModel by viewModels()
@@ -55,14 +63,28 @@ class MainActivity : ComponentActivity() {
         setContent {
             val pages by page.pages.collectAsState()
             val status by page.status.collectAsState()
+            val scope = rememberCoroutineScope()
             var showSync by remember { mutableStateOf(false) }
             var openPage by remember { mutableStateOf<String?>(null) }
+
+            SyncNotices(page)
+            val info by produceState(SyncInfo(), showSync) {
+                // Read off the UI thread (it takes the core lock); refreshed while the dialog is open.
+                while (showSync) {
+                    value = page.syncUi.info()
+                    delay(INFO_REFRESH_MS)
+                }
+            }
+            val exportRefused = rememberFileExport("penwise-refused-ops.pwdl") { page.syncUi.exportDeadLetters(it) }
 
             if (showSync) {
                 SyncDialog(
                     initialUrl = page.syncUrl,
                     initialToken = page.syncToken,
-                    status = syncStatusText(status, page.pendingOps()),
+                    status = syncStatusText(status, info.pending, info.deadLetters.size),
+                    deadLetters = info.deadLetters,
+                    onExportDeadLetters = exportRefused,
+                    onClearDeadLetters = { scope.launch { page.syncUi.clearDeadLetters() } },
                     onDismiss = { showSync = false },
                     onSave = { url, token ->
                         page.updateSync(url, token)
@@ -79,13 +101,13 @@ class MainActivity : ComponentActivity() {
                             openPage = id
                         },
                         newPage = { title, template, notebook ->
-                            page.newPage(title, template, notebook)?.let { openPage = it }
+                            page.catalog.newPage(title, template, notebook) { openPage = it }
                         },
-                        newNotebook = page::createNotebook,
-                        renameNotebook = page::renameNotebook,
-                        deleteNotebook = page::deleteNotebook,
-                        renamePage = page::renamePage,
-                        deletePage = page::deletePage,
+                        newNotebook = page.catalog::createNotebook,
+                        renameNotebook = page.catalog::renameNotebook,
+                        deleteNotebook = page.catalog::deleteNotebook,
+                        renamePage = page.catalog::renamePage,
+                        deletePage = page.catalog::deletePage,
                         sync = { showSync = true },
                     )
                 }
@@ -136,6 +158,7 @@ class MainActivity : ComponentActivity() {
 private fun syncStatusText(
     status: SyncStatus,
     pending: Int,
+    refused: Int,
 ): String {
     val label =
         stringResource(
@@ -146,7 +169,8 @@ private fun syncStatusText(
                 SyncStatus.STOPPED -> R.string.sync_status_stopped
             },
         )
-    return if (pending > 0) stringResource(R.string.sync_status_pending, label, pending) else label
+    val withPending = if (pending > 0) stringResource(R.string.sync_status_pending, label, pending) else label
+    return if (refused > 0) stringResource(R.string.sync_status_refused, withPending, refused) else withPending
 }
 
 @Composable
@@ -189,9 +213,9 @@ private fun CanvasScreen(
                 pages = pages,
                 activeId = pages.active,
                 onSelect = page::selectPage,
-                onNew = { title, template -> page.newPage(title, template) },
-                onRename = page::renamePage,
-                onDelete = page::deletePage,
+                onNew = { title, template -> page.catalog.newPage(title, template) },
+                onRename = page.catalog::renamePage,
+                onDelete = page.catalog::deletePage,
             )
         }
     }

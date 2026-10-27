@@ -80,7 +80,7 @@ export class Peer {
     for (let i = 0; i < points.length; i += chunk) {
       const part = points.slice(i, i + chunk);
       const events = new Float32Array(part.length * 5);
-      const times = new Int32Array(part.length);
+      const times = new Uint32Array(part.length);
       part.forEach((p, k) => {
         events.set([p.x, p.y, p.pressure ?? 0.6, 0, 0], k * 5);
         times[k] = t;

@@ -21,9 +21,12 @@ class SyncEngine(
 
     /** The core; its `lock` guards every native call, `PageScene`s included. */
     val core: SyncCore = stateFile.open(clock)
+
+    /** State files this start could not read, kept aside; the user must be told (see [SyncStateFile.open]). */
+    val recovered: List<File> = stateFile.recovered
     val library = Library(core)
     val legacy = LegacyImport(filesDir, stateDir)
-    private val persister = StatePersister(core, stateFile)
+    private val persister = StatePersister(core, stateFile, onFailing = listener::onStateFailing)
     private val announce = Announcer(core)
     private val connection: SyncConnection =
         SyncConnection(
@@ -64,9 +67,20 @@ class SyncEngine(
         connection.sendLive(frame)
     }
 
-    /** Writes the state file now and waits for it. */
-    fun flush() {
-        persister.flush()
+    /** Writes the state file now and waits for that write; true when the state is on disk. */
+    fun flush(): Boolean = persister.flush()
+
+    /** True while writing the state file keeps failing. */
+    val stateFailing: Boolean get() = persister.failing
+
+    /**
+     * Answers the "this is a different server" question (see [SyncCore.resolveServerChange]) and reconnects, so the
+     * new server gets the handshake again with the decided pin.
+     */
+    fun resolveServerChange(keep: Boolean): Outcome {
+        val outcome = core.resolveServerChange(keep)
+        connection.start()
+        return outcome
     }
 
     /** Persists the outbox, stops the socket and frees the core. Scenes opened on it must be closed first. */

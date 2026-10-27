@@ -40,11 +40,17 @@ for a pairing code and exchanges it through `POST /pair`).
   drives headless Chromium (`playwright-core`, system Chromium or `$CHROME`): another device's stroke appears in
   the live canvas without repainting the committed layer, then committed; a server-authored `/annotate` stroke
   appears; a stroke drawn with the mouse lands in `/page.png` at the right place and undo/redo reach the server;
-  page creation over HTTP. Needs `cargo build -p penwise-server`, `npm run wasm` and Chromium.
+  page creation over HTTP; a stroke drawn offline survives a reload and is delivered after reconnecting. Needs `cargo build -p penwise-server`, `npm run wasm` and Chromium.
 
 ## Limits
 
 - Pen and mouse only draw ink (no eraser, shapes or lasso in the browser yet); touch pans.
-- The outbox is in memory: strokes drawn while disconnected survive reconnects but not a reload.
+- Strokes drawn while disconnected survive reconnects, a reload and a closed tab: the outbox, dead letters and
+  device id are saved in `localStorage` (`penwise.outbox.v1.<device>`, written on every change, removed when
+  nothing is unsent or refused). Each tab holds a Web Lock `penwise-device-<id>`; a new tab with no device of its
+  own adopts a saved device no live tab holds (and so delivers its ink), else mints one. Leaving with unsent ops
+  asks for confirmation (`beforeunload`).
+- Ops the server refuses are rebuilt out of the replica (the page reconnects and refills it), shown as "N refused"
+  with a list in the sidebar, and can be exported (JSON of the op envelopes) or dismissed.
 - Undo history is per tab and resets on reload (owner decision: undo is not persisted).
 - Highlighter previews are opaque until committed (the live canvas does not multiply against the page).

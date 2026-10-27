@@ -1,6 +1,22 @@
+//! `IdMint`: unique, clock-stamped, per-device streams.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::float_cmp,
+    clippy::too_many_lines,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    reason = "test harness: failures are reported by panicking"
+)]
+
 use std::collections::BTreeSet;
 
-use super::*;
+use penwise_core::item::IdSource;
+use penwise_proto::ids::MAX_ID_TIMESTAMP_MS;
+use penwise_proto::{DeviceId, IdMint};
 
 #[test]
 fn ids_are_unique_and_stamped_with_the_clock() {
@@ -20,4 +36,13 @@ fn absurd_clocks_are_clamped() {
     let mut mint = IdMint::new(DeviceId::from_parts(1, 1), 0);
     mint.set_now(u64::MAX);
     assert_eq!(mint.op().timestamp_ms(), MAX_ID_TIMESTAMP_MS);
+}
+
+#[test]
+fn a_seed_reproduces_the_stream() {
+    let mut a = IdMint::from_seed(9);
+    let mut b = IdMint::from_seed(9);
+    assert_eq!(a.notebook(), b.notebook());
+    assert_eq!(a.device(), b.device());
+    assert_eq!(a.next_u64(), b.next_u64());
 }

@@ -148,3 +148,52 @@ impl ItemState {
         })
     }
 }
+
+/// The newest stamp in `chunk` (every register stamp of every row), `None` for an empty chunk. Rows whose
+/// stamp blob does not decode are skipped (the replica rejects them when merging).
+#[must_use]
+pub fn newest_stamp(chunk: &SnapshotChunk) -> Option<Hlc> {
+    let mut newest: Option<Hlc> = None;
+    let mut see = |hlc: Hlc| newest = newest.max(Some(hlc));
+    for s in &chunk.notebooks {
+        [s.created, s.title_hlc, s.position_hlc, s.deleted_hlc]
+            .into_iter()
+            .for_each(&mut see);
+    }
+    for s in &chunk.pages {
+        [
+            s.created,
+            s.title_hlc,
+            s.position_hlc,
+            s.background_hlc,
+            s.deleted_hlc,
+        ]
+        .into_iter()
+        .for_each(&mut see);
+    }
+    for row in &chunk.items {
+        if let Ok(stamps) = FieldStamps::decode(&row.stamps) {
+            see(stamps.created);
+            for field in penwise_core::edit::Field::ALL {
+                see(stamps.get(field));
+            }
+        }
+    }
+    newest
+}
+
+/// Feeds every stamp of a snapshot chunk to `clock` ([`HlcClock::observe_logged`] on the newest), so the next
+/// local stamp orders after everything the replica now holds. Shared by every client (tablet, browser).
+///
+/// # Errors
+/// [`crate::HlcError::ClockSkew`] when the newest stamp is far ahead of `now_ms` (it is adopted anyway).
+pub fn observe_snapshot_chunk(
+    clock: &mut crate::HlcClock,
+    chunk: &SnapshotChunk,
+    now_ms: u64,
+) -> Result<(), crate::HlcError> {
+    match newest_stamp(chunk) {
+        Some(newest) => clock.observe_logged(newest, now_ms).map(|_| ()),
+        None => Ok(()),
+    }
+}

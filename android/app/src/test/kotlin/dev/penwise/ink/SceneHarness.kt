@@ -14,18 +14,15 @@ internal class SceneHarness(
     val page: ByteArray =
         Native.syncCreatePage(sync, ByteArray(0), notebook, "p", 0, floatArrayOf(width, height), 0, NOW)
 
-    /** Edit blobs that reached the sync core, one entry per commit. */
-    val committed = ArrayList<ByteArray>()
+    /** How many commits were announced (the edits themselves reach the core inside the tool's native call). */
+    var commits = 0
     val scene =
         PageScene(
             sync,
             lock,
             page,
             entropy = seed.toLong(),
-            sink = { pageId, edits, now ->
-                committed += edits
-                synchronized(lock) { Native.syncCommitEdits(sync, pageId, edits, now) }
-            },
+            sink = { commits++ },
             clock = { NOW },
         )
 

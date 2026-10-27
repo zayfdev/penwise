@@ -34,3 +34,8 @@ required-features = ["raster"]
 [[example]]
 name = "brush_sheet"
 required-features = ["raster"]
+
+# Cross-surface stamp coverage fixture (tablet and browser replay it).
+[[test]]
+name = "stamp_parity"
+required-features = ["raster"]

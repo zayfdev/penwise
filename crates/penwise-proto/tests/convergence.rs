@@ -230,10 +230,10 @@ fn snapshot_load_equals_the_replica_and_merges_idempotently() {
         for chunk in &chunks {
             loaded.apply_snapshot_chunk(chunk).unwrap();
         }
-        loaded.end_snapshot(77);
+        loaded.end_snapshot(Scope::All, 77);
         assert_eq!(loaded.head_seq(), 77);
         let mut expected = source.clone();
-        expected.end_snapshot(77);
+        expected.end_snapshot(Scope::All, 77);
         assert!(loaded == expected, "seed {seed}: snapshot load differs");
 
         // Re-delivering every chunk, and a prefix of live ops beforehand, changes nothing.
@@ -242,7 +242,7 @@ fn snapshot_load_equals_the_replica_and_merges_idempotently() {
         for chunk in chunks.iter().chain(chunks.iter()) {
             mixed.apply_snapshot_chunk(chunk).unwrap();
         }
-        mixed.end_snapshot(77);
+        mixed.end_snapshot(Scope::All, 77);
         assert!(
             mixed == expected,
             "seed {seed}: snapshot merge onto live state differs"

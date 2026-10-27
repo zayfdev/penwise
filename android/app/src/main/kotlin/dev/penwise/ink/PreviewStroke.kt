@@ -15,6 +15,9 @@ internal class PreviewStroke(
     private var stroke: InkStroke? = null
     private var kept = FloatArray(INITIAL * STRIDE)
     private var keptTimes = IntArray(INITIAL)
+    private var tailStroke: InkStroke? = null
+    private var tailSamples = FloatArray(TAIL_INITIAL * STRIDE)
+    private var tailTimes = IntArray(TAIL_INITIAL)
     private var presetIndex = 0
     private var seed = 0L
     private var argb = 0
@@ -65,24 +68,28 @@ internal class PreviewStroke(
         count: Int,
     ): InkGeometry? {
         if (count == 0) return null
-        val samples = FloatArray((count + 1) * STRIDE)
-        val times = IntArray(count + 1)
-        last.copyInto(samples, 0, 0, STRIDE)
-        times[0] = lastTime
-        predicted.copyInto(samples, STRIDE, 0, count * STRIDE)
-        predictedTimes.copyInto(times, 1, 0, count)
-        val tail = InkStroke(presetIndex, seed, argb, scale)
-        try {
-            tail.push(samples, times, count + 1)
-            return tail.snapshot()
-        } finally {
-            tail.close()
+        val needed = count + 1
+        if (tailTimes.size < needed) {
+            tailSamples = FloatArray(needed * STRIDE)
+            tailTimes = IntArray(needed)
         }
+        last.copyInto(tailSamples, 0, 0, STRIDE)
+        tailTimes[0] = lastTime
+        predicted.copyInto(tailSamples, STRIDE, 0, count * STRIDE)
+        predictedTimes.copyInto(tailTimes, 1, 0, count)
+        // One builder for the whole gesture: reset per frame instead of allocating a native stroke each time.
+        val builder =
+            tailStroke?.also(InkStroke::reset)
+                ?: InkStroke(presetIndex, seed, argb, scale).also { tailStroke = it }
+        builder.push(tailSamples, tailTimes, needed)
+        return builder.snapshot()
     }
 
     fun close() {
         stroke?.close()
         stroke = null
+        tailStroke?.close()
+        tailStroke = null
     }
 
     private fun grow() {
@@ -93,5 +100,6 @@ internal class PreviewStroke(
     private companion object {
         const val STRIDE = 5
         const val INITIAL = 64
+        const val TAIL_INITIAL = 16
     }
 }

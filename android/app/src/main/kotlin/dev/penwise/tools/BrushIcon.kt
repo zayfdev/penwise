@@ -25,7 +25,6 @@ import androidx.compose.ui.unit.dp
 import androidx.core.graphics.createBitmap
 import dev.penwise.core.InkStroke
 import dev.penwise.ink.GeometryPainter
-import dev.penwise.ink.GrainMasks
 import kotlin.math.sin
 
 /**
@@ -101,7 +100,7 @@ private fun brushBitmap(
             it.finish()
         }
     val bitmap = createBitmap(side, side)
-    val painter = GeometryPainter(GrainMasks())
+    val painter = GeometryPainter()
     painter.draw(Canvas(bitmap), geometry)
     ICON_CACHE.put(key, bitmap)
     return bitmap.asImageBitmap()

@@ -1,10 +1,14 @@
 //! Shared JNI plumbing for the `SyncCore` / `SceneHandle` exports: handle boxing, array marshalling and the
 //! panic/error guard.
 //!
-//! A handle is a `Box<T>` leaked into a `jlong`; Kotlin owns it and frees it exactly once. Handles are not
-//! thread-safe: Kotlin must not use one handle from two threads at once, and must never pass a `SyncCore`
-//! handle where a `SceneHandle` is expected (the wrappers in Kotlin keep the types apart).
+//! A handle is a `Box<T>` leaked into a `jlong`; Kotlin owns it and frees it once (a second free and any use
+//! after the free are refused: live handles are registered). Handles are not thread-safe: Kotlin must not use
+//! one handle from two threads at once, and must never pass a `SyncCore` handle where a `SceneHandle` is
+//! expected (the wrappers in Kotlin keep the types apart).
 #![allow(unsafe_code)] // Boxed-handle round trip.
+
+use std::collections::BTreeSet;
+use std::sync::{Mutex, PoisonError};
 
 use jni::EnvUnowned;
 use jni::errors::ThrowRuntimeExAndDefault;
@@ -22,19 +26,36 @@ pub fn guarded<'local, T: Default>(
     env.with_env(f).resolve::<ThrowRuntimeExAndDefault>()
 }
 
+/// Addresses of every handle made by [`into_handle`] and not yet freed. A zeroed, stale or foreign handle is
+/// refused instead of dereferenced, and a double free is a no-op, so a late call from another thread
+/// (a render thread racing the close of the core) fails with an exception instead of corrupting memory.
+static LIVE: Mutex<BTreeSet<usize>> = Mutex::new(BTreeSet::new());
+
+fn live() -> std::sync::MutexGuard<'static, BTreeSet<usize>> {
+    LIVE.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 /// Leaks `value` into a handle.
 pub fn into_handle<T>(value: T) -> jlong {
-    Box::into_raw(Box::new(value)) as jlong
+    let ptr = Box::into_raw(Box::new(value));
+    live().insert(ptr as usize);
+    ptr as jlong
 }
 
 /// Borrows the value behind a handle made by [`into_handle`].
+///
+/// # Errors
+/// `BadArgument` for 0 and for a handle that was freed or never made here.
 pub fn handle_mut<'a, T>(handle: jlong) -> Result<&'a mut T, FfiError> {
     let ptr = handle as *mut T;
     if ptr.is_null() {
         return Err(FfiError::BadArgument("null handle"));
     }
-    // SAFETY: non-null handles come from `into_handle` and stay valid until `free_handle`; the Kotlin wrapper
-    // guarantees no use after free, no concurrent use and the right handle type.
+    if !live().contains(&(ptr as usize)) {
+        return Err(FfiError::BadArgument("stale handle"));
+    }
+    // SAFETY: the address is in `LIVE`, so it came from `into_handle` and was not freed; the Kotlin wrapper
+    // guarantees no concurrent use and the right handle type.
     Ok(unsafe { &mut *ptr })
 }
 
@@ -43,11 +64,24 @@ pub fn handle_ref<'a, T>(handle: jlong) -> Result<&'a T, FfiError> {
     handle_mut::<T>(handle).map(|v| &*v)
 }
 
-/// Drops a handle (0 is a no-op).
+/// Takes the value out of a handle and frees it (the handle is dead afterwards).
+///
+/// # Errors
+/// `BadArgument` for 0 and for a handle that was freed or never made here.
+pub fn take_handle<T>(handle: jlong) -> Result<T, FfiError> {
+    let ptr = handle as *mut T;
+    if ptr.is_null() || !live().remove(&(ptr as usize)) {
+        return Err(FfiError::BadArgument("stale handle"));
+    }
+    // SAFETY: it was in `LIVE`, so `into_handle` made it and this is the first (and now only) free.
+    Ok(*unsafe { Box::from_raw(ptr) })
+}
+
+/// Drops a handle (0, an already freed or an unknown handle is a no-op).
 pub fn free_handle<T>(handle: jlong) {
     let ptr = handle as *mut T;
-    if !ptr.is_null() {
-        // SAFETY: see `handle_mut`; Kotlin frees each handle once and zeroes it afterwards.
+    if !ptr.is_null() && live().remove(&(ptr as usize)) {
+        // SAFETY: it was in `LIVE`, so `into_handle` made it and this is the first free.
         drop(unsafe { Box::from_raw(ptr) });
     }
 }

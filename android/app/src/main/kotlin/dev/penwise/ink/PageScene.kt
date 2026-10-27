@@ -2,13 +2,12 @@ package dev.penwise.ink
 
 import dev.penwise.core.Native
 
-/** Where the edits a [PageScene] tool produced go: the sync core stamps and queues them (and persists the outbox). */
+/**
+ * Told after a [PageScene] tool applied its edit to the scene *and* queued it on the sync core (one native call, one
+ * lock acquisition, so a remote refresh can never land between the two): time to persist and push.
+ */
 fun interface EditSink {
-    fun commit(
-        page: ByteArray,
-        edits: ByteArray,
-        nowMs: Long,
-    )
+    fun committed()
 }
 
 /** Layers of the page, as the bit set the scene queries take. */
@@ -26,8 +25,9 @@ object Layers {
  * Kotlin face of one page's native `SceneHandle`: the page model, undo stack and tools all live in Rust; this class
  * only moves bytes.
  *
- * Every tool method returns the produced **edit blob** (already applied to the local scene and recorded in the
- * open undo gesture); [commit] hands a blob to the [EditSink]. Every native call holds [lock], the same lock the
+ * Every tool method returns the produced **edit blob**: the edit is already applied to the local scene, recorded in the
+ * open undo gesture and queued on the sync core, all in one native call under one lock; [commit] announces it to the
+ * [EditSink]. Every native call holds [lock], the same lock the
  * sync core's wrapper uses, because a `SceneHandle` reads the `SyncCore` replica on `refresh` and a handle must
  * never be entered from two threads at once. Reads for rendering ([renderOrder], [itemFloats], [takeDirty]) use
  * the same lock; they are short.
@@ -46,6 +46,10 @@ class PageScene(
     /** Called (on whichever thread changed the scene) after a change the screen must show. */
     @Volatile
     var onChanged: (() -> Unit)? = null
+
+    /** Called with a short reason when a tool's edit was refused (for example an op too large); nothing changed. */
+    @Volatile
+    var onError: ((String) -> Unit)? = null
 
     /** Called after the undo/redo availability may have changed. */
     @Volatile
@@ -83,9 +87,9 @@ class PageScene(
     val canRedo: Boolean get() = history and 2 != 0
 
     /** Undoes the newest still-valid step; true when something changed. */
-    fun undo(): Boolean = commitChange(locked { Native.sceneUndo(it) })
+    fun undo(): Boolean = commitChange(tool { Native.sceneUndo(it, syncHandle, clock()) })
 
-    fun redo(): Boolean = commitChange(locked { Native.sceneRedo(it) })
+    fun redo(): Boolean = commitChange(tool { Native.sceneRedo(it, syncHandle, clock()) })
 
     /** Deletes every item on the page (one undo step). */
     fun clearPage(): Boolean {
@@ -113,7 +117,10 @@ class PageScene(
         seed: Long,
         samples: FloatArray,
         times: IntArray,
-    ): ByteArray = locked { Native.sceneAddStroke(it, id, intArrayOf(preset, argb), scale, seed, samples, times) }
+    ): ByteArray =
+        tool {
+            Native.sceneAddStroke(it, id, intArrayOf(preset, argb), scale, seed, samples, times, syncHandle, clock())
+        }
 
     /** A shape dragged from ([x0], [y0]) to ([x1], [y1]); see [ShapeStyle]. */
     fun addShape(
@@ -124,7 +131,7 @@ class PageScene(
         y1: Float,
         style: ShapeStyle,
     ): ByteArray =
-        locked {
+        tool {
             Native.sceneAddShape(
                 it,
                 id,
@@ -138,6 +145,8 @@ class PageScene(
                     if (style.hasFill) 1 else 0,
                 ),
                 style.scale,
+                syncHandle,
+                clock(),
             )
         }
 
@@ -148,7 +157,7 @@ class PageScene(
         x: Float,
         y: Float,
         constrain: Boolean = false,
-    ): ByteArray = locked { Native.sceneResizeShape(it, id, handleCode, x, y, constrain) }
+    ): ByteArray = tool { Native.sceneResizeShape(it, id, handleCode, x, y, constrain, syncHandle, clock()) }
 
     /** One eraser chunk; [path] is interleaved x, y in page px. Call inside a gesture, once per chunk. */
     fun erase(
@@ -156,7 +165,7 @@ class PageScene(
         radius: Float,
         precise: Boolean,
         layers: Int = Layers.INK,
-    ): ByteArray = locked { Native.sceneErase(it, path, radius, precise, layers) }
+    ): ByteArray = tool { Native.sceneErase(it, path, radius, precise, layers, syncHandle, clock()) }
 
     /** Ids inside a lasso polygon (interleaved x, y), bottom to top, as a concatenation of 16-byte ids. */
     fun lasso(
@@ -171,28 +180,31 @@ class PageScene(
         layers: Int = Layers.INK,
     ): ByteArray = locked { Native.sceneHitTest(it, x, y, tolerance, layers) }
 
-    fun deleteItems(ids: ByteArray): ByteArray = locked { Native.sceneDeleteItems(it, ids) }
+    fun deleteItems(ids: ByteArray): ByteArray = tool { Native.sceneDeleteItems(it, ids, syncHandle, clock()) }
 
     fun moveItems(
         ids: ByteArray,
         dx: Float,
         dy: Float,
-    ): ByteArray = locked { Native.sceneMoveItems(it, ids, dx, dy) }
+    ): ByteArray = tool { Native.sceneMoveItems(it, ids, dx, dy, syncHandle, clock()) }
 
     /** [layer]: 0 ink, 1 agent, 2 text. */
     fun setLayer(
         ids: ByteArray,
         layer: Int,
-    ): ByteArray = locked { Native.sceneSetLayer(it, ids, layer) }
+    ): ByteArray = tool { Native.sceneSetLayer(it, ids, layer, syncHandle, clock()) }
 
     // ---- commit ------------------------------------------------------------------------------------------------
 
-    /** Hands a tool's edit blob to the sync core and requests a repaint; false when the blob held no edits. */
+    /**
+     * Announces a tool's edit blob: the tool already applied it to the scene and queued it on the sync core in one
+     * native call, so this only asks for a persist/push and a repaint. False when the blob held no edits.
+     */
     fun commit(edits: ByteArray): Boolean = commitChange(edits)
 
     private fun commitChange(edits: ByteArray): Boolean {
         if (isEmpty(edits)) return false
-        sink.commit(page, edits, clock())
+        sink.committed()
         changed()
         onHistoryChanged?.invoke()
         return true
@@ -223,6 +235,22 @@ class PageScene(
     private fun changed() {
         onChanged?.invoke()
     }
+
+    /**
+     * A tool: applies and commits natively. A refused commit (an op too large to ship) leaves the scene and the
+     * outbox as they were, is reported through [onError], and yields an empty blob, so the pen path never throws.
+     * Native errors surface as RuntimeException; a closed scene (handle 0) is a caller bug and still throws.
+     */
+    @Suppress("TooGenericExceptionCaught")
+    private fun tool(block: (Long) -> ByteArray): ByteArray =
+        try {
+            locked(block)
+        } catch (error: RuntimeException) {
+            if (handle == 0L) throw error
+            onError?.invoke(error.message.orEmpty())
+            changed()
+            ByteArray(0)
+        }
 
     private fun <T> locked(block: (Long) -> T): T =
         synchronized(lock) {

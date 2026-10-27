@@ -178,6 +178,16 @@ impl Catalog {
         }
     }
 
+    /// Drops notebook `id` (its pages stay) so a replacing `Create` can be applied.
+    pub(crate) fn forget_notebook(&mut self, id: NotebookId) {
+        self.notebooks.remove(&id);
+    }
+
+    /// Drops page `id`'s catalog entry so a replacing `Create` can be applied.
+    pub(crate) fn forget_page(&mut self, id: PageId) {
+        self.pages.remove(&id);
+    }
+
     /// Materialized notebook (tombstones included).
     #[must_use]
     pub fn notebook(&self, id: NotebookId) -> Option<Notebook> {

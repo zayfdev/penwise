@@ -89,6 +89,8 @@ pub struct Received {
     /// `Ack`: this client's ops the server logged / refused (`PushOps` gate re-opened).
     pub acked: u32,
     pub rejected: u32,
+    /// `Ack` refused ops: the replica was rebuilt without them and is empty (head 0); reconnect to refill it.
+    pub resync: bool,
     /// Ops/snapshot rows in this frame the replica refused (logged to the console by the caller; never fatal).
     pub apply_errors: u32,
 }
@@ -171,6 +173,7 @@ impl Received {
             nonce: 0,
             acked: 0,
             rejected: 0,
+            resync: false,
             apply_errors: 0,
         }
     }

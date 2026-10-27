@@ -76,7 +76,10 @@ pub fn brush_params(index: i32, argb: i32, size_scale: f32) -> Result<BrushParam
 /// One in-progress stroke plus scratch buffers reused across JNI calls.
 #[derive(Debug)]
 pub struct Stroke {
+    params: BrushParams,
+    seed: u64,
     builder: Option<StrokeBuilder>,
+    grain: [f32; 2],
     is_stamps: bool,
     opacity: f32,
     multiply: bool,
@@ -92,8 +95,15 @@ impl Stroke {
     pub fn new(params: &BrushParams, seed: u64) -> Self {
         let builder = StrokeBuilder::new(params, seed);
         let is_stamps = matches!(builder.geometry(), GeometryView::Stamps { .. });
+        let grain = params
+            .stamp
+            .grain
+            .map_or([0.0, 0.0], |g| [g.scale, g.softness]);
         Self {
+            params: *params,
+            seed,
             builder: Some(builder),
+            grain,
             is_stamps,
             opacity: params.opacity,
             multiply: params.blend == BlendMode::Multiply,
@@ -106,13 +116,26 @@ impl Stroke {
         }
     }
 
-    /// `[isStamps, opacity, multiply]` with booleans as 0/1.
-    pub fn style(&self) -> [f32; 3] {
+    /// `[isStamps, opacity, multiply, grainScale, grainSoftness]` with booleans as 0/1; grain is 0, 0 when
+    /// the preset has none.
+    pub fn style(&self) -> [f32; 5] {
         [
             f32::from(u8::from(self.is_stamps)),
             self.opacity,
             f32::from(u8::from(self.multiply)),
+            self.grain[0],
+            self.grain[1],
         ]
+    }
+
+    /// Starts the stroke over with the same brush and seed, keeping the scratch buffers (the live preview
+    /// rebuilds its predicted tail every frame).
+    pub fn reset(&mut self) {
+        self.builder = Some(StrokeBuilder::new(&self.params, self.seed));
+        self.samples.clear();
+        self.polygon.clear();
+        self.out.clear();
+        self.contour_ends.clear();
     }
 
     /// Scratch for the raw sample floats (`count * SAMPLE_FLOATS`) and timestamps (`count`).

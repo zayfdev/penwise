@@ -17,9 +17,8 @@ internal class InkRenderCallback(
     private val style: () -> PageStyle,
     images: () -> PageImages? = { null },
 ) : CanvasFrontBufferedRenderer.Callback<Unit> {
-    private val grain = GrainMasks()
-    private val frontPainter = GeometryPainter(grain, images)
-    private val dry = DryLayer(GeometryPainter(grain, images))
+    private val frontPainter = GeometryPainter(images)
+    private val dry = DryLayer(GeometryPainter(images))
     private val dirty = RectF()
     private val next = RectF()
     private var drawnStrokeId = NO_STROKE

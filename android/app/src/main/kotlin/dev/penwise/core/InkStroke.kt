@@ -17,6 +17,8 @@ class InkStroke(
     private val isStamps: Boolean
     private val opacity: Float
     private val multiply: Boolean
+    private val grainScale: Float
+    private val grainSoftness: Float
 
     init {
         var created = false
@@ -29,6 +31,8 @@ class InkStroke(
         isStamps = style[0] != 0f
         opacity = style[1]
         multiply = style[2] != 0f
+        grainScale = style.getOrElse(GRAIN_SCALE_AT) { 0f }
+        grainSoftness = style.getOrElse(GRAIN_SOFTNESS_AT) { 0f }
     }
 
     /**
@@ -44,6 +48,11 @@ class InkStroke(
             "count $count exceeds samples (${samples.size}) or tUs (${tUs.size})"
         }
         Native.strokePush(liveHandle(), samples, tUs, count)
+    }
+
+    /** Empties the stroke (same brush and seed), keeping the native builder and its buffers for reuse. */
+    fun reset() {
+        Native.strokeReset(liveHandle())
     }
 
     /** Stable + tentative geometry so far. */
@@ -87,10 +96,14 @@ class InkStroke(
             argb = argb,
             opacity = opacity,
             multiply = multiply,
+            grainScale = grainScale,
+            grainSoftness = grainSoftness,
         )
 
     private companion object {
         const val SAMPLE_FLOATS = 5
+        const val GRAIN_SCALE_AT = 3
+        const val GRAIN_SOFTNESS_AT = 4
         val EMPTY_FLOATS = FloatArray(0)
     }
 }

@@ -9,6 +9,7 @@ private const val FLAG_CATALOG = 1
 private const val FLAG_RECONNECT = 2
 private const val FLAG_SNAPSHOT_DONE = 4
 private const val FLAG_PAGE = 8
+private const val FLAG_SERVER_CHANGED = 16
 
 /** What one received server frame did (the blob layout is documented in `sync_core/outcome.rs`). */
 class Outcome(
@@ -21,6 +22,8 @@ class Outcome(
     /** The server identity changed: the replica was reset; close and `hello` again. */
     val reconnect: Boolean,
     val snapshotDone: Boolean,
+    /** A `Welcome` named a different server; the core holds until [SyncCore.resolveServerChange]. */
+    val serverChanged: Boolean,
     val applied: Int,
     val applyErrors: Int,
     val acked: Int,
@@ -63,6 +66,7 @@ class Outcome(
                 catalogChanged = flags and FLAG_CATALOG != 0,
                 reconnect = flags and FLAG_RECONNECT != 0,
                 snapshotDone = flags and FLAG_SNAPSHOT_DONE != 0,
+                serverChanged = flags and FLAG_SERVER_CHANGED != 0,
                 applied = applied,
                 applyErrors = errors,
                 acked = acked,

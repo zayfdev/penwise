@@ -156,6 +156,39 @@ impl HlcClock {
         Ok(self.advance(wall, counter))
     }
 
+    /// Observes a stamp the server already logged: [`HlcClock::recv`], but a stamp too far ahead is still
+    /// adopted (the log holds it, so every later local stamp must order after it or lose LWW against it).
+    ///
+    /// # Errors
+    /// [`HlcError::ClockSkew`] after adopting the stamp, so the caller can report the skew.
+    pub fn observe_logged(&mut self, remote: Hlc, now_ms: u64) -> Result<Hlc, HlcError> {
+        match self.recv(remote, now_ms) {
+            Ok(stamp) => Ok(stamp),
+            Err(error) => {
+                let adopted = Hlc {
+                    device: self.last.device,
+                    ..remote
+                };
+                self.last = self.last.max(adopted);
+                Err(error)
+            }
+        }
+    }
+
+    /// Moves the clock back to `max(floor, now_ms)` (device kept). For a device whose own stamps ran ahead of
+    /// the server clock (refused `ClockSkew`): `floor` is the newest remote stamp seen, so new stamps still
+    /// order after everything the device has observed. Local stamps issued before are not ordered after the
+    /// new ones; the caller re-stamps them.
+    pub fn rebase(&mut self, floor: Hlc, now_ms: u64) {
+        let device = self.last.device;
+        let base = Hlc {
+            wall_ms: now_ms.min(MAX_WALL_MS),
+            counter: 0,
+            device,
+        };
+        self.last = base.max(Hlc { device, ..floor });
+    }
+
     /// Stores and returns the stamp after `(wall, counter)`: `counter` is the largest counter already seen at
     /// `wall` (`None` when `wall` is fresh), so the new counter is one above it; an exhausted counter moves
     /// `wall` forward by 1 ms.

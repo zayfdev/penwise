@@ -1,3 +1,5 @@
+> **Historical gate record; the code has since been rewritten — see docs/rewrite-design.md and docs/pages.md for current behavior.**
+
 # Gate record: M3 server + browser view (thin slice)
 
 Branch `m3-server`. Verdict: **PASS for the slice**, full M3 design still open.

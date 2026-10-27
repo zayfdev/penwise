@@ -13,6 +13,7 @@
 //!   → server log (seq) → ServerMsg::OpsSince / broadcast → Replica::apply (LWW per (item, field) by HLC)
 //!   → PageReplica scene → renderer
 //! ```
+pub mod carry;
 pub mod catalog;
 pub mod envelope;
 pub mod error;
@@ -22,6 +23,7 @@ pub mod legacy;
 pub mod live;
 pub mod lww;
 pub mod message;
+pub mod mint;
 pub mod notebook;
 pub mod op;
 pub mod outbox;
@@ -41,10 +43,13 @@ pub use lww::{FieldStamps, LwwError, MaterializedItem, Register, merge_patch};
 pub use message::{
     AuthToken, ClientKind, ClientMsg, ErrorCode, OpRejected, RejectReason, ServerMsg,
 };
+pub use mint::IdMint;
 pub use notebook::{
     Background, Notebook, NotebookChange, NotebookPatch, Page, PageChange, PageKind, PagePatch,
 };
 pub use op::{AnyOp, NotebookOp, Op, OpRejection, PageOp, SeqOp};
 pub use outbox::{DeadOp, Outbox};
 pub use replica::{Applied, PageReplica, Replica, SnapshotApplied};
-pub use snapshot::{ItemState, NotebookState, PageState, Scope, SnapshotChunk};
+pub use snapshot::{
+    ItemState, NotebookState, PageState, Scope, SnapshotChunk, newest_stamp, observe_snapshot_chunk,
+};

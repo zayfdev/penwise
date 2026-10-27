@@ -23,14 +23,16 @@ export interface PointerLike {
 
 /** Floats per event in {@link PackedSamples.events}: `x, y, pressure, tiltX°, tiltY°` (wasm `POINTER_STRIDE`). */
 export const POINTER_STRIDE = 5;
+/** Largest `t_us` core stores (about 71 min into one stroke). */
+export const U32_MAX = 0xffff_ffff;
 /** Max samples per `StrokeDelta` (proto `MAX_DELTA_SAMPLES`). */
 export const MAX_DELTA_SAMPLES = 256;
 
 /** Events of one flush, ready for wasm. */
 export interface PackedSamples {
   readonly events: Float32Array;
-  /** Microseconds since the stroke's first event, non-decreasing. */
-  readonly times: Int32Array;
+  /** Microseconds since the stroke's first event, non-decreasing, saturating at `U32_MAX` (core `t_us` is u32). */
+  readonly times: Uint32Array;
 }
 
 /** The real hardware events behind `event`: its coalesced events, or itself. */
@@ -52,12 +54,12 @@ export function packSamples(
   lastUs = 0,
 ): PackedSamples {
   const out = new Float32Array(events.length * POINTER_STRIDE);
-  const times = new Int32Array(events.length);
+  const times = new Uint32Array(events.length);
   let previous = lastUs;
   events.forEach((e, i) => {
     const [x, y] = toPage(view, e.clientX - rect.left, e.clientY - rect.top);
     out.set([x, y, e.pressure, e.tiltX, e.tiltY], i * POINTER_STRIDE);
-    previous = Math.max(previous, Math.round((e.timeStamp - t0) * 1000));
+    previous = Math.min(U32_MAX, Math.max(previous, Math.round((e.timeStamp - t0) * 1000)));
     times[i] = previous;
   });
   return { events: out, times };

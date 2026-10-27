@@ -28,6 +28,26 @@ pub const OUTBOX_VERSION: u8 = 1;
 /// Soft byte budget of one `PushOps` batch (leaves room under `MAX_FRAME_BYTES` for the frame overhead).
 pub const MAX_BATCH_BYTES: usize = MAX_FRAME_BYTES - (MAX_FRAME_BYTES >> 3);
 
+/// Largest stored envelope of one op the outbox accepts (a quarter of a frame, so a logged op can never
+/// push an `OpsSince` or `PushOps` frame over `MAX_FRAME_BYTES`). Authoring refuses larger ops.
+pub const MAX_OP_BYTES: usize = MAX_FRAME_BYTES / 4;
+
+/// Checks that an op carrying `edit` stays under [`MAX_OP_BYTES`] (envelope overhead included, with margin).
+/// Run before an edit is applied to a scene, so a refused edit never reaches the screen.
+///
+/// # Errors
+/// The size the op would have, when it is too large.
+pub fn check_edit_size(edit: &penwise_core::edit::Edit) -> Result<(), usize> {
+    let mut blob = Vec::new();
+    penwise_core::codec::edit::encode_edit(edit, &mut blob);
+    let size = blob.len() + 1024;
+    if size <= MAX_OP_BYTES {
+        Ok(())
+    } else {
+        Err(size)
+    }
+}
+
 /// One pending op: its id and stored envelope bytes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Entry {
@@ -70,16 +90,29 @@ impl Outbox {
     /// pending or dead-lettered.
     ///
     /// # Errors
-    /// `Encode` / `TooLarge` when the op cannot be framed.
+    /// `Encode` / `TooLarge` when the op cannot be framed or its envelope exceeds [`MAX_OP_BYTES`].
     pub fn insert(&mut self, op: &AnyOp) -> Result<bool, ProtoError> {
         let op_id = op.op_id();
         if self.ids.contains(&op_id) {
             return Ok(false);
         }
         let bytes = encode_op(op)?;
+        if bytes.len() > MAX_OP_BYTES {
+            return Err(ProtoError::TooLarge { len: bytes.len() });
+        }
         self.ids.insert(op_id);
         self.pending.push_back(Entry { op_id, bytes });
         Ok(true)
+    }
+
+    /// Removes one pending op without acknowledging it (it was queued but its local apply failed).
+    pub fn forget_pending(&mut self, op_id: OpId) -> bool {
+        let Some(at) = self.pending.iter().position(|e| e.op_id == op_id) else {
+            return false;
+        };
+        self.pending.remove(at);
+        self.ids.remove(&op_id);
+        true
     }
 
     /// The next `PushOps` batch: pending ops in creation order, at most `MAX_OPS_PER_FRAME` and about
@@ -118,6 +151,29 @@ impl Outbox {
             .iter()
             .filter_map(|e| decode_op(&e.bytes).ok())
             .collect()
+    }
+
+    /// Replaces every pending op by `ops` (in order; dead letters stay). Pending entries that no longer decode
+    /// are quarantined as `Invalid` first. Ops that do not fit ([`Outbox::insert`] fails) are skipped; returns
+    /// how many.
+    pub fn replace_pending(&mut self, ops: &[AnyOp]) -> usize {
+        let undecodable: Vec<OpId> = self
+            .pending
+            .iter()
+            .filter(|e| decode_op(&e.bytes).is_err())
+            .map(|e| e.op_id)
+            .collect();
+        for op_id in undecodable {
+            self.move_to_dead(op_id, OpRejection::Invalid);
+        }
+        for entry in self.pending.drain(..) {
+            if !self.dead.iter().any(|d| d.op_id == entry.op_id) {
+                self.ids.remove(&entry.op_id);
+            }
+        }
+        ops.iter()
+            .filter(|op| !matches!(self.insert(op), Ok(true)))
+            .count()
     }
 
     /// Pending `(op id, envelope bytes)` in creation order (one `SQLite` row each).

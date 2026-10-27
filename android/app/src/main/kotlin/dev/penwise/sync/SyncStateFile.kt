@@ -42,17 +42,32 @@ class SyncStateFile(
         runCatching { FileChannel.open(dir.toPath(), StandardOpenOption.READ).use { it.force(true) } }
     }
 
+    /** Files holding state blobs this run could not read, kept under unique names (never overwritten). */
+    val recovered: List<File> get() = kept.toList()
+    private val kept = ArrayList<File>()
+
     /**
-     * Opens the persisted core, or a fresh one with a new random device id. A blob that no longer decodes is kept
-     * aside as `sync-state.bin.unreadable` (never deleted) and a fresh device starts.
+     * Opens the persisted core, or a fresh one with a new random device id. A blob that no longer decodes is moved
+     * to `sync-state.bin.unreadable-<time>[-n]` (never overwritten, never deleted), listed in [recovered], and a
+     * fresh device starts. Throws `IOException` when that file cannot be kept: starting fresh would overwrite the
+     * only copy of the unsynced ink.
      */
+    @Throws(IOException::class)
     fun open(clock: () -> Long = System::currentTimeMillis): SyncCore {
         val stored = read()
         if (stored != null) {
             runCatching { SyncCore.restore(stored, random.nextLong(), clock) }.onSuccess { return it }
-            runCatching { file.copyTo(File(dir, "$NAME.unreadable"), overwrite = true) }
+            kept.add(keepAside(clock()))
         }
         return SyncCore.create(newDeviceId(clock()), random.nextLong(), clock)
+    }
+
+    private fun keepAside(nowMs: Long): File {
+        var target = File(dir, "$NAME.unreadable-$nowMs")
+        var suffix = 1
+        while (target.exists()) target = File(dir, "$NAME.unreadable-$nowMs-${suffix++}")
+        Files.move(file.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE)
+        return target
     }
 
     private fun newDeviceId(nowMs: Long): ByteArray {

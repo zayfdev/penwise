@@ -62,6 +62,8 @@ pub(super) fn run(
     migrate_notebooks(&mut emitter, &mut report)?;
     migrate_pages(&mut emitter, &mut report)?;
     report.ops = emitter.seq - 1;
+    // The server clock resumes above every genesis stamp (the live writer reads `clock_hlc` at start).
+    meta_put(&tx, "clock_hlc", &emitter.clock.last().to_bytes())?;
     rewrite_anchors(&tx)?;
     carry_active_page(&tx)?;
     verify(&tx, &report)?;
@@ -152,12 +154,14 @@ fn page_kind(text: &str) -> Option<PageKind> {
     kind.is_valid().then_some(kind)
 }
 
-fn background(text: &str) -> Background {
+/// The background for a v3 text, `None` for an unknown one (the caller counts the repair and uses `Blank`).
+fn background(text: &str) -> Option<Background> {
     match text {
-        "ruled" => Background::Lined,
-        "grid" => Background::Grid,
-        "dots" => Background::Dot,
-        _ => Background::Blank,
+        "ruled" => Some(Background::Lined),
+        "grid" => Some(Background::Grid),
+        "dots" => Some(Background::Dot),
+        "blank" => Some(Background::Blank),
+        _ => None,
     }
 }
 
@@ -207,7 +211,10 @@ fn migrate_pages(e: &mut Emitter<'_>, report: &mut MigrationReport) -> Result<()
                 title,
                 position: page.position,
                 kind,
-                background: background(&page.background),
+                background: background(&page.background).unwrap_or_else(|| {
+                    report.adjusted += 1;
+                    Background::Blank
+                }),
             },
         }))?;
         if page.deleted {
@@ -228,6 +235,7 @@ fn migrate_pages(e: &mut Emitter<'_>, report: &mut MigrationReport) -> Result<()
         report.strokes += counts.strokes;
         report.images += counts.images;
         report.unmigrated += counts.unmigrated;
+        report.adjusted += counts.adjusted;
         report.per_page.push(PageCount {
             legacy_id: page.id,
             migrated: counts.strokes + counts.images,

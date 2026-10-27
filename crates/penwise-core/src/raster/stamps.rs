@@ -4,6 +4,25 @@
 //!
 //! Each stroke accumulates its dabs into [`CoverageBuffer`] with the union rule `S ← S + a·(1 − S)`, then
 //! composites once at the stroke opacity cap (`composite`), so overlapping dabs of one stroke never exceed it.
+//!
+//! # The formula every surface implements
+//!
+//! This module is the single definition of a stamp stroke's pixels; the tablet (`StampRaster.kt`) and the
+//! browser (`web/src/render/stamps.ts`) port it line for line and replay `tests/goldens/stamp_coverage.txt`
+//! (written by `tests/stamp_parity.rs`) to prove they match. For pixel `(col, row)` with centre
+//! `p = (col + ½, row + ½)` and viewport `scale`, `S` starts at 0 and each dab in order does:
+//!
+//! 1. `(rx, ry) = radius · scale`, `h = max(hardness, 1e-3)`; fade the minor axis with [`min_fade`], the major
+//!    axis keeps `r·(1 + h)/(1 + h')` but never goes below the faded minor one (`PixelDab::new`).
+//! 2. `rr = (x'/rx)² + (y'/ry)²` with `(x', y')` = `p − centre` rotated by `−angle`;
+//!    `a = dab_falloff(rr, h') · opacity` (skip when the falloff is 0).
+//! 3. With grain and `grain_strength > 0`: `a ·= grain_coverage(paper_height(q, grain.scale), grain_level,
+//!    grain.softness, grain_strength)`, `q = p / scale + origin` in page px. Grain is per dab and comes before
+//!    the union; dabs of one stroke can differ in level and strength.
+//! 4. `S ← S + clamp01(a)·(1 − S)`.
+//!
+//! Then colour `a_color · stroke opacity · S` is composited with the stroke's blend (multiply for highlighters,
+//! over the paper). Paper noise is `stamp::texture::paper_height`.
 
 mod composite;
 

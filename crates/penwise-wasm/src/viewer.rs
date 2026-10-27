@@ -6,7 +6,7 @@
 use std::str::FromStr;
 
 use penwise_core::item::LayerSet;
-use penwise_proto::{LiveStrokes, NotebookId, PageId, Replica};
+use penwise_proto::{LiveStrokes, NotebookId, PageId, Replica, Scope};
 use wasm_bindgen::prelude::{JsError, wasm_bindgen};
 
 use crate::draw_list::DrawList;
@@ -17,6 +17,7 @@ mod author;
 mod dispatch;
 mod edits;
 mod pen;
+mod persist;
 mod session;
 
 use author::Author;
@@ -27,6 +28,8 @@ use author::Author;
 pub struct Viewer {
     replica: Replica,
     live: LiveStrokes,
+    /// Scope of the snapshot in progress (`None` between snapshots).
+    snapshot_scope: Option<Scope>,
     /// Device identity, clock and outbox (`None` until [`Viewer::identify`]); a pure viewer never needs it.
     author: Option<Author>,
 }

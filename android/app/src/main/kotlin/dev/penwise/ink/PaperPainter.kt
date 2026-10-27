@@ -8,15 +8,17 @@ import android.graphics.Paint
 /**
  * Draws the paper under the ink: white sheet plus the page's ruling, on the tablet.
  *
- * Colours and spacing match the server's PNG renderer exactly (`render.rs`), so the PC mirror and the tablet
- * agree on where the rules are. Without this the tablet is a blank screen while the PC shows lines and dots.
+ * Colours, spacing, line width and dot size match the server's PNG renderer and the browser (`render/paper.rs`,
+ * `paper.ts`): rules sit at the positive multiples of the spacing in page coordinates and dots are 3 px squares. The
+ * clients skip patterns under 4 px apart; the tablet draws 1:1 at 93.7 px, so that never applies here. Without this
+ * the tablet is a blank screen while the PC shows lines and dots.
  */
 internal object PaperPainter {
     private const val RULED_COLOR = 0xFFC9D6E8.toInt()
     private const val GRID_COLOR = 0xFFDCE3EC.toInt()
     private const val DOTS_COLOR = 0xFFC6CEDA.toInt()
     private const val LINE_WIDTH_PX = 1f
-    private const val DOT_RADIUS_PX = 1.5f
+    private const val DOT_HALF_PX = 1.5f
 
     private val line =
         Paint().apply {
@@ -69,7 +71,7 @@ internal object PaperPainter {
                 while (y < height) {
                     var x = PageStyle.SPACING_PX
                     while (x < width) {
-                        canvas.drawCircle(x, y, DOT_RADIUS_PX, dot)
+                        canvas.drawRect(x - DOT_HALF_PX, y - DOT_HALF_PX, x + DOT_HALF_PX, y + DOT_HALF_PX, dot)
                         x += PageStyle.SPACING_PX
                     }
                     y += PageStyle.SPACING_PX

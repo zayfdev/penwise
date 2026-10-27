@@ -78,6 +78,13 @@ fn add(tx: &Transaction<'_>, op: &Op, item: &Item, seq: u64) -> Result<Done, Fai
             Err(OpRejection::Duplicate.into())
         };
     }
+    let purged = tx
+        .prepare_cached("SELECT 1 FROM purged_items WHERE id = ?1")?
+        .exists([&item.id.0[..]])?;
+    if purged {
+        // Compaction purged this item's tombstone: re-adding it would resurrect erased ink.
+        return Err(OpRejection::Duplicate.into());
+    }
     let mut body = Vec::new();
     encode_item(item, &mut body);
     tx.prepare_cached(
@@ -134,8 +141,13 @@ fn merge(
         return Err(OpRejection::Invalid.into());
     }
     let mut stamps = FieldStamps::decode(&row.stamps).map_err(|e| corrupt("item stamps", &e))?;
-    let winners = stamps.winners(&patch.fields(), op.hlc);
+    let fields = patch.fields();
+    let winners = stamps.winners(&fields, op.hlc);
     if winners.is_empty() {
+        if !fields.is_empty() && fields.iter().all(|&f| stamps.get(f) == op.hlc) {
+            // Every register already carries this op's stamp: a retry whose log row was compacted away.
+            return Ok(Done::Existing(super::log_floor(tx)?));
+        }
         return Ok(Done::Applied);
     }
     for &field in &winners {

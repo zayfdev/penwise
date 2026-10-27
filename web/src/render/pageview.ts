@@ -13,7 +13,7 @@
 import type { Viewport, ViewTransform } from "../view";
 import type { PageEntry } from "../wasm";
 import { type DrawData, isEmpty } from "./drawdata";
-import type { GrainCache } from "./grain";
+import type { PaperGrain } from "./grain";
 import type { ImageCache } from "./images";
 import { context2d, LayerPool } from "./layers";
 import { viewMatrix } from "./matrix";
@@ -55,7 +55,7 @@ export class PageView {
     readonly committed: HTMLCanvasElement,
     readonly live: HTMLCanvasElement,
     private readonly source: PageSource,
-    private readonly grain: GrainCache,
+    private readonly grain: PaperGrain,
     private readonly images: ImageCache,
     private readonly schedule: FrameScheduler = (cb) => requestAnimationFrame(cb),
   ) {

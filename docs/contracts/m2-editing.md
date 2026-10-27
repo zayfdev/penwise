@@ -1,3 +1,5 @@
+> **Historical contract (pre-rewrite fan-out); current behavior: docs/rewrite-design.md, docs/pages.md and the code.**
+
 # M2 contract: `penwise-core` editing engine
 
 Status: committed contract for the M2 fan-out (PLAN "Phase loop" step 2, phase map row "M2 editing engine").

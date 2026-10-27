@@ -6,13 +6,20 @@
 //! like the Kotlin reader. The old undo files are **not** imported: undo is memory-only now (owner decision 2).
 //!
 //! Every stroke becomes `Add` with the deterministic ids of `penwise_proto::legacy` (item id from the page text
-//! and the seed text, op id from the item id), so the server's own migration of the same row and every other
+//! and the stroke's identity text, op id from the item id). The identity is the seed text, except that a seed
+//! an earlier stroke of the same file already used (the oldest files had no seeds, so many carry `0`) gets
+//! `"<seed>#k"`, `k` counting the repeats in file order: unique per file and still deterministic. The brush
+//! seed stays the stroke's own, so the server's own migration of the same row and every other
 //! device's import produce the same id/op id and union by dedupe. Strokes the replica already holds (the
-//! server's migrated copy arrived first) are skipped: import **after** the first catch-up when possible.
+//! server's migrated copy arrived first) are skipped: import once [`SyncCore::is_caught_up`]. An import made
+//! earlier (offline) is reconciled when the server's creates arrive: the server's version of a legacy row
+//! replaces the local one (`SyncCore::on_ops`).
 
 use penwise_core::item::Z_STEP;
+use std::collections::BTreeMap;
+
 use penwise_proto::legacy::{
-    LegacyStroke, SAMPLE_STRIDE, legacy_add_op, legacy_item_id, legacy_page_id, stroke_to_item,
+    LegacyStroke, SAMPLE_STRIDE, legacy_add_op, legacy_item_id, legacy_page_id, stroke_to_item_as,
 };
 
 use super::SyncCore;
@@ -32,6 +39,9 @@ pub struct ImportReport {
     pub already_present: u32,
     /// Strokes that did not convert (invalid values) and were dropped.
     pub skipped: u32,
+    /// Strokes whose seed an earlier stroke of the same file already used: they got the identity
+    /// `"<seed>#k"` instead of being merged into it (counted in `added`/`already_present` as well).
+    pub seed_collisions: u32,
 }
 
 /// Cursor over big-endian `DataInputStream` data; every read fails softly with `None` at the end.
@@ -126,8 +136,17 @@ impl SyncCore {
         }
         let mut report = ImportReport::default();
         let mut z = self.replica.page(page).map_or(0, |p| p.scene().top_z());
+        let mut seen: BTreeMap<String, u32> = BTreeMap::new();
         for stroke in parse_page_file(file) {
-            let id = legacy_item_id(page_text, &stroke.seed);
+            let k = seen.entry(stroke.seed.clone()).or_insert(0);
+            let row_id = if *k == 0 {
+                stroke.seed.clone()
+            } else {
+                report.seed_collisions += 1;
+                format!("{}#{k}", stroke.seed)
+            };
+            *k += 1;
+            let id = legacy_item_id(page_text, &row_id);
             if self
                 .replica
                 .page(page)
@@ -137,7 +156,7 @@ impl SyncCore {
                 continue;
             }
             z = z.saturating_add(Z_STEP);
-            let Ok(item) = stroke_to_item(page_text, &stroke, z) else {
+            let Ok(item) = stroke_to_item_as(page_text, &row_id, &stroke, z) else {
                 report.skipped += 1;
                 continue;
             };

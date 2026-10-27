@@ -55,6 +55,28 @@ pub fn render_scene(
     scale: f32,
     assets: &dyn AssetSource,
 ) -> Result<Pixmap, RasterError> {
+    if !(scale.is_finite() && scale > 0.0) {
+        return Err(RasterError::InvalidViewport);
+    }
+    let mut canvas = scene_pixmap(region, scale)?;
+    render_scene_onto(&mut canvas, scene, layers, region, scale, assets)?;
+    Ok(canvas)
+}
+
+/// [`render_scene`] onto an existing `canvas` (made by [`scene_pixmap`] for the same `region` and `scale`, then
+/// filled with the paper): multiply strokes (highlighter) multiply over what is already there, exactly as the
+/// tablet and browser paint them over their paper.
+///
+/// # Errors
+/// [`RasterError::InvalidViewport`] as [`render_scene`].
+pub fn render_scene_onto(
+    canvas: &mut Pixmap,
+    scene: &Scene,
+    layers: LayerSet,
+    region: &Bounds,
+    scale: f32,
+    assets: &dyn AssetSource,
+) -> Result<(), RasterError> {
     let viewport = Viewport {
         origin_x: region.min_x,
         origin_y: region.min_y,
@@ -63,7 +85,6 @@ pub fn render_scene(
     if !(scale.is_finite() && scale > 0.0) {
         return Err(RasterError::InvalidViewport);
     }
-    let mut canvas = new_pixmap(region, scale)?;
     viewport.check()?;
     let mut scratch = None;
     let mut coverage = CoverageBuffer::default();
@@ -82,7 +103,7 @@ pub fn render_scene(
             assets,
         };
         if masks.is_empty() {
-            ctx.draw(&mut canvas, item, geometry)?;
+            ctx.draw(canvas, item, geometry)?;
         } else {
             let layer = scratch.get_or_insert_with(|| Pixmap::new(canvas.width(), canvas.height()));
             let Some(layer) = layer.as_mut() else {
@@ -105,16 +126,19 @@ pub fn render_scene(
             canvas.draw_pixmap(0, 0, layer.as_ref(), &paint, Transform::identity(), None);
         }
     }
-    Ok(canvas)
+    Ok(())
 }
 
-/// Transparent pixmap covering `region` at `scale`.
+/// Transparent pixmap covering `region` at `scale`: `ceil(region size · scale)` pixels per side.
+///
+/// # Errors
+/// [`RasterError::InvalidSize`] for an empty `region` or more than 2²⁸ pixels.
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
     reason = "dimensions are checked finite, positive and ≤ 2²⁸ pixels before the cast"
 )]
-fn new_pixmap(region: &Bounds, scale: f32) -> Result<Pixmap, RasterError> {
+pub fn scene_pixmap(region: &Bounds, scale: f32) -> Result<Pixmap, RasterError> {
     let dim = |extent: f32| (f64::from(extent) * f64::from(scale)).ceil();
     let (w, h) = (dim(region.width()), dim(region.height()));
     let bad = RasterError::InvalidSize {

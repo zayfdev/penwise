@@ -4,7 +4,7 @@
 use penwise_core::edit::Edit;
 use penwise_proto::{
     AnyOp, Background, NotebookChange, NotebookId, NotebookOp, NotebookPatch, Op, OpId, PageChange,
-    PageId, PageKind, PageOp, PagePatch,
+    PageId, PageKind, PageOp, PagePatch, ProtoError,
 };
 
 use super::SyncCore;
@@ -21,12 +21,21 @@ pub struct NewPage {
 }
 
 impl SyncCore {
-    /// Validates, applies (replica) and queues an already-stamped op.
+    /// Validates, queues (refusing an op over the size limit) and applies (replica) an already-stamped op;
+    /// a failed apply leaves nothing queued.
     pub(super) fn commit(&mut self, op: &AnyOp) -> Result<(), SyncError> {
         op.validate()
             .map_err(|_| SyncError::BadArgument("op failed validation"))?;
-        self.replica.apply(op)?;
-        self.outbox.insert(op)?;
+        match self.outbox.insert(op) {
+            Ok(_) => {}
+            Err(ProtoError::TooLarge { len }) => return Err(SyncError::OpTooLarge(len)),
+            Err(error) => return Err(error.into()),
+        }
+        if let Err(error) = self.replica.apply(op) {
+            self.outbox.forget_pending(op.op_id());
+            return Err(error.into());
+        }
+        self.revision += 1;
         Ok(())
     }
 

@@ -280,7 +280,7 @@ SVG, ECC M). Tablet order: LAN (mDNS-resolved or `lan`) first, then `ts` (WireGu
 ## Known limitations (accepted for M3)
 
 - Text items are not drawn in server PNGs (no font rasterizer until M6); the browser draws them with canvas text.
-- Canvas grain is approximate (one grain level per stroke); exact grain only in server PNGs.
+- Dab strokes use the same per-dab falloff, grain (per dab, before the union) and minimum fade on the server, the tablet and the browser: each client ports `raster::stamps` and replays `crates/penwise-core/tests/goldens/stamp_coverage.txt` in its tests.
 - A client that joins mid-stroke sees that stroke only from its next `start == 0` delta or its commit.
 - LAN path is plaintext (security note 6).
 - The browser viewer is read-only (no drawing, no op push) in M3.

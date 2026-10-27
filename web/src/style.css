@@ -235,6 +235,20 @@ main {
   background: #a3241e;
 }
 
+#dead-panel {
+  padding: 8px 10px;
+  background: #fbe9e7;
+  font-size: 12px;
+}
+
+#dead-panel .dead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin: 4px 0;
+}
+
 #unlock {
   position: fixed;
   inset: 0;

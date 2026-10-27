@@ -44,7 +44,7 @@ impl Viewer {
     ///
     /// # Errors
     /// `JsError` without an open stroke, for 0 or > 256 samples, or too many samples in the stroke.
-    pub fn stroke_push(&mut self, samples: &[f32], times: &[i32]) -> Result<Vec<u8>, JsError> {
+    pub fn stroke_push(&mut self, samples: &[f32], times: &[u32]) -> Result<Vec<u8>, JsError> {
         Ok(self.push_stroke(samples, times)?)
     }
 
@@ -115,7 +115,7 @@ impl Viewer {
     ///
     /// # Errors
     /// [`WasmError`] as documented there.
-    pub fn push_stroke(&mut self, samples: &[f32], times: &[i32]) -> Result<Vec<u8>, WasmError> {
+    pub fn push_stroke(&mut self, samples: &[f32], times: &[u32]) -> Result<Vec<u8>, WasmError> {
         let author = self.author.as_mut().ok_or(WasmError::NotIdentified)?;
         let device = author.device;
         let pen = author
@@ -138,7 +138,7 @@ impl Viewer {
                     pressure: s[2],
                     tilt: s[3],
                     azimuth: s[4],
-                    t_us: t.max(0).cast_unsigned(),
+                    t_us: t,
                 }
                 .to_grid()
             })

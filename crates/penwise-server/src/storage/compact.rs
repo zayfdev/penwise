@@ -3,8 +3,8 @@
 //! seen less than the floor gets a snapshot instead of a diff.
 
 use penwise_core::edit::Field;
-use penwise_proto::FieldStamps;
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
+use penwise_proto::{FieldStamps, Hlc};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
 use super::error::StorageError;
 use super::read::head_and_floor;
@@ -58,7 +58,12 @@ pub fn run(conn: &mut Connection, now_ms: u64) -> Result<CompactReport, StorageE
     }
     let ops_deleted = tx.execute("DELETE FROM ops WHERE seq <= ?1", [to_i64(floor)])?;
     let purge = purgeable_items(&tx, floor, u64::try_from(cutoff).unwrap_or(0))?;
-    for id in &purge {
+    for (id, created) in &purge {
+        // Remember the id forever: a late `Add` of a purged item must not bring it back.
+        tx.execute(
+            "INSERT OR IGNORE INTO purged_items (id, created_hlc, purged_ms) VALUES (?1, ?2, ?3)",
+            params![&id[..], created.to_bytes().as_slice(), to_i64(now_ms)],
+        )?;
         tx.execute("DELETE FROM image_labels WHERE item = ?1", [&id[..]])?;
         tx.execute("DELETE FROM items WHERE id = ?1", [&id[..]])?;
     }
@@ -76,7 +81,7 @@ fn purgeable_items(
     tx: &rusqlite::Transaction<'_>,
     floor: u64,
     cutoff_ms: u64,
-) -> Result<Vec<[u8; 16]>, StorageError> {
+) -> Result<Vec<([u8; 16], Hlc)>, StorageError> {
     let mut stmt =
         tx.prepare("SELECT id, stamps FROM items WHERE deleted = 1 AND updated_seq <= ?1")?;
     let rows = stmt.query_map([to_i64(floor)], |r| {
@@ -88,7 +93,7 @@ fn purgeable_items(
         let stamps = FieldStamps::decode(&stamps)
             .map_err(|e| StorageError::Corrupt(format!("item stamps: {e}")))?;
         if stamps.get(Field::Deleted).wall_ms < cutoff_ms {
-            out.push(id);
+            out.push((id, stamps.created));
         }
     }
     Ok(out)

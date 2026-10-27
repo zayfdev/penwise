@@ -338,3 +338,63 @@ async fn a_v3_file_is_refused_by_storage_and_the_migrated_log_folds_to_the_rows(
     }
     assert!(checked > 0);
 }
+
+#[test]
+fn the_server_clock_resumes_above_every_genesis_stamp() {
+    let dir = TempDir::new("migrate").expect("tempdir");
+    let (path, _) = fixture(&dir, "penwise.db");
+    migrate(&path, &options()).expect("migrate");
+    let conn = Connection::open(&path).expect("open");
+    let stored: Vec<u8> = conn
+        .query_row(
+            "SELECT value FROM server_meta WHERE key = 'clock_hlc'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("clock_hlc is stored by the migration");
+    let clock = crate::storage::rows::parse_hlc(&stored).expect("hlc");
+    let mut stmt = conn.prepare("SELECT hlc FROM ops").expect("prepare");
+    let newest = stmt
+        .query_map([], |r| r.get::<_, Vec<u8>>(0))
+        .expect("query")
+        .map(|r| crate::storage::rows::parse_hlc(&r.expect("row")).expect("hlc"))
+        .max()
+        .expect("ops");
+    assert_eq!(
+        clock, newest,
+        "the persisted clock is the last genesis stamp"
+    );
+}
+
+#[test]
+fn silent_repairs_are_counted_as_adjusted() {
+    let dir = TempDir::new("migrate").expect("tempdir");
+    let (clean, _) = fixture(&dir, "clean.db");
+    let (path, expected) = fixture(&dir, "repaired.db");
+    let page = expected.pages[0].id.clone();
+    {
+        let conn = Connection::open(&path).expect("open");
+        let samples = [10.0_f32, 10.0, 0.5, 0.1, 0.0, 20.0, 20.0, 0.5, 0.1, 0.0];
+        // A negative time, a preset past the last one and a scale that is not positive: three repairs of
+        // one stroke are one adjusted stroke; a second, clean stroke adds none.
+        let repaired =
+            penwise_testkit::fixture::stroke_blob(9_999, -1, -2.0, 11, &samples, &[-5, 7]);
+        let clean_blob = penwise_testkit::fixture::stroke_blob(1, -1, 1.0, 12, &samples, &[0, 7]);
+        for (id, blob) in [("rep-1", repaired), ("rep-2", clean_blob)] {
+            conn.execute(
+                "INSERT INTO objects (page, id, kind, layer, z, codec, payload)
+                 VALUES (?1, ?2, 'stroke', 'ink', 900, 'stroke_v1', ?3)",
+                rusqlite::params![page, id, blob],
+            )
+            .expect("insert");
+        }
+    }
+    let base = migrate(&clean, &options()).expect("clean");
+    let report = migrate(&path, &options()).expect("repaired");
+    assert_eq!(report.strokes, base.strokes + 2, "both strokes migrate");
+    assert_eq!(
+        report.adjusted,
+        base.adjusted + 1,
+        "only the repaired stroke counts"
+    );
+}

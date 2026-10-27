@@ -10,25 +10,36 @@
 //! them (`HlcClock::send` on the calibrated clock), applies them to the replica (the LWW authority) and queues
 //! them in the outbox.
 
+mod apply;
 mod authoring;
 mod catalog_blob;
+mod dead;
+mod export;
+mod hold;
 mod legacy;
 mod live;
 mod outcome;
+mod refusal;
 mod session;
 mod state;
 
 pub use authoring::NewPage;
+pub use dead::{DeadInfo, encode_dead_letters};
+pub use export::StateSnapshot;
 pub use legacy::{ImportReport, parse_page_file};
 pub use live::LiveChunk;
 pub use outcome::{Change, Outcome, decode_changes};
 
-use penwise_proto::{ClockOffset, DeviceId, Hlc, HlcClock, Outbox, PageId, Replica, ServerId};
+use penwise_proto::{
+    ClockOffset, DeviceId, Hlc, HlcClock, IdMint, Outbox, PageId, Replica, ServerId,
+};
 use std::collections::BTreeSet;
 
-use crate::ids::IdMint;
-
 /// The tablet's sync state.
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent connection-state flags"
+)]
 #[derive(Debug)]
 pub struct SyncCore {
     device: DeviceId,
@@ -45,8 +56,22 @@ pub struct SyncCore {
     /// A `PushOps` frame is out and its `Ack` has not arrived.
     inflight: bool,
     snapshotting: bool,
+    /// Scope of the snapshot in progress (decides whether its end moves the cursor).
+    snapshot_scope: penwise_proto::Scope,
     /// Pages a running snapshot may have changed (reported as whole-page reloads at its end).
     snapshot_pages: BTreeSet<PageId>,
+    /// `Welcome.head_seq` of this connection.
+    welcome_head: u64,
+    /// The replica reached the `Welcome` head (or a snapshot ended) on this connection.
+    caught_up: bool,
+    /// A different server answered and the user has not decided yet: nothing from it is applied or pushed.
+    held: Option<ServerId>,
+    /// Newest stamp seen in anything the server sent (floor when the clock is rebased).
+    remote_high: Hlc,
+    /// A `ClockSkew` refusal was already retried and no clean `Ack` came since (a second one is dead-lettered).
+    restamped: bool,
+    /// Bumped by every change of the persistable state ([`SyncCore::revision`]).
+    revision: u64,
 }
 
 impl SyncCore {
@@ -82,6 +107,13 @@ impl SyncCore {
             inflight: false,
             snapshotting: false,
             snapshot_pages: BTreeSet::new(),
+            snapshot_scope: penwise_proto::Scope::All,
+            welcome_head: 0,
+            caught_up: false,
+            held: None,
+            remote_high: Hlc::zero(device),
+            restamped: false,
+            revision: 0,
         }
     }
 
@@ -115,11 +147,28 @@ impl SyncCore {
         self.welcomed && !self.snapshotting && !self.inflight && self.outbox.is_empty()
     }
 
+    /// True once the replica holds everything the server had when this connection began: its head reached
+    /// `Welcome.head_seq`, or a snapshot ended. False before the `Welcome`, while a snapshot runs, while a
+    /// server change is held and after the socket closed. A legacy import before this point can disagree
+    /// with the server's migrated copy.
+    #[must_use]
+    pub fn is_caught_up(&self) -> bool {
+        self.welcomed && self.caught_up && !self.snapshotting && self.held.is_none()
+    }
+
+    /// Changes whenever the persistable state ([`SyncCore::export_state`]) changed: persist when it differs
+    /// from the value at the last persist.
+    #[must_use]
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
     /// The socket closed: nothing is in flight any more (the outbox is kept).
     pub fn go_offline(&mut self) {
         self.welcomed = false;
         self.inflight = false;
         self.snapshotting = false;
+        self.caught_up = false;
     }
 
     /// Clock-corrected wall time for stamping and `recv`.

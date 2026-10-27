@@ -67,11 +67,12 @@ bun scripts/grab.mjs --url http://localhost:3000 --selectors ".hero,.card" --all
 - **Tab mode** stores the element map: every element with an `id` or `data-testid` plus headings, sections and
   controls that are on screen, rects in screenshot px, capped at 400.
 - **Element mode** stores one anchor covering the whole crop (the picture *is* the element).
-- The server re-resolves ink on every change: a stroke belongs to the **smallest** anchor containing its centre,
+- The server resolves ink on every `annotations` read (nothing is cached): a stroke belongs to the **smallest** anchor containing its centre,
   and `GET /pages/<id>/annotations` (MCP: `penwise_page_annotations`) reports strokes per selector plus how many
   fall outside all of them. Verified: three strokes over a two-element map produced `1 / 1 / unanchored: 1`.
 
 ## Not yet
 
 - No full-page stitching: only the visible viewport is captured.
-- Stale selectors are not detected (the `anchors.stale` column is unused).
+- Stale selectors are not detected; attribution is recomputed from the page's current items on every read, so ink
+  is never mis-attributed from a cache, but a map from an older layout is not flagged.

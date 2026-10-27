@@ -21,6 +21,18 @@ impl<S: SyncStore> Session<S> {
             return;
         }
         let known = self.open.contains_key(&delta.stroke);
+        // A stroke belongs to the page of its first delta; later deltas naming another page are dropped.
+        if self
+            .open
+            .get(&delta.stroke)
+            .is_some_and(|&page| page != delta.page)
+        {
+            tracing::debug!(
+                session = self.id,
+                "delta for another page than the stroke's; dropped"
+            );
+            return;
+        }
         if delta.start == 0 && !known {
             if self.open.len() >= MAX_LIVE_STROKES_PER_DEVICE {
                 tracing::debug!(session = self.id, "too many live strokes; delta dropped");

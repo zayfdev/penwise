@@ -5,10 +5,13 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -22,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import dev.penwise.R
+import dev.penwise.sync.DeadLetter
 
 private const val FIELD_WIDTH_DP = 320
 private const val PANEL_RADIUS_DP = 12
@@ -38,6 +42,7 @@ private const val FIELD_COLOR = 0xFF16181C.toInt()
 private const val LABEL_COLOR = 0xFFB9BEC7.toInt()
 private const val PANEL_PAD_DP = 16
 private const val FIELD_HEIGHT_DP = 40
+private const val LIST_HEIGHT_DP = 120
 
 /**
  * PC server address and access token, with the link state on top. Saving reconnects immediately; nothing is
@@ -48,6 +53,9 @@ fun SyncDialog(
     initialUrl: String,
     initialToken: String,
     status: String,
+    deadLetters: List<DeadLetter>,
+    onExportDeadLetters: () -> Unit,
+    onClearDeadLetters: () -> Unit,
     onDismiss: () -> Unit,
     onSave: (url: String, token: String) -> Unit,
 ) {
@@ -64,6 +72,9 @@ fun SyncDialog(
                 status,
                 style = TextStyle(fontSize = TEXT_SIZE_SP.sp, color = Color(LABEL_COLOR)),
             )
+            if (deadLetters.isNotEmpty()) {
+                DeadLetterList(deadLetters, onExportDeadLetters, onClearDeadLetters)
+            }
             Field(stringResource(R.string.sync_url_label), url) { url = it }
             Field(stringResource(R.string.sync_token_label), token) { token = it }
             Row(horizontalArrangement = Arrangement.spacedBy(ROW_GAP_DP.dp)) {
@@ -97,5 +108,41 @@ private fun Field(
                     .padding(horizontal = PAD_H_DP.dp, vertical = PAD_V_DP.dp)
                     .fillMaxWidth(),
         )
+    }
+}
+
+/** The ops the server refused for good: what, why, how big, and a way to keep a copy before clearing them. */
+@Composable
+private fun DeadLetterList(
+    letters: List<DeadLetter>,
+    onExport: () -> Unit,
+    onClear: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(SMALL_GAP_DP.dp)) {
+        androidx.compose.foundation.text.BasicText(
+            stringResource(R.string.sync_dead_letters_title),
+            style = TextStyle(fontSize = LABEL_SIZE_SP.sp, color = Color(LABEL_COLOR)),
+        )
+        Column(
+            Modifier
+                .heightIn(max = LIST_HEIGHT_DP.dp)
+                .verticalScroll(rememberScrollState()),
+        ) {
+            for (letter in letters) {
+                androidx.compose.foundation.text.BasicText(
+                    stringResource(
+                        R.string.sync_dead_letter_row,
+                        letter.kindName,
+                        letter.reasonName,
+                        "${letter.sizeBytes} B",
+                    ),
+                    style = TextStyle(fontSize = TEXT_SIZE_SP.sp, color = Color.White),
+                )
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(ROW_GAP_DP.dp)) {
+            ToolChip(stringResource(R.string.sync_dead_letters_export), selected = false, onClick = onExport)
+            ToolChip(stringResource(R.string.sync_dead_letters_clear), selected = false, onClick = onClear)
+        }
     }
 }

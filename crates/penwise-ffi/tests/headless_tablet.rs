@@ -169,7 +169,7 @@ async fn a_different_server_resets_the_replica_and_keeps_unsent_ops() {
     let pending = a.core.outbox().len();
     server.restart_fresh().await;
     a.online().await;
-    assert_eq!(a.reconnects, 1, "identity change reported once");
+    assert_eq!(a.server_changes, 1, "identity change reported once");
     // The new server never had the page: the offline Add is refused, kept as a dead letter, never dropped.
     assert!(a.core.outbox().is_empty());
     assert_eq!(a.core.outbox().dead().len(), pending);

@@ -68,7 +68,7 @@ browser, render in the PNG, persist with the page, and clear as a set. Promoting
 | `GET/POST/PATCH/DELETE /pages…`, `POST /pages/<id>/select`, `POST /notebooks`, `PATCH/DELETE /notebooks/<id>` | Page and notebook catalog (ops from the server device) |
 | `GET /pages/<id>/history` | Op batches of the page, newest first (`last_seq` is a restore target) |
 | `POST /pages/<id>/restore?to_seq=N` | Compensating ops back to the page as of seq `N` (404 unknown page / never-logged seq, 410 below the retained log) |
-| `GET /` | Static viewer files from `PENWISE_WEB` (the viewer is rebuilt on `/sync` in the browser milestone) |
+| `GET /` | Static viewer files from `PENWISE_WEB` (`web/dist`, see `docs/draw.md`) |
 | `WS /sync` | Binary postcard sync protocol (tablet, browser): `docs/rewrite-design.md` §4 |
 
 ## Verified

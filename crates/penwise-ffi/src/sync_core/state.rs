@@ -18,14 +18,21 @@ use crate::error::SyncError;
 pub const STATE_VERSION: u8 = 1;
 
 #[derive(Serialize, Deserialize)]
-struct Stored {
-    device: [u8; 16],
-    hlc: Vec<u8>,
-    offset_ms: i64,
-    pinned: Option<[u8; 16]>,
-    head_seq: u64,
-    outbox: Vec<u8>,
-    chunks: Vec<SnapshotChunk>,
+pub(super) struct Stored {
+    pub(super) device: [u8; 16],
+    pub(super) hlc: Vec<u8>,
+    pub(super) offset_ms: i64,
+    pub(super) pinned: Option<[u8; 16]>,
+    pub(super) head_seq: u64,
+    pub(super) outbox: Vec<u8>,
+    pub(super) chunks: Vec<SnapshotChunk>,
+}
+
+impl Stored {
+    pub(super) fn encode(&self) -> Result<Vec<u8>, SyncError> {
+        postcard::to_extend(self, vec![STATE_VERSION])
+            .map_err(|_| SyncError::State("state does not encode"))
+    }
 }
 
 impl SyncCore {
@@ -33,6 +40,8 @@ impl SyncCore {
     ///
     /// # Errors
     /// Encoding failure (never expected).
+    ///
+    /// Blocking: encodes every item. The pen path uses [`SyncCore::snapshot_state`] and encodes outside the lock.
     pub fn export_state(&self) -> Result<Vec<u8>, SyncError> {
         let stored = Stored {
             device: self.device.to_bytes(),
@@ -41,10 +50,9 @@ impl SyncCore {
             pinned: self.pinned.map(ServerId::to_bytes),
             head_seq: self.replica.head_seq(),
             outbox: self.outbox.to_bytes()?,
-            chunks: self.replica_chunks(),
+            chunks: replica_chunks(&self.replica),
         };
-        postcard::to_extend(&stored, vec![STATE_VERSION])
-            .map_err(|_| SyncError::State("state does not encode"))
+        stored.encode()
     }
 
     /// Rebuilds a core from [`SyncCore::export_state`]; `entropy` reseeds the id stream.
@@ -75,28 +83,53 @@ impl SyncCore {
             .transpose()?;
         Ok(core)
     }
+}
 
-    /// The replica as snapshot chunks of at most `MAX_SNAPSHOT_ITEMS` item rows.
-    fn replica_chunks(&self) -> Vec<SnapshotChunk> {
-        let catalog = self.replica.catalog();
-        let mut chunks = vec![SnapshotChunk {
-            notebooks: catalog.notebook_states(),
-            pages: catalog.page_states(),
-            items: Vec::new(),
-        }];
-        let mut rows: Vec<ItemState> = Vec::new();
-        for page in self.page_ids() {
-            if let Some(replica) = self.replica.page(page) {
-                rows.extend(replica.items().map(|m| ItemState::from_item(page, m)));
-            }
+/// A copy of the replica's rows (no scene): what [`replica_chunks`] encodes, cheap to take under a lock.
+#[derive(Debug)]
+pub(super) struct Rows {
+    notebooks: Vec<penwise_proto::NotebookState>,
+    pages: Vec<penwise_proto::PageState>,
+    items: Vec<(penwise_proto::PageId, penwise_proto::MaterializedItem)>,
+}
+
+pub(super) fn copy_rows(replica: &Replica) -> Rows {
+    let catalog = replica.catalog();
+    let pages = catalog.page_states();
+    let mut items = Vec::new();
+    for state in &pages {
+        if let Some(page) = replica.page(state.id) {
+            items.extend(page.items().map(|m| (state.id, m.clone())));
         }
-        for batch in rows.chunks(MAX_SNAPSHOT_ITEMS) {
-            chunks.push(SnapshotChunk {
-                notebooks: Vec::new(),
-                pages: Vec::new(),
-                items: batch.to_vec(),
-            });
-        }
-        chunks
     }
+    Rows {
+        notebooks: catalog.notebook_states(),
+        pages,
+        items,
+    }
+}
+
+/// The rows as snapshot chunks of at most `MAX_SNAPSHOT_ITEMS` item rows.
+pub(super) fn chunks_of(rows: &Rows) -> Vec<SnapshotChunk> {
+    let mut chunks = vec![SnapshotChunk {
+        notebooks: rows.notebooks.clone(),
+        pages: rows.pages.clone(),
+        items: Vec::new(),
+    }];
+    for batch in rows.items.chunks(MAX_SNAPSHOT_ITEMS) {
+        chunks.push(SnapshotChunk {
+            notebooks: Vec::new(),
+            pages: Vec::new(),
+            items: batch
+                .iter()
+                .map(|(page, m)| ItemState::from_item(*page, m))
+                .collect(),
+        });
+    }
+    chunks
+}
+
+/// The replica as snapshot chunks.
+pub(super) fn replica_chunks(replica: &Replica) -> Vec<SnapshotChunk> {
+    chunks_of(&copy_rows(replica))
 }

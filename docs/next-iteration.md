@@ -1,139 +1,49 @@
-# Next iteration — notes from the user
+# Known gaps
 
-Recorded 2026-10-25 while testing on the tablet. **Not started**; listed here so the next pass can pick them up.
+State after the op-log rewrite (`docs/rewrite-design.md`; gates `just check`, `just android-check`, `just web-e2e`
+green). The earlier notes in this file (page orientation, latency, the 2026-10-25 lost-ink recovery, pictures
+work) described the pre-rewrite code and are superseded; landscape default pages, adaptive previews and the
+picture/anchor surface are all in the current code.
 
-## 1. Page shape differs between tablet and PC — **resolved: landscape**
+## Tablet
 
-Done: pages are created 2560 × 1600 (landscape, the tablet's own screen) and every existing fixed page was
-migrated on load. The PC sheet is now wide, matching the tablet. Also fixed in the same pass: the tablet never
-drew paper at all — ruling, grid and dots existed only in the server's PNG. `PaperPainter` now draws them under
-the ink with the same colours, spacing and widths as `render.rs`.
+- **State file is the whole replica per commit.** `StatePersister` writes the complete `SyncCore` blob (clock,
+  outbox, dead letters, every item) atomically after each change (`sync/StatePersister.kt`,
+  `penwise-ffi/src/sync_core/state.rs` — its header notes a row store was the alternative). Cost grows with the
+  library, and writes coalesce, so a kill can lose roughly the last ~100 ms of strokes. The expensive half runs
+  outside the core lock: `SyncCore::snapshot_state` copies the rows under the lock (3000 strokes × 120 samples:
+  ~3 ms release, ~4 ms debug) and `StateSnapshot::encode` serialises them without it (~15 ms release, ~200 ms
+  debug); `syncRevision` tells the persister when something changed.
+- **Shape resize has no UI.** `PageScene.resizeShape` / `Native.sceneResizeShape` exist, but nothing in the
+  toolbar or gestures calls them; shapes can be drawn and, through the lasso, moved or deleted.
+- **Lasso move shows only a frame.** While dragging, the front buffer draws the selection frame shifted
+  (`ink/SelectionGesture.kt`); the items themselves jump on pen-up.
+- **Fill bucket has no UI** on the tablet or in the browser: the algorithm is in `penwise-core` (`fill/`) but
+  `penwise-ffi` and `penwise-wasm` do not expose it.
+- **No scan button / auto-scan.** Recognition runs only when something reads `GET /text` (viewer ☰ panel, MCP
+  `penwise_page_text`).
+- **No mDNS discovery.** The server does not advertise itself; the tablet is pointed at a URL or pairs by code/QR.
 
-What is still open from this item: no view→page transform. The surface is the screen, so landscape is ~1:1, but
-the toolbar overlays the top of the page instead of the page starting below it.
+## Browser (`docs/draw.md`)
 
-## 1a. (original diagnosis, kept for reference)
+- **Outbox and undo are not persisted across reload.** Strokes drawn while disconnected survive reconnects but not
+  a page reload; undo history is per tab (undo non-persistence is an owner decision, the outbox is not).
+- **Highlighter preview is opaque until commit**: the live canvas does not multiply against the page.
+- Pen and mouse draw ink only; no eraser, shapes or lasso in the browser.
 
-**Symptom (user):** the page on the PC is "a long thin vertical", while on the tablet it is "a wide infinite
-canvas". Nothing had been drawn yet, so this is layout, not ink.
+## Sync
 
-**What the code currently does:**
+- **Eraser and shape live previews are not sent to other devices.** The live channel carries only freehand
+  `StrokeDelta` / `StrokeCancel` (`penwise-proto/src/live.rs`); other devices see an erase or shape when it commits.
 
-- Pages are created as `fixed 1600 × 2560` (A4 **portrait**) by default — the PC viewer therefore draws a tall
-  narrow sheet (`pages` → `kind` in `meta.json`). `Clean test` and `Page 1` are both this kind; only `Sketch` is
-  `infinite`.
-- The tablet's canvas is an `InkSurfaceView` that fills the window, so it looks wide and unbounded, but it is
-  drawing into the *same* 1600 × 2560 page space. Nothing tells the user the page edge is out of view.
+## Security
 
-**Likely causes to check, in order:**
+- **S7 hardening is pending.** One shared token (`$PENWISE_DATA/token`, accepted as `?token=` or
+  `X-Penwise-Token`) authenticates every device, and the transport is cleartext HTTP/WS on the LAN. Planned in
+  `docs/rewrite-design.md` §6 S7: per-device tokens with revocation, TLS with a pinned fingerprint, token never
+  logged, data dir `0700`.
 
-1. The server's *active* page and the tablet's *active* page were different at the time (the tablet was
-   disconnected, so the PC followed `Clean test`). First question: do they match once both are connected?
-2. Orientation: the tablet is used in landscape (2560 wide × 1600 tall) but the page model is portrait. Either
-   the page should be created in the display's orientation, or the canvas should letterbox the page so the sheet
-   edges are visible.
-3. The canvas has no page-boundary affordance at all: a fixed page and an infinite one look identical on the
-   tablet. That is probably the real complaint — "wide infinite canvas" is what the surface looks like, not what
-   the page is.
+## Extension
 
-**Decide:** page orientation should follow the device at creation time (and be switchable), plus a visible page
-edge or a background that makes the sheet obvious on the tablet.
-
-## 1b. Latency (addressed; numbers below)
-
-**Measured in the browser** (`window.__penwise.benchStroke` on a real page stroke):
-
-| Stroke | Geometry rebuild |
-|---|---|
-| 242 samples (a real long stroke) | < 0.5 ms |
-| 3000 samples (synthetic) | 1 ms |
-
-So the geometry rebuild was never the problem: the fixed 50 ms preview gate was pure added lag. The gate is now
-**adaptive** — `max(16 ms, 4 × the last rebuild cost)` — so short strokes preview at ~60 fps and long ones stay
-cheap. Server relay remains 0–1 ms (p95 1 ms over 40 frames).
-
-**Not done, deliberately:** binary frames and incremental geometry. With a 1 ms rebuild at 3000 samples and one
-merged live frame per 16 ms, neither would change felt latency; revisit only if a profile says otherwise.
-
-## 1b-old. Latency diagnosis (superseded)
-
-Measured: the **server relay is 0–1 ms** (p50 0 ms, p95 1 ms over 40 frames), so the delay is not the server. It
-was **queueing**: every motion event became its own WebSocket frame, so a 120 Hz pen queued frames faster than
-the link drained them and the mirror replayed the backlog (same failure as the shape previews, which visibly
-"kept growing after the pen lifted").
-
-Landed in the hardening pass: live samples are batched into one frame per 16 ms tick (`LiveBatcher`), shape
-previews keep only the newest frame, and the viewer coalesces geometry rebuilds. Remaining levers, in order of
-expected gain:
-
-1. Viewer `LIVE_REBUILD_MS = 50` — rebuilding the preview at ~20 Hz caps how fresh the mirror can look; drop to
-   ~16 ms and measure the wasm rebuild cost per frame.
-2. Rebuild cost grows with stroke length (the engine re-runs the whole stroke). Incremental geometry, or
-   rebuilding only the tail, would let the mirror run at 60 Hz on long strokes.
-3. JSON per frame is heavy for 5 floats × samples; a binary frame (postcard) would cut bytes and allocation.
-4. Browser draw path: `drawDabs` iterates every dab per frame; cache to an offscreen canvas between commits.
-
-## 1c. Long strokes stalled the tablet (fixed)
-
-Holding a stroke makes the live preview rebuild the **whole** stroke natively per frame (`Native.strokeSnapshot`),
-on the UI thread inside the touch handler. Cost grows with stroke length, so a long stroke eventually spends more
-time rebuilding than the pen takes to produce events: frames drop, the front buffer clears, and the stroke
-flashes white and stutters.
-
-Landed: the preview is drawn from a **thinned** copy of the stroke (a point every 3.5 px, `PreviewThinner`) and is
-rebuilt at most every 12 ms, both independent of the committed stroke, which keeps every sample. A rebuild slower
-than 8 ms logs `slow preview: Nms for M samples` (`adb logcat -s PenwiseInk`), so the next long-stroke test gives
-hard numbers instead of guesses.
-
-If it still stutters, the next step is true incremental ink: bake the head of the live stroke into the page layer
-and preview only the tail, instead of rebuilding the whole preview each frame.
-
-## 1d. Pictures and the design surface (landed)
-
-The canvas now carries pictures as first-class page objects: `assets/<sha256>.png` + an object row with a page
-rectangle, synced to the tablet, drawn in the browser mirror, and composited under the ink in `GET /page.png`.
-MCP gained `penwise_place_image` / `penwise_list_images` / `penwise_remove_image`.
-
-Remaining for the two agentic workflows:
-
-1. **Chrome extension (annotate a real page).** `chrome.tabs.captureVisibleTab` + element picker, POSTing the
-   capture and an element map (`selector, rect, role, text`) to the server, which creates a page sized to the
-   image, places the picture, and stores the map in `anchors`. Then drawing on the tablet produces annotations
-   whose positions resolve to selectors for the agent.
-2. **Grabber CLI (component cut-outs).** Drive a dev server with Playwright, screenshot each component by
-   selector, upload and place them in a grid on one page with `label = component name`, so a layout can be
-   composed from real components and finished with ink.
-3. **Anchoring resolution.** `anchors` is created but unused: strokes need a commit-time lookup (which selector
-   contains the stroke's centroid) and a re-resolve pass when the element map is refreshed.
-
-## 1e. The lost ink, recovered (and the format bug that hid it)
-
-On 2026-10-25 the Ruled-notes page was wiped on both the tablet and the server. The tablet's undo history
-survived, and it held the ink — but the app could not read it: files written before that day store each sample as
-`x, y, pressure, tilt, azimuth, time` (24 bytes, time interleaved), while the reader expected all five floats and
-*then* the time array. Reading a legacy file produced noise, so the history silently loaded as empty (`199 undo
-steps` became `0`), and a clear looked unrecoverable.
-
-Recovered by decoding the legacy layout directly: **275 strokes / 37,562 samples**, restored to their page and
-merged back onto the tablet (`merged 286 remote strokes`). The reader now detects the layout from the data —
-recorded times only ever increase — with a unit test per layout (`LegacyStrokeLayoutTest`).
-
-Lesson for the next format change: the file has a version byte, so **bump it** and keep a reader for the old
-version; do not rely on the shape staying compatible.
-
-## 2. Toolbar should collapse
-
-The app's toolbar is permanently pinned across the top: 13 brush previews, colours, size, shapes, eraser,
-undo/redo/clear, sync and home. The user wants a dropdown / expand-minimise control so the canvas is not
-permanently reduced — collapsed to a small handle, expanded on demand (and probably auto-collapse while writing).
-
-## 3. Liked as-is
-
-The PC viewer's look is approved — sidebar, page cards, paper backgrounds. Don't redesign it.
-
-## Kept for reference
-
-- Page 1 still holds junk on the **tablet** only (server side is empty): tap the toolbar's trash while that page
-  is open, or reconnect USB so `scripts/device-check.sh`'s sibling wipe can clear the local file.
-- Still unverified with a real pen stroke: the sample-accumulation fix (`StrokeAccumulator`). Replayed ink carries
-  hundreds of samples correctly; a pen stroke has not been through it yet.
+- Only the visible viewport is captured (no full-page stitching).
+- Stale selectors are not detected; anchor attribution is recomputed per read instead (`docs/pages.md`).
