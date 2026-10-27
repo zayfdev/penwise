@@ -2,8 +2,7 @@
 //! and all sync logic in `penwise-proto`.
 //!
 //! Two layers:
-//! - the original ink exports in this file (`stroke*`, `preciseErase`, presets, paper tile), kept until the
-//!   tablet milestone replaces them;
+//! - the live-stroke exports in this file (`stroke*`, presets, paper tile): the pen's in-progress preview;
 //! - the tablet surfaces, bytes in / bytes out, JNI-free at the core: [`sync_core::SyncCore`] (clock, outbox,
 //!   replica, `/sync` frame codec, legacy import) and [`scene_handle::SceneHandle`] (scene, undo, pen tools,
 //!   render floats), exported by the `jni_*` modules as `sync*` / `scene*`.
@@ -16,8 +15,6 @@
 #![allow(unsafe_code)] // JNI entry points need `#[unsafe(no_mangle)]` and the boxed-handle round trip.
 
 mod bytes;
-mod cut;
-mod erase;
 pub mod error;
 pub mod ids;
 mod jni_scene;
@@ -33,7 +30,7 @@ pub mod sync_core;
 use jni::EnvUnowned;
 use jni::errors::ThrowRuntimeExAndDefault;
 use jni::objects::{JByteArray, JFloatArray, JIntArray, JObject};
-use jni::sys::{jfloat, jint, jintArray, jlong};
+use jni::sys::{jfloat, jint, jlong};
 use penwise_core::stamp::texture;
 use penwise_core::{Preset, Seed};
 
@@ -57,78 +54,6 @@ fn new_float_array<'local>(
     let array = env.new_float_array(data.len())?;
     array.set_region(env, 0, data)?;
     Ok(array)
-}
-
-/// Precise erase of one flat stroke, as ints (floats travel as their bit patterns).
-///
-/// `[-1]` when the sweep leaves the stroke untouched; otherwise `[fragmentCount, then per fragment: n and
-/// n × (x, y, pressure, tilt, azimuth as float bits, time)]`. `fragmentCount == 0` means nothing survives.
-/// `samples` is interleaved x, y, pressure, tilt, azimuth; `path` is interleaved x, y.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "the JNI signature is fixed by `Native.preciseErase`"
-)]
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_preciseErase<'local>(
-    mut env: EnvUnowned<'local>,
-    _this: JObject<'local>,
-    samples: JFloatArray<'local>,
-    times: JIntArray<'local>,
-    count: jint,
-    path: JFloatArray<'local>,
-    path_count: jint,
-    radius: jfloat,
-) -> jintArray {
-    env.with_env(|env| -> Result<jintArray, FfiError> {
-        let mut samples_buf = vec![0.0; samples.len(env)?];
-        if !samples_buf.is_empty() {
-            samples.get_region(env, 0, &mut samples_buf)?;
-        }
-        let mut times_buf = vec![0; times.len(env)?];
-        if !times_buf.is_empty() {
-            times.get_region(env, 0, &mut times_buf)?;
-        }
-        let mut path_buf = vec![0.0; path.len(env)?];
-        if !path_buf.is_empty() {
-            path.get_region(env, 0, &mut path_buf)?;
-        }
-        let count = usize::try_from(count.max(0)).unwrap_or(0);
-        let path_count = usize::try_from(path_count.max(0)).unwrap_or(0);
-        let result = cut::cut(
-            &samples_buf,
-            &times_buf,
-            count,
-            &path_buf,
-            path_count,
-            radius,
-        );
-        let flat = encode_cut(&result);
-        let array = env.new_int_array(flat.len())?;
-        array.set_region(env, 0, &flat)?;
-        Ok(array.into_raw())
-    })
-    .resolve::<ThrowRuntimeExAndDefault>()
-}
-
-/// Flattens a [`cut::Cut`] into the int layout documented on `preciseErase`.
-fn encode_cut(result: &cut::Cut) -> Vec<jint> {
-    let cut::Cut::Pieces(pieces) = result else {
-        return vec![-1];
-    };
-    let mut flat: Vec<jint> = vec![jint::try_from(pieces.len()).unwrap_or(0)];
-    for piece in pieces {
-        flat.push(jint::try_from(piece.times.len()).unwrap_or(0));
-        for (index, time) in piece.times.iter().enumerate() {
-            let o = index * erase::STRIDE;
-            flat.extend(
-                piece.samples[o..o + erase::STRIDE]
-                    .iter()
-                    .map(|v| v.to_bits().cast_signed()),
-            );
-            flat.push(*time);
-        }
-    }
-    flat
 }
 
 #[unsafe(no_mangle)]

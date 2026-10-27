@@ -41,6 +41,7 @@ enum class Glyph {
     Rect,
     Ellipse,
     Arrow,
+    Lasso,
     Pencil,
     Notebook,
     Close,
@@ -120,6 +121,15 @@ private val GLYPH_PAINTERS: Map<Glyph, DrawScope.(Color) -> Unit> =
             )
         },
         Glyph.Arrow to { tint -> arrow(tint) },
+        Glyph.Lasso to { tint ->
+            drawOval(
+                color = tint,
+                topLeft = Offset(4f, 5f),
+                size = Size(16f, 12f),
+                style = strokeStyle(PathEffect.dashPathEffect(floatArrayOf(3f, 3f))),
+            )
+            gLine(tint, 12f, 17f, 14f, 20f)
+        },
         Glyph.Pencil to { tint -> pencil(tint) },
         Glyph.Notebook to { tint -> notebook(tint) },
         Glyph.Close to { tint -> gLine(tint, 7f, 7f, 17f, 17f).also { gLine(tint, 17f, 7f, 7f, 17f) } },

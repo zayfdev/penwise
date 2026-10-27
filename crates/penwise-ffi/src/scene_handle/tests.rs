@@ -290,3 +290,71 @@ fn item_floats_skip_unknown_items() {
     let (_, scene, _) = setup();
     assert!(item_floats(scene.scene(), ItemId([1; 16])).is_none());
 }
+
+fn dirty_ids(blob: &[u8]) -> (bool, Vec<ItemId>) {
+    let ids = blob[1..]
+        .chunks_exact(16)
+        .map(|c| ItemId(c.try_into().expect("16 bytes")))
+        .collect();
+    (blob[0] == 1, ids)
+}
+
+#[test]
+fn dirty_ids_track_what_the_renderer_must_repaint() {
+    let (mut core, mut scene, _) = setup();
+    assert!(
+        dirty_ids(&scene.take_dirty()).0,
+        "a fresh scene is all dirty"
+    );
+    assert_eq!(dirty_ids(&scene.take_dirty()), (false, Vec::new()));
+    let id = scene.new_item_id(1);
+    let edits = scene
+        .add_shape(&ShapeSpec {
+            id,
+            kind: ShapeKind::Rect,
+            start: [100.0, 100.0],
+            end: [200.0, 180.0],
+            constrain: false,
+            brush: penwise_core::BrushParams::for_preset(0, 0xFF00_0000, 1.0),
+            fill: None,
+        })
+        .expect("shape");
+    commit(&mut core, &scene, &edits);
+    assert_eq!(dirty_ids(&scene.take_dirty()), (false, vec![id]));
+    // Erasing a shape adds a mask item; the shape is what changes visually.
+    let erase = scene
+        .erase(&[[150.0, 90.0], [150.0, 260.0]], 6.0, true, LayerSet::ALL)
+        .expect("erase");
+    let (all, ids) = dirty_ids(&scene.take_dirty());
+    assert!(!all && ids.contains(&id), "the erased target is dirty");
+    // Undoing the mask deletes the erase item; its target is dirty again.
+    commit(&mut core, &scene, &erase);
+    let undo = scene.undo().expect("undo");
+    commit(&mut core, &scene, &undo);
+    assert!(dirty_ids(&scene.take_dirty()).1.contains(&id));
+    scene.reload(&core).expect("reload");
+    assert!(dirty_ids(&scene.take_dirty()).0);
+}
+
+#[test]
+fn a_stamp_brush_shape_falls_back_to_an_outline_brush() {
+    let (mut core, mut scene, _) = setup();
+    let stamp = Preset::ALL
+        .iter()
+        .position(|p| matches!(p, Preset::Pencil))
+        .expect("pencil");
+    let id = scene.new_item_id(1);
+    let edits = scene
+        .add_shape(&ShapeSpec {
+            id,
+            kind: ShapeKind::Ellipse,
+            start: [100.0, 100.0],
+            end: [220.0, 180.0],
+            constrain: false,
+            brush: super::shape_brush(stamp, 0xFF30_4050, 1.0),
+            fill: None,
+        })
+        .expect("a pencil shape is drawn with an outline brush");
+    commit(&mut core, &scene, &edits);
+    assert!(item_floats(scene.scene(), id).is_some());
+}

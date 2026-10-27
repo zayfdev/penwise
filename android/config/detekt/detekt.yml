@@ -10,11 +10,8 @@ complexity:
     excludes:
       [
         '**/StylusStrokeController.kt',
-        '**/Wire.kt',
-        '**/StrokeStore.kt',
-        '**/SyncClient.kt',
         '**/PageViewModel.kt',
-        '**/PageLibrary.kt',
+        '**/SyncCore.kt',
         '**/Glyph.kt',
       ]
   # Axis/bounds checks naturally chain several comparisons; keep a ceiling but above detekt's default of 3.

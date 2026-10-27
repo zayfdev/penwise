@@ -10,12 +10,21 @@
 //! | 1 `STAMPS` | `r g b a, opacity, grainScale (0 = none), grainStrength, grainSoftness, nDabs, dabs × 9` (`x y rx ry angle opacity hardness grainStrength grainLevel`) |
 //! | 2 `EVEN_ODD` (fill items) | as `OUTLINE`, but fill with the even-odd rule |
 //! | 3 `MASK` | `width, nPoints, points x y …` (round caps/joins, destination-out) |
-//! | 4 `TEXT` | `8 corner floats (tl tr br bl), r g b a, opacity, fontSize` |
+//! | 4 `TEXT` | `8 corner floats (tl tr br bl), r g b a, opacity, fontSize, boxW, boxH` (local box; the text itself via `item_text`) |
 //! | 5 `IMAGE` | `8 corner floats, 32 asset-hash bytes as floats` |
 
 use penwise_core::brush::{BlendMode, Color};
 use penwise_core::geometry::{Outline, StrokeGeometry};
 use penwise_core::item::{ItemGeometry, ItemId, ItemKind, Scene};
+
+/// Content of live text item `id`; `None` for anything else.
+#[must_use]
+pub fn item_text(scene: &Scene, id: ItemId) -> Option<&str> {
+    match &scene.get(id)?.kind {
+        ItemKind::Text(t) => Some(&t.content),
+        _ => None,
+    }
+}
 
 /// Part kinds (see the module table).
 pub mod kind {
@@ -73,10 +82,12 @@ pub fn item_floats(scene: &Scene, id: ItemId) -> Option<Vec<f32>> {
             let mut p = corners.as_flattened().to_vec();
             p.extend(rgba(paint.color));
             p.push(paint.opacity);
-            p.push(match &item.kind {
-                ItemKind::Text(t) => t.font_size,
-                _ => 0.0,
-            });
+            let (font_size, size) = match &item.kind {
+                ItemKind::Text(t) => (t.font_size, t.size),
+                _ => (0.0, [0.0; 2]),
+            };
+            p.push(font_size);
+            p.extend(size);
             parts.push(part(kind::TEXT, p));
         }
         ItemGeometry::Image { corners } => {

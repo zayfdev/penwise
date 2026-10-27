@@ -8,12 +8,15 @@
 //! `SyncCore::receive` reports (or [`SceneHandle::reload`] after a snapshot). Local edits carry stamps newer
 //! than everything the device has seen, so they always win and the mirror never diverges.
 
+mod dirty;
 mod edits_blob;
 mod mirror;
 mod tools;
 
 pub use edits_blob::{decode_edits, encode_edits};
-pub use tools::{SAMPLE_FLOATS, ShapeSpec, StrokeSpec, handle_from_code, pairs, shape_kind};
+pub use tools::{
+    SAMPLE_FLOATS, ShapeSpec, StrokeSpec, handle_from_code, pairs, shape_brush, shape_kind,
+};
 
 use penwise_core::edit::{Edit, UndoStack, undo::DEFAULT_DEPTH};
 use penwise_core::item::{ItemId, LayerSet, Scene};
@@ -22,6 +25,7 @@ use penwise_proto::PageId;
 use crate::error::SyncError;
 use crate::ids::IdMint;
 use crate::sync_core::SyncCore;
+use dirty::Dirty;
 
 /// A page's scene, undo stack and id stream.
 #[derive(Debug)]
@@ -30,6 +34,7 @@ pub struct SceneHandle {
     scene: Scene,
     undo: UndoStack,
     ids: IdMint,
+    dirty: Dirty,
 }
 
 impl SceneHandle {
@@ -44,6 +49,7 @@ impl SceneHandle {
             scene: replica.scene().clone(),
             undo: UndoStack::new(DEFAULT_DEPTH),
             ids: IdMint::new(core.device(), entropy),
+            dirty: Dirty::everything(),
         })
     }
 
@@ -94,6 +100,7 @@ impl SceneHandle {
     /// The scene refused an edit (a bug: undo edits are derived from the scene itself).
     pub fn undo(&mut self) -> Result<Vec<Edit>, SyncError> {
         let edits = self.undo.undo(&self.scene);
+        self.dirty.mark_edits(&self.scene, &edits);
         self.scene.apply_all(&edits)?;
         Ok(edits)
     }
@@ -104,8 +111,15 @@ impl SceneHandle {
     /// As [`SceneHandle::undo`].
     pub fn redo(&mut self) -> Result<Vec<Edit>, SyncError> {
         let edits = self.undo.redo(&self.scene);
+        self.dirty.mark_edits(&self.scene, &edits);
         self.scene.apply_all(&edits)?;
         Ok(edits)
+    }
+
+    /// Takes the ids whose render data changed since the last call (see [`dirty`]): byte 0 is `1` when the
+    /// whole scene changed, then 16-byte ids.
+    pub fn take_dirty(&mut self) -> Vec<u8> {
+        self.dirty.take()
     }
 
     /// Live item ids on `layers` in paint order (bottom → top).
@@ -118,6 +132,7 @@ impl SceneHandle {
     /// only duplicate ink, never lose it (design §1.3).
     fn local(&mut self, mut edits: Vec<Edit>) -> Result<Vec<Edit>, SyncError> {
         edits.sort_by_key(|e| matches!(e, Edit::Delete(_)));
+        self.dirty.mark_edits(&self.scene, &edits);
         self.undo.apply_local(&mut self.scene, &edits)?;
         Ok(edits)
     }

@@ -14,6 +14,7 @@ impl SceneHandle {
     /// # Errors
     /// None today; the `Result` keeps the signature stable for callers that propagate errors.
     pub fn reload(&mut self, core: &SyncCore) -> Result<(), SyncError> {
+        self.dirty.mark_all();
         self.scene = match core.replica().page(self.page) {
             Some(replica) => replica.scene().clone(),
             None => Scene::new(self.scene.kind()),
@@ -50,7 +51,10 @@ impl SceneHandle {
             return Ok(());
         };
         let Some((current, deleted)) = self.scene.get_any(id) else {
-            self.scene.apply(&Edit::Add(winner.item.clone()))?;
+            let add = Edit::Add(winner.item.clone());
+            self.dirty
+                .mark_edits(&self.scene, std::slice::from_ref(&add));
+            self.scene.apply(&add)?;
             if winner.deleted {
                 self.scene.apply(&Edit::Delete(id))?;
             }
@@ -60,7 +64,10 @@ impl SceneHandle {
             return Ok(());
         }
         let patch = ItemPatch::capture(&winner.item, winner.deleted, &Field::ALL);
-        self.scene.apply(&Edit::Update { id, patch })?;
+        let update = Edit::Update { id, patch };
+        self.dirty
+            .mark_edits(&self.scene, std::slice::from_ref(&update));
+        self.scene.apply(&update)?;
         Ok(())
     }
 }

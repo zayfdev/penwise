@@ -3,58 +3,56 @@ package dev.penwise.ink
 /**
  * Collects live-preview samples between sends.
  *
- * The pen reports 100–200 samples a second and each used to become its own WebSocket frame, so a burst queued
- * frames the mirror then replayed long after the pen had moved on. Batches are merged into one frame per tick:
- * nothing is lost (the samples are cumulative for the preview) and the queue stays one frame deep.
+ * The pen reports 100–200 samples a second and each used to become its own frame, so a burst queued frames the
+ * mirror then replayed long after the pen had moved on. Samples are merged into one frame per tick; a frame
+ * carries the index of its first sample so the receiver can place the chunk.
  */
 internal class LiveBatcher {
     private var samples = FloatArray(INITIAL_SAMPLES * STRIDE)
     private var times = IntArray(INITIAL_SAMPLES)
     private var count = 0
 
-    /** Identifies the stroke the buffered samples belong to; `-1` when nothing is buffered. */
-    var strokeId: Int = NO_STROKE
+    /** Index, within the stroke, of the first buffered sample. */
+    var start: Int = 0
         private set
 
     /** True when there is something to send. */
     val pending: Boolean get() = count > 0
 
-    /** Samples currently buffered. */
-    val pendingSamples: Int get() = count
-
-    /** Appends `sampleCount` interleaved samples for [id], starting a new batch when the stroke changes. */
+    /** Appends `sampleCount` interleaved samples (five floats each) and their times. */
     fun add(
-        id: Int,
         source: FloatArray,
         sourceTimes: IntArray,
         sampleCount: Int,
     ) {
         if (sampleCount <= 0) return
-        if (strokeId != id) reset()
-        strokeId = id
         ensureCapacity(count + sampleCount)
         source.copyInto(samples, count * STRIDE, 0, sampleCount * STRIDE)
         sourceTimes.copyInto(times, count, 0, sampleCount)
         count += sampleCount
     }
 
-    /** Takes the buffered samples; the batch is empty afterwards. */
+    /** Moves up to `max` buffered samples into the out arrays and returns how many; [start] advances past them. */
     fun take(
         outSamples: FloatArray,
         outTimes: IntArray,
+        max: Int,
     ): Int {
-        if (count == 0) return 0
-        val taken = count
+        val taken = minOf(count, max, outTimes.size)
+        if (taken == 0) return 0
         samples.copyInto(outSamples, 0, 0, taken * STRIDE)
         times.copyInto(outTimes, 0, 0, taken)
-        reset()
+        samples.copyInto(samples, 0, taken * STRIDE, count * STRIDE)
+        times.copyInto(times, 0, taken, count)
+        count -= taken
+        start += taken
         return taken
     }
 
-    /** Drops everything (stroke ended, page switched, connection reset). */
+    /** Starts a new stroke: drops everything and restarts the sample index. */
     fun reset() {
         count = 0
-        strokeId = NO_STROKE
+        start = 0
     }
 
     private fun ensureCapacity(needed: Int) {
@@ -67,6 +65,5 @@ internal class LiveBatcher {
     private companion object {
         const val STRIDE = 5
         const val INITIAL_SAMPLES = 256
-        const val NO_STROKE = -1
     }
 }

@@ -8,30 +8,15 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * Library mutations over plain HTTP (`/pages`, `/notebooks`), because the WebSocket is for page content.
+ * The two things the tablet still asks the server over plain HTTP: pairing (`POST /pair`) and picture assets
+ * (`GET /assets/<hash>`). Everything else travels over `/sync`.
  *
- * Every call is best-effort: the tablet is offline-first, so a failure only means the server learns about the
- * page later. Calls block, so they run off the main thread.
+ * Every call is best-effort and blocks, so callers run it off the main thread.
  */
 class LibraryClient(
     private val baseUrl: String,
     private val token: String,
 ) {
-    /** `POST /pages`; returns the response body, or `null` on any failure. */
-    fun createPage(body: String): String? = send("POST", "/pages", body)
-
-    /** `PATCH /pages/<id>`. */
-    fun updatePage(
-        id: String,
-        body: String,
-    ): String? = send("PATCH", "/pages/$id", body)
-
-    /** `DELETE /pages/<id>`. */
-    fun deletePage(id: String): String? = send("DELETE", "/pages/$id", null)
-
-    /** The library index, or `null` when the server cannot be reached. */
-    fun pages(): String? = send("GET", "/pages", null)
-
     /** Exchanges a pairing code for the server's token; `null` when the code is wrong or the server is away. */
     fun pair(code: String): Pair<String, String>? {
         val body = JSONObject().put("code", code).toString()
@@ -67,13 +52,6 @@ class LibraryClient(
         }
     }
 
-    /** One library call; `null` on any failure. */
-    fun request(
-        method: String,
-        path: String,
-        body: String?,
-    ): String? = send(method, path, body)
-
     private fun send(
         method: String,
         path: String,
@@ -108,11 +86,11 @@ class LibraryClient(
         }
     }
 
-    /** `ws://host:port/ws?token=…` becomes the `http://host:port` base; extra query parts are dropped. */
+    /** `ws://host:port/sync` becomes the `http://host:port` base; extra query parts are dropped. */
     private fun httpBase(wsUrl: String): String =
         wsUrl
             .substringBefore('?')
-            .removeSuffix("/ws")
+            .removeSuffix("/sync")
             .replaceFirst("wss://", "https://")
             .replaceFirst("ws://", "http://")
 

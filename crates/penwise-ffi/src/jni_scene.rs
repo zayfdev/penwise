@@ -5,7 +5,7 @@
 #![allow(unsafe_code)] // `#[unsafe(no_mangle)]` entry points.
 
 use jni::EnvUnowned;
-use jni::objects::{JByteArray, JFloatArray, JObject};
+use jni::objects::{JByteArray, JFloatArray, JObject, JString};
 use jni::sys::{jint, jlong};
 use penwise_core::item::LayerSet;
 
@@ -13,7 +13,7 @@ use crate::jni_util::{
     bytes_in, bytes_out, floats_out, free_handle, guarded, handle_mut, handle_ref, into_handle,
     item_in, page_in,
 };
-use crate::render_floats::item_floats;
+use crate::render_floats::{item_floats, item_text};
 use crate::scene_handle::{SceneHandle, encode_edits};
 use crate::sync_core::{SyncCore, decode_changes};
 
@@ -180,5 +180,33 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneItemFloats<'local>(
         let floats =
             item_floats(handle_ref::<SceneHandle>(handle)?.scene(), id).unwrap_or_default();
         floats_out(env, &floats)
+    })
+}
+
+/// Ids whose render data changed since the last call: byte 0 is `1` when everything changed, then 16-byte ids.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_penwise_core_Native_sceneTakeDirty<'local>(
+    mut env: EnvUnowned<'local>,
+    _this: JObject<'local>,
+    handle: jlong,
+) -> JByteArray<'local> {
+    guarded(&mut env, |env| {
+        let dirty = handle_mut::<SceneHandle>(handle)?.take_dirty();
+        bytes_out(env, &dirty)
+    })
+}
+
+/// Content of text item `id`; empty for any other item.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_penwise_core_Native_sceneItemText<'local>(
+    mut env: EnvUnowned<'local>,
+    _this: JObject<'local>,
+    handle: jlong,
+    id: JByteArray<'local>,
+) -> JString<'local> {
+    guarded(&mut env, |env| {
+        let id = item_in(env, &id)?;
+        let text = item_text(handle_ref::<SceneHandle>(handle)?.scene(), id).unwrap_or_default();
+        Ok(env.new_string(text)?)
     })
 }

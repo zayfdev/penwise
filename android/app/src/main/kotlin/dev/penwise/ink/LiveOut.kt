@@ -1,14 +1,16 @@
 package dev.penwise.ink
 
 /**
- * Receives the stroke that is still under the pen, so the PC mirror can show it before the pen lifts.
+ * Receives the stroke that is still under the pen, so the other devices can show it before the pen lifts.
  *
- * Called on the UI thread from the input controller; implementations must not block. A stroke that is committed
- * or cancelled ends the preview.
+ * Called on the UI thread from the input controller; implementations must not block. The stroke ends with its
+ * committed `Add` (same [id], which the server uses to drop the preview) or with [end] `cancelled = true`.
  */
 interface LiveOut {
-    /** Starts a preview; subsequent [samples] calls are deltas from this point. */
+    /** Starts a preview of stroke [id] on [page]; subsequent [samples] calls are deltas from this point. */
     fun begin(
+        page: ByteArray,
+        id: ByteArray,
         preset: Int,
         argb: Int,
         scale: Float,
@@ -22,24 +24,6 @@ interface LiveOut {
         count: Int,
     )
 
-    /** The stroke was committed (the server ends the preview itself) or cancelled (it must be withdrawn). */
+    /** The stroke was committed (nothing to send) or cancelled (the preview must be withdrawn). */
     fun end(cancelled: Boolean)
-
-    /** A shape drag's whole preview, replacing the previous frame (a drag can shrink). */
-    fun shape(
-        preset: Int,
-        argb: Int,
-        scale: Float,
-        seed: Long,
-        samples: FloatArray,
-        times: IntArray,
-        count: Int,
-    ) = Unit
-
-    /** Where the eraser is, so the mirror can show the sweep. */
-    fun erasing(
-        x: Float,
-        y: Float,
-        radius: Float,
-    ) = Unit
 }

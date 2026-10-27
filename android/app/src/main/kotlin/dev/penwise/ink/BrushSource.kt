@@ -10,7 +10,7 @@ class BrushSpec(
 interface BrushSource {
     fun current(): BrushSpec
 
-    /** True when the pen erases whole strokes instead of drawing. */
+    /** True when the pen erases instead of drawing. */
     val eraserMode: Boolean get() = false
 
     /** Eraser contact radius in view px. */
@@ -21,4 +21,10 @@ interface BrushSource {
 
     /** Shape tool: drag to create instead of drawing freehand; null = freehand. */
     val shapeMode: ShapeMode? get() = null
+
+    /** Lasso tool: the pen selects, and drags the selection. */
+    val lassoMode: Boolean get() = false
+
+    /** What the lasso selected; null when the source has no lasso tool. */
+    val selection: Selection? get() = null
 }

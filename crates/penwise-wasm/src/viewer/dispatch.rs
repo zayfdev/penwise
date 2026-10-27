@@ -43,8 +43,12 @@ impl Viewer {
                 server,
                 head_seq,
                 current_page,
+                server_now_ms,
                 ..
             } => {
+                if let Some(author) = self.author.as_mut() {
+                    author.on_welcome(*server_now_ms);
+                }
                 out.head_seq = *head_seq;
                 out.server = Some(server.to_string());
                 out.page = current_page.map(|p| p.to_string());
@@ -74,7 +78,7 @@ impl Viewer {
                 }
                 Err(_) => out.apply_errors += 1,
             },
-            ServerMsg::SnapshotEnd { head_seq } => self.replica.end_snapshot(*head_seq),
+            ServerMsg::SnapshotEnd { head_seq } => self.end_snapshot(*head_seq, &mut touched),
             ServerMsg::StrokeDelta { device, delta } => {
                 let _ = self.live.apply_delta(*device, delta);
                 out.device = Some(device.to_string());
@@ -95,7 +99,15 @@ impl Viewer {
                 out.detail = Some(detail.clone());
             }
             ServerMsg::Ping { nonce } | ServerMsg::Pong { nonce } => out.nonce = *nonce,
-            ServerMsg::Ack { .. } => {}
+            ServerMsg::Ack {
+                op_ids, rejected, ..
+            } => {
+                if let Some(author) = self.author.as_mut() {
+                    author.on_ack(op_ids, rejected);
+                }
+                out.acked = u32::try_from(op_ids.len()).unwrap_or(u32::MAX);
+                out.rejected = u32::try_from(rejected.len()).unwrap_or(u32::MAX);
+            }
         }
         if !matches!(msg, ServerMsg::Welcome { .. } | ServerMsg::OpsSince { .. }) {
             out.head_seq = self.replica.head_seq();
@@ -106,6 +118,9 @@ impl Viewer {
     }
 
     fn apply_logged(&mut self, seq_op: &SeqOp, out: &mut Received, touched: &mut Touched) {
+        if let Some(author) = self.author.as_mut() {
+            author.observe(seq_op.op.hlc());
+        }
         match self.replica.apply_seq(seq_op) {
             Ok(applied) => {
                 out.catalog_changed |= applied.catalog_changed;
@@ -122,6 +137,14 @@ impl Viewer {
     }
 
     fn begin_snapshot(&mut self, scope: Scope, out: &mut Received, touched: &mut Touched) {
+        if let Some(author) = self.author.as_mut() {
+            author.set_snapshotting(true);
+        }
+        out.scope = Some(match scope {
+            Scope::All => "all".to_owned(),
+            Scope::Catalog => "catalog".to_owned(),
+            Scope::Page(page) => page.to_string(),
+        });
         if self.replica.begin_snapshot(scope).is_err() {
             out.apply_errors += 1;
             return;
@@ -130,6 +153,21 @@ impl Viewer {
             Scope::All | Scope::Catalog => out.catalog_changed = true,
             Scope::Page(page) => {
                 touched.changed.insert(page);
+            }
+        }
+    }
+
+    /// Snapshot done: local ops the server has not acknowledged go back on top (the snapshot replaced what
+    /// they had changed), and pushes resume.
+    fn end_snapshot(&mut self, head_seq: u64, touched: &mut Touched) {
+        self.replica.end_snapshot(head_seq);
+        let Some(author) = self.author.as_mut() else {
+            return;
+        };
+        author.set_snapshotting(false);
+        for op in author.pending_ops() {
+            if let Ok(applied) = self.replica.apply(&op) {
+                touched.changed.extend(applied.page);
             }
         }
     }

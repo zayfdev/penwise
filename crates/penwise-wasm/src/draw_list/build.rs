@@ -114,6 +114,7 @@ impl DrawList {
                     let aux = self.texts.len();
                     self.texts.push(text.content.clone());
                     self.text_sizes.push(text.font_size);
+                    self.text_boxes.extend_from_slice(&text.size);
                     self.push_box(DrawKind::Text, corners, style, aux);
                 }
             }

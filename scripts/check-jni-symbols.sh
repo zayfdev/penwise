@@ -4,7 +4,7 @@
 #   scripts/check-jni-symbols.sh [path/to/libpenwise_ffi.so]
 #
 # - Declared in Kotlin but not exported by Rust: ERROR (the app would crash with UnsatisfiedLinkError). Exit 1.
-# - Exported by Rust but not declared in Kotlin: reported only (the tablet milestone declares them later).
+# - Exported by Rust but not declared in Kotlin: ERROR too (dead exports are removed with their last caller). Exit 1.
 # Rust side: `fn Java_dev_penwise_*` definitions in crates/penwise-ffi/src (or `nm -D` of the given library,
 # which also proves the symbols survive linking). Kotlin side: `external fun` in core/Native.kt.
 set -euo pipefail
@@ -31,8 +31,9 @@ echo "declared (Native.kt):    $(printf '%s\n' "$declared" | sed '/^$/d' | wc -l
 
 if [[ -n "$undeclared" ]]; then
   echo
-  echo "exported by Rust, not declared in Kotlin yet (report only):"
-  printf '  %s\n' $undeclared
+  echo "ERROR: exported by Rust, not declared in Kotlin (remove the export or declare it):" >&2
+  printf '  %s\n' $undeclared >&2
+  exit 1
 fi
 
 if [[ -n "$missing" ]]; then
@@ -42,4 +43,4 @@ if [[ -n "$missing" ]]; then
   exit 1
 fi
 echo
-echo "ok: every Kotlin external has a Rust export"
+echo "ok: Kotlin externals and Rust exports match"

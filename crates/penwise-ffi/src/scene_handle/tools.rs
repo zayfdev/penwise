@@ -1,7 +1,7 @@
 //! Pen tools: each builds core edits from gesture input, applies them locally (recorded in the open undo
 //! gesture) and returns them for `SyncCore::commit_edits`.
 
-use penwise_core::brush::{BrushParams, Color};
+use penwise_core::brush::{BrushFamily, BrushParams, Color};
 use penwise_core::edit::{self, Edit, LassoParams};
 use penwise_core::item::{
     Affine, ArrowHead, Item, ItemId, ItemKind, Layer, LayerSet, ShapeItem, ShapeKind, StrokeItem,
@@ -42,6 +42,18 @@ pub struct ShapeSpec {
     /// Outline brush (outline family).
     pub brush: BrushParams,
     pub fill: Option<Color>,
+}
+
+/// The outline brush a shape is drawn with: the preset's own when it is an outline brush, otherwise the first
+/// preset (ballpoint) in the same colour and size scale, because core only accepts outline-family shape brushes.
+#[must_use]
+pub fn shape_brush(preset: usize, argb: u32, scale: f32) -> BrushParams {
+    let brush = BrushParams::for_preset(preset, argb, scale);
+    if matches!(brush.family, BrushFamily::Stamp(_)) {
+        BrushParams::for_preset(0, argb, scale)
+    } else {
+        brush
+    }
 }
 
 /// `[x, y]` pairs from interleaved floats (a trailing odd float is dropped).

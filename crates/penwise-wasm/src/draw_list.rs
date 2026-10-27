@@ -14,7 +14,8 @@
 //! - `commands` `Uint32Array`, stride [`COMMAND_STRIDE`] = 5: `kind` ([`DrawKind`]), `first`, `count`,
 //!   `style`, `aux`.
 //! - `mask_widths` `Float32Array`: stroke width (`2·radius`) per mask, indexed by a `Mask` command's `aux`.
-//! - `texts` `string[]` + `text_sizes` `Float32Array` (local font size), indexed by a `Text` command's `aux`.
+//! - `texts` `string[]`, `text_sizes` `Float32Array` (local font size) and `text_boxes` `Float32Array` (local box
+//!   `width, height` pairs), indexed by a `Text` command's `aux` (`text_boxes[2·aux ..]`).
 //! - `images` `string[]`: 64-hex SHA-256 asset hashes, indexed by an `Image` command's `aux`.
 //!
 //! Commands in order (bands Fill < Multiply < Normal, then `(z, id)`; core `Scene::render_order`):
@@ -30,7 +31,8 @@
 //! - `Mask`: stroke runs `first .. first+count` (open polylines) with width `mask_widths[aux]`, round caps and
 //!   joins, `destination-out`.
 //! - `Text`: run `first` holds the box corners; draw `texts[aux]` at local font size `text_sizes[aux]`
-//!   wrapped to the box, transformed by the corner frame, color `styles[style]`.
+//!   wrapped to the local box `text_boxes[2·aux]` × `text_boxes[2·aux+1]`, transformed by the corner frame
+//!   (local `(0,0)` → tl, `(w,0)` → tr, `(0,h)` → bl), color `styles[style]`.
 //! - `Image`: run `first` holds the box corners; draw the picture `images[aux]` into that parallelogram
 //!   (bilinear, normal blend).
 //!
@@ -73,6 +75,7 @@ pub struct DrawList {
     mask_widths: Vec<f32>,
     texts: Vec<String>,
     text_sizes: Vec<f32>,
+    text_boxes: Vec<f32>,
     images: Vec<String>,
 }
 
@@ -124,6 +127,12 @@ impl DrawList {
     #[must_use]
     pub fn text_sizes(&self) -> Vec<f32> {
         self.text_sizes.clone()
+    }
+
+    /// Local text box `width, height` pairs.
+    #[must_use]
+    pub fn text_boxes(&self) -> Vec<f32> {
+        self.text_boxes.clone()
     }
 
     /// Image asset hashes (64 lowercase hex chars).

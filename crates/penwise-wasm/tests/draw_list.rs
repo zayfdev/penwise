@@ -169,6 +169,7 @@ fn every_item_kind_draws_in_band_and_z_order() {
 
     assert_eq!(list.texts(), vec!["hello".to_owned()]);
     assert_eq!(list.text_sizes(), vec![24.0]);
+    assert_eq!(list.text_boxes(), vec![120.0, 40.0]);
     assert_eq!(list.images(), vec!["ab".repeat(32)]);
     assert_eq!(
         all.last().unwrap().kind,

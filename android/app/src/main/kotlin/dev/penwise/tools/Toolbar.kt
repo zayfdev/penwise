@@ -66,6 +66,7 @@ fun Toolbar(
                 }
             }
             ShapeChips(state)
+            LassoChips(state)
             ToolGroup {
                 GlyphChip(
                     glyph = Glyph.Undo,
@@ -139,6 +140,26 @@ private fun ShapeChips(state: ToolState) {
                 label = stringResource(label),
                 selected = state.shapeMode == mode,
                 onClick = { state.toggleShape(mode) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun LassoChips(state: ToolState) {
+    ToolGroup {
+        GlyphChip(
+            glyph = Glyph.Lasso,
+            label = stringResource(R.string.tool_lasso),
+            selected = state.lassoMode,
+            onClick = state::toggleLasso,
+        )
+        if (state.selection.count > 0) {
+            GlyphChip(
+                glyph = Glyph.Trash,
+                label = stringResource(R.string.tool_delete_selection),
+                selected = false,
+                onClick = state.selection::requestDelete,
             )
         }
     }

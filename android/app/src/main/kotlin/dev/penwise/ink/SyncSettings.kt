@@ -30,29 +30,31 @@ class SyncSettings(
     /** The URL to show in the settings dialog: the override, or the first built-in candidate. */
     fun displayedUrl(): String = overrideUrl ?: candidates().firstOrNull().orEmpty()
 
-    /** Candidates in try order, each as a WebSocket URL with the token appended when one is set. */
+    /** The page that was on screen last (32 hex characters), or `null` on first run. */
+    var activePage: String?
+        get() = prefs.getString(KEY_ACTIVE, null)?.takeIf { it.isNotBlank() }
+        set(value) {
+            prefs.edit { putString(KEY_ACTIVE, value) }
+        }
+
+    /** Candidates in try order, each as the `/sync` WebSocket URL (the token travels in the `Hello` frame). */
     fun endpoints(): List<String> {
         val bases = overrideUrl?.let { listOf(it) } ?: candidates()
-        return bases.map { withToken(toWebSocketUrl(it)) }
+        return bases.map(::toWebSocketUrl)
     }
 
     private fun candidates(): List<String> = context.resources.getStringArray(R.array.sync_urls).toList()
-
-    private fun withToken(base: String): String {
-        if (token.isEmpty()) return base
-        val separator = if ('?' in base) '&' else '?'
-        return "$base${separator}token=$token"
-    }
 
     private companion object {
         const val PREFS = "penwise"
         const val KEY_URL = "sync_url"
         const val KEY_TOKEN = "sync_token"
+        const val KEY_ACTIVE = "active_page"
     }
 }
 
-/** Path of the sync socket on the server. */
-internal const val SOCKET_PATH = "/ws"
+/** Path of the binary sync socket on the server. */
+internal const val SOCKET_PATH = "/sync"
 
 private const val HTTP = "http://"
 private const val SECURE_HTTP = "https://"
@@ -63,7 +65,7 @@ private const val SECURE_SOCKET = "wss://"
  * Turns whatever was typed or scanned into the WebSocket URL sync dials.
  *
  * Pairing hands over the viewer's `http://host:7420`, and people paste that too; the socket lives at
- * `ws://host:7420/ws`. Anything already pointing at `/ws` comes back unchanged.
+ * `ws://host:7420/sync`; whatever path was typed is replaced.
  */
 internal fun toWebSocketUrl(url: String): String {
     val trimmed = url.trim()

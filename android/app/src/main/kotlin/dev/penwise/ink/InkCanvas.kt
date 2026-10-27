@@ -4,10 +4,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 
-/** Hosts [InkSurfaceView] in Compose. */
+/** Hosts [InkSurfaceView] in Compose, showing [scene] (switch pages by passing another scene). */
 @Composable
 fun InkCanvas(
-    store: StrokeStore,
+    scene: PageScene,
     brushes: BrushSource,
     style: PageStyle,
     modifier: Modifier = Modifier,
@@ -17,11 +17,14 @@ fun InkCanvas(
     AndroidView(
         factory = { context ->
             InkSurfaceView(context).apply {
-                bind(store, brushes, images, liveOut)
+                bind(scene, brushes, images, liveOut)
                 setPageStyle(style)
             }
         },
-        update = { view -> view.setPageStyle(style) },
+        update = { view ->
+            view.showScene(scene)
+            view.setPageStyle(style)
+        },
         modifier = modifier,
     )
 }

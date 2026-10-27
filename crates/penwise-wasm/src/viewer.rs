@@ -13,7 +13,13 @@ use crate::draw_list::DrawList;
 use crate::error::WasmError;
 use crate::received::{NotebookEntry, PageEntry, Received};
 
+mod author;
 mod dispatch;
+mod edits;
+mod pen;
+mod session;
+
+use author::Author;
 
 /// Browser-side state for every page.
 #[wasm_bindgen]
@@ -21,6 +27,8 @@ mod dispatch;
 pub struct Viewer {
     replica: Replica,
     live: LiveStrokes,
+    /// Device identity, clock and outbox (`None` until [`Viewer::identify`]); a pure viewer never needs it.
+    author: Option<Author>,
 }
 
 #[wasm_bindgen]
@@ -155,4 +163,18 @@ impl Viewer {
 /// [`WasmError::Id`] for anything else.
 pub fn parse_id<T: FromStr<Err = penwise_proto::IdParseError>>(text: &str) -> Result<T, WasmError> {
     Ok(text.parse()?)
+}
+
+/// JS clocks are `f64` ms; NaN/negative → 0, fraction dropped.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "clamped non-negative; saturating cast"
+)]
+pub(crate) fn whole_ms(now_ms: f64) -> u64 {
+    if now_ms.is_finite() && now_ms > 0.0 {
+        now_ms as u64
+    } else {
+        0
+    }
 }

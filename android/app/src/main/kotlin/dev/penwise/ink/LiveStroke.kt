@@ -1,13 +1,12 @@
 package dev.penwise.ink
 
-import dev.penwise.core.InkGeometry
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
-/** Latest geometry of the in-progress stroke, handed from the UI thread to the render thread. */
-class LiveFrame(
+/** Latest picture of the gesture in flight, handed from the UI thread to the render thread. */
+internal class LiveFrame(
     val strokeId: Long,
-    val geometry: InkGeometry,
+    val paint: FrontPaint,
 )
 
 /**

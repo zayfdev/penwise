@@ -1,26 +1,213 @@
-/* Owner: slice d. Layout only; no inline styles (CSP `style-src 'self'`). */
+/* Layout only; no inline styles anywhere (the page can run under CSP `style-src 'self'`). */
 :root {
   color-scheme: light;
-  font-family: system-ui, sans-serif;
+  font:
+    14px system-ui,
+    sans-serif;
+  --line: #dcdce0;
+  --accent: #4d6fd6;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: #e8e8ea;
 }
 
 body {
-  margin: 0;
   display: grid;
-  grid-template-columns: 16rem 1fr;
-  height: 100vh;
+  grid-template-columns: 17rem 1fr;
   overflow: hidden;
 }
 
-#pages {
+#sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: #f6f6f7;
+  border-right: 1px solid var(--line);
+}
+
+#sidebar header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--line);
+}
+
+#sidebar h1 {
+  margin: 0;
+  font-size: 15px;
+}
+
+#sidebar button,
+#sidebar input,
+#sidebar select,
+#toolbar button,
+#toolbar select {
+  font: inherit;
+  padding: 4px 8px;
+  border: 1px solid #cfcfd4;
+  border-radius: 6px;
+  background: #fff;
+}
+
+#sidebar button,
+#toolbar button {
+  cursor: pointer;
+}
+
+#toolbar button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+#search-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+}
+
+#search-panel [data-results] {
+  display: flex;
+  flex-direction: column;
+  max-height: 10rem;
   overflow-y: auto;
-  border-right: 1px solid #ddd;
+}
+
+.hit {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+  border: none;
+  background: none;
+  padding: 4px 0;
+}
+
+.hit span {
+  font-size: 12px;
+  color: #666;
+}
+
+#pages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.library {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 0;
+}
+
+.notebook {
+  padding: 10px 12px 4px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #7a7a82;
+}
+
+#sidebar .page {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-radius: 0;
+  border-left: 3px solid transparent;
+  background: none;
+  padding: 6px 12px;
+}
+
+#sidebar .page:hover {
+  background: #ececef;
+}
+
+#sidebar .page.active {
+  background: #e2e8f5;
+  border-left-color: var(--accent);
+}
+
+.form {
+  display: flex;
+  gap: 4px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--line);
+}
+
+#sidebar .form input {
+  flex: 1;
+  min-width: 0;
+}
+
+#text-panel,
+#pair-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+  max-height: 30%;
+  overflow-y: auto;
+}
+
+#text-panel pre {
+  margin: 0;
+  white-space: pre-wrap;
+  font:
+    13px / 1.45 ui-monospace,
+    monospace;
+}
+
+#pair-panel[hidden],
+#unlock[hidden] {
+  display: none;
+}
+
+#pair-panel img {
+  align-self: center;
+  image-rendering: pixelated;
+}
+
+[data-pair-code] {
+  font:
+    600 24px / 1.1 ui-monospace,
+    monospace;
+  letter-spacing: 0.2em;
+  text-align: center;
+}
+
+main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+#toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: #f6f6f7;
+  border-bottom: 1px solid var(--line);
 }
 
 #stage {
   position: relative;
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
-  background: #eceae6;
+  touch-action: none;
+  cursor: crosshair;
 }
 
 #stage canvas {
@@ -30,7 +217,25 @@ body {
   height: 100%;
 }
 
-#pairing {
+#live {
+  pointer-events: none;
+}
+
+#status {
+  margin-left: auto;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 0.72);
+  color: #fff;
+  font-size: 12px;
+}
+
+#status[data-state="closed"],
+#status[data-state="rejected"] {
+  background: #a3241e;
+}
+
+#unlock {
   position: fixed;
   inset: 0;
   display: grid;
@@ -38,6 +243,15 @@ body {
   background: rgb(255 255 255 / 0.95);
 }
 
-#pairing[hidden] {
-  display: none;
+#unlock form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 20rem;
+}
+
+@media (max-width: 700px) {
+  body {
+    grid-template-columns: 11rem 1fr;
+  }
 }

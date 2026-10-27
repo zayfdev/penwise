@@ -40,13 +40,14 @@ private const val PANEL_PAD_DP = 16
 private const val FIELD_HEIGHT_DP = 40
 
 /**
- * PC server address and access token. Saving rebuilds the sync client immediately; nothing is validated here
- * because a wrong address is not an error the user needs a dialog about (the toolbar shows the link state).
+ * PC server address and access token, with the link state on top. Saving reconnects immediately; nothing is
+ * validated here because a wrong address is not an error the user needs a dialog about.
  */
 @Composable
 fun SyncDialog(
     initialUrl: String,
     initialToken: String,
+    status: String,
     onDismiss: () -> Unit,
     onSave: (url: String, token: String) -> Unit,
 ) {
@@ -59,6 +60,10 @@ fun SyncDialog(
                 .padding(PANEL_PAD_DP.dp),
             verticalArrangement = Arrangement.spacedBy(GAP_DP.dp),
         ) {
+            androidx.compose.foundation.text.BasicText(
+                status,
+                style = TextStyle(fontSize = TEXT_SIZE_SP.sp, color = Color(LABEL_COLOR)),
+            )
             Field(stringResource(R.string.sync_url_label), url) { url = it }
             Field(stringResource(R.string.sync_token_label), token) { token = it }
             Row(horizontalArrangement = Arrangement.spacedBy(ROW_GAP_DP.dp)) {

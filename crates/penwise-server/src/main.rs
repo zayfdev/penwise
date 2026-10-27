@@ -39,7 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok()
         .and_then(|p| p.parse().ok())
         .unwrap_or(DEFAULT_PORT);
-    let web = PathBuf::from(std::env::var("PENWISE_WEB").unwrap_or_else(|_| "web".to_owned()));
+    let web = PathBuf::from(std::env::var("PENWISE_WEB").unwrap_or_else(|_| "web/dist".to_owned()));
     let data =
         PathBuf::from(std::env::var("PENWISE_DATA").unwrap_or_else(|_| "penwise-data".to_owned()));
     if !web.join("index.html").is_file() {

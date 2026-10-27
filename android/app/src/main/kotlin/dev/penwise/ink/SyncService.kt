@@ -17,7 +17,7 @@ import dev.penwise.R
 /**
  * Keeps the app's sync socket alive while the screen is off or the app is in the background.
  *
- * The service owns no connection: [SyncClient] stays with the page it mirrors. What this does is give the
+ * The service owns no connection: the sync engine lives with the view model. What this does is give the
  * process foreground priority and hold a Wi-Fi lock, which is what Android otherwise revokes after the screen
  * sleeps — the socket then dies with "software caused connection abort" and every reconnect re-announces the page.
  *

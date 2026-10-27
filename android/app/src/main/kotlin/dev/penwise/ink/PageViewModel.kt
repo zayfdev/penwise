@@ -6,9 +6,15 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import dev.penwise.BuildConfig
 import dev.penwise.R
+import dev.penwise.sync.Ids
+import dev.penwise.sync.Kind
+import dev.penwise.sync.Outcome
+import dev.penwise.sync.SyncEngine
+import dev.penwise.sync.SyncListener
+import dev.penwise.sync.SyncStatus
 import dev.penwise.tools.ToolState
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -17,69 +23,75 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import org.json.JSONObject
+import kotlinx.coroutines.withTimeoutOrNull
+import java.security.SecureRandom
 
-private const val HISTORY_SAVE_DELAY_MS = 400L
+private const val TAG = "PenwiseSync"
+private const val FIRST_SYNC_TIMEOUT_MS = 4_000L
+private const val RETIRE_DELAY_MS = 1_000L
 
 /**
- * Page and tool state that survives configuration changes; owns loading, saving and the link to the PC server.
+ * Page and tool state that survives configuration changes; the thin shell around [SyncEngine].
  *
- * The tablet is offline-first: pages and strokes always persist locally, and the server hears about them when it
- * is reachable. Every change goes to disk and to the sync client fire-and-forget, so drawing never waits.
+ * The tablet is offline-first: the page model, undo, erase and every storage rule live in Rust, and the replica
+ * persists itself, so drawing never waits on the server. This class opens a [PageScene] for the page on screen,
+ * routes server frames to it, and exposes the notebook/page catalog the UI lists.
  */
 class PageViewModel(
     application: Application,
 ) : AndroidViewModel(application) {
-    val store = StrokeStore()
     val tools = ToolState()
 
-    /** Pictures placed on the open page (screenshots, component cut-outs); drawn under the ink. */
+    private val settings = SyncSettings(application)
+    private val random = SecureRandom()
+
+    /** Pictures placed on pages, fetched by asset hash and cached. */
     val images =
         PageImages { asset ->
             LibraryClient(settings.endpoints().firstOrNull().orEmpty(), settings.token).asset(asset)
         }
-    private val settings = SyncSettings(application)
-    private val library = PageLibrary(application.filesDir, settings)
 
-    /** The library index; Compose observes it for the page strip. */
-    private val _pages = MutableStateFlow(PageList.firstRun())
+    private val _pages = MutableStateFlow(PageList.EMPTY)
 
-    /** Every page in the library, in reading order. */
+    /** Every live page in reading order, grouped by notebook; empty until [loadPage] finishes. */
     val pages: StateFlow<PageList> = _pages.asStateFlow()
 
-    private val notebooks = NotebookActions(library, _pages, viewModelScope)
-    private val session = PageSession(application.filesDir, _pages.value.active)
+    private val _scene = MutableStateFlow<PageScene?>(null)
 
-    /** Held while a page is being opened, so two switches never interleave their loads and swaps. */
+    /** The scene of the page on screen; `null` until the library has loaded. */
+    val scene: StateFlow<PageScene?> = _scene.asStateFlow()
+
+    private val _status = MutableStateFlow(SyncStatus.STOPPED)
+
+    /** State of the link to the PC server. */
+    val status: StateFlow<SyncStatus> = _status.asStateFlow()
+
+    private val firstSync = CompletableDeferred<Unit>()
     private val pageLock = Mutex()
-    private var historySave: Job? = null
-    private var sync = newClient()
-    private var loading = false
-    private var loaded = false
+    private val retiring = ArrayList<PageScene>()
+    private var started = false
 
-    /** Pages already offered to the server this session; one create per page, whatever `meta` frames follow. */
-    private val offeredPages = HashSet<String>()
+    @Volatile
+    private var ready = false
 
-    /** The page currently on screen. */
-    val activePageId: String get() = _pages.value.active
+    @Volatile
+    private var shown = ""
 
-    init {
-        // The file is read here, on the UI thread where the store changes, so it is always the store's own page.
-        store.onAppend = { stroke ->
-            val target = session.file
-            viewModelScope.launch { target.append(stroke) }
-            sync.sendStroke(stroke)
-        }
-        store.onRewrite = { strokes ->
-            val target = session.file
-            viewModelScope.launch { target.rewrite(strokes) }
-        }
-        store.onOp = { op -> sync.sendOp(op) }
-        store.onHistoryChanged = ::scheduleHistorySave
-    }
+    /** The page the server said was current at the last `Welcome`; only used when nothing was open before. */
+    @Volatile
+    private var serverPage: String? = null
+    private var pendingFixture: String? = null
+
+    private val engine =
+        SyncEngine(
+            filesDir = application.filesDir,
+            endpoints = settings::endpoints,
+            token = { settings.token },
+            listener = Listener(),
+        )
 
     /** Streams the in-progress stroke to the PC mirror. */
-    val liveOut: LiveOut = SyncLiveOut { sync }
+    val liveOut: LiveOut = SyncLiveOut(engine.core, engine::send)
 
     /** URL shown in the settings dialog. */
     val syncUrl: String get() = settings.displayedUrl()
@@ -87,167 +99,185 @@ class PageViewModel(
     /** Token shown in the settings dialog (empty when the server has none). */
     val syncToken: String get() = settings.token
 
-    private fun newClient(): SyncClient =
-        SyncClient(settings.endpoints()).also { client ->
-            client.onFrame = ::onRemoteFrame
-            client.onConnect = {
-                // Ask for the server's page and diff against it; sending our whole page here would wipe
-                // whatever the server gained while we were away (agent marks, other devices).
-                sync.sendSelect(session.id)
-                SyncService.start(
-                    getApplication(),
-                    getApplication<Application>().getString(R.string.sync_connected, settings.displayedUrl()),
-                )
+    /** Ops waiting for the server's acknowledgement. */
+    fun pendingOps(): Int = engine.core.outbox().pending
+
+    private inner class Listener : SyncListener {
+        override fun onOutcome(outcome: Outcome) {
+            if (outcome.kind == Kind.WELCOME) serverPage = outcome.page?.let(Ids::hex)
+            if (!ready) return
+            if (outcome.catalogChanged) publishCatalog()
+            if (outcome.hasChanges) {
+                try {
+                    _scene.value?.refresh(outcome.raw)
+                } catch (_: IllegalStateException) {
+                    Log.i(TAG, "scene closed while a frame arrived") // the page was just left.
+                }
             }
         }
 
-    /** Applies index and page frames pushed by the server. */
-    private fun onRemoteFrame(text: String) {
-        val frame = runCatching { JSONObject(text) }.getOrNull() ?: return
-        when (frame.optString("t")) {
-            "meta" -> {
-                adoptMeta(frame.optJSONObject("meta"))
+        override fun onStatus(status: SyncStatus) {
+            _status.value = status
+            if (status == SyncStatus.ONLINE) {
+                val app = getApplication<Application>()
+                SyncService.start(app, app.getString(R.string.sync_connected, settings.displayedUrl()))
             }
+        }
 
-            "page" -> {
-                if (frame.optString("page") == session.id) applyRemotePage(frame)
-            }
+        override fun onCaughtUp() {
+            firstSync.complete(Unit)
+        }
 
-            "image" -> {
-                if (frame.optString("page") == session.id) {
-                    frame.optJSONObject("image")?.let(PageImage::read)?.let(images::add)
-                }
-            }
-
-            "stroke" -> {
-                if (frame.optString("page") == session.id) {
-                    RemoteEdits.applyStroke(store, viewModelScope, frame) { session.id == frame.optString("page") }
-                }
-            }
-
-            "op" -> {
-                if (frame.optString("page") == session.id) {
-                    RemoteEdits.applyOp(store, viewModelScope, frame.optJSONObject("op")) {
-                        session.id == frame.optString("page")
-                    }
-                }
-            }
+        override fun onUnreachable() {
+            firstSync.complete(Unit)
         }
     }
 
     /**
-     * Adopts the server's index, keeping the page on screen.
-     *
-     * A page this tablet has that the server does not is pushed up instead of being dropped: the page is
-     * created server-side with the same id and its strokes are sent, so nothing drawn offline is lost.
+     * Opens the library and the active page, then connects. First launch after the upgrade imports the old page
+     * files once, after the first catch-up with the server (their strokes carry deterministic ids, so strokes the
+     * server already migrated are skipped).
      */
-    private fun adoptMeta(meta: JSONObject?) {
-        val list = meta?.let { runCatching { PageListCodec.read(it) }.getOrNull() } ?: return
-        val open = activePageId
-        when {
-            list.page(open) == null -> pushLocalPage(open)
-            else -> adoptIndex(list, open)
-        }
-    }
-
-    /**
-     * Sends a page the server has never seen, so adopting its index cannot drop local strokes.
-     *
-     * Once per page: a server that answers with a different id (it refuses `pg_local`) would otherwise announce
-     * a new index, which still lacks our page, which pushes again. The id it chose is adopted instead.
-     */
-    private fun pushLocalPage(open: String) {
-        val local = _pages.value.page(open) ?: return
-        if (!offeredPages.add(open)) return
-        val snapshot = store.snapshot()
+    fun loadPage() {
+        if (started) return
+        started = true
         viewModelScope.launch {
-            val response = withContext(Dispatchers.IO) { library.createRemote(local) }
-            if (response == null) {
-                offeredPages.remove(open)
-                return@launch
-            }
-            val assigned = PageIdAdoption.idOf(response)
-            if (assigned == null || assigned == open) {
-                sync.sendPage(snapshot)
-            } else {
-                pageLock.withLock { adoptServerId(open, assigned) }
-            }
+            engine.start()
+            withContext(Dispatchers.IO) { prepareLibrary() }
+            ready = true
+            val list = withContext(Dispatchers.IO) { engine.library.list(settings.activePage ?: serverPage) }
+            _pages.value = list
+            showActive()
+            pendingFixture?.let { runReplay(it) }
+            pendingFixture = null
         }
     }
 
-    /** Renames page `from` (files, index, open session) to the id the server minted for it. */
-    private suspend fun adoptServerId(
-        from: String,
-        to: String,
-    ) {
-        val renamed = PageIdAdoption.renamed(_pages.value, from, to)
-        _pages.value = renamed
-        offeredPages.add(to)
-        val wasOpen = session.id == from
-        // Re-point first, then queue the move on the page writer: appends queued for the old name run before the
-        // move, and every later one targets the new name.
-        if (wasOpen) {
-            session.rename(to)
-            sync.pageId = to
-            pushedSeeds.clear()
+    /** Waits for the server when the catalog could still gain content from it, then imports and seeds. */
+    private suspend fun prepareLibrary() {
+        val empty =
+            engine.library
+                .list(null)
+                .all()
+                .isEmpty()
+        if (empty || engine.legacy.pending()) withTimeoutOrNull(FIRST_SYNC_TIMEOUT_MS) { firstSync.await() }
+        if (engine.legacy.pending()) importLegacy()
+        if (engine.library
+                .list(null)
+                .all()
+                .isEmpty()
+        ) {
+            engine.library.createDefault()
         }
-        val dir = getApplication<Application>().filesDir
-        withContext(PageIo) { PageIdAdoption.moveFiles(dir, from, to) }
-        withContext(Dispatchers.IO) { library.save(renamed) }
-        if (wasOpen) sync.sendSelect(to)
     }
 
-    /** Takes the server's index; switches pages when the open one is gone from it. */
-    private fun adoptIndex(
-        list: PageList,
-        open: String,
-    ) {
-        val keep = list.page(open)?.id ?: list.startPage()?.id ?: return
-        val adopted = if (keep == list.active) list else list.copy(active = keep)
-        if (keep == open && adopted.all().map { it.id } == _pages.value.all().map { it.id }) return
-        _pages.value = adopted
-        viewModelScope.launch(Dispatchers.IO) { library.save(adopted) }
-        if (keep != open) viewModelScope.launch { showActivePage() }
+    // Native errors and panics surface as RuntimeException.
+    @Suppress("TooGenericExceptionCaught")
+    private fun importLegacy() {
+        try {
+            val report = engine.legacy.run(engine.core)
+            engine.flush()
+            engine.legacy.done()
+            Log.i(TAG, "legacy import: $report")
+        } catch (error: RuntimeException) {
+            // Not marked done: the next launch retries (everything dedupes by deterministic id).
+            Log.e(TAG, "legacy import failed: ${error.message}")
+        }
     }
 
-    /**
-     * Applies a server page snapshot: merge what we lack, then offer the server whatever it lacks.
-     *
-     * The second half is what makes offline drawing work without ever replacing the server's page — a stroke
-     * the tablet has and the server does not is sent once, by seed.
-     */
-    private fun applyRemotePage(frame: JSONObject) {
-        val incoming = Wire.parsePage(frame.toString()) ?: return
-        frame.optJSONArray("images")?.let { array ->
-            images.replace(
-                (0 until array.length()).mapNotNull { index ->
-                    array.optJSONObject(index)?.let(PageImage::read)
-                },
-            )
+    /** Re-reads the catalog; moves to another page when the open one is gone. */
+    private fun publishCatalog(active: String? = null) {
+        val list = engine.library.list(active ?: _pages.value.active.ifEmpty { null })
+        _pages.value = list
+        if (list.active != shown) viewModelScope.launch { showActive() }
+    }
+
+    /** Opens the page the catalog marks active, if it is not open already. Serialized: only the last switch loads. */
+    private suspend fun showActive() {
+        pageLock.withLock {
+            val id = _pages.value.active
+            val bytes = Ids.bytes(id)
+            if (bytes == null || id == shown) return
+            val core = engine.core
+            val next =
+                withContext(Dispatchers.Default) {
+                    PageScene(core.handle, core.lock, bytes, random.nextLong(), core)
+                }
+            val old = _scene.value
+            _scene.value = next
+            shown = id
+            settings.activePage = id
+            engine.showing(id)
+            old?.let { retire(it) }
         }
-        val pageId = session.id
+    }
+
+    /** Closes a left page's scene a moment later: the renderer may still be drawing its last frame. */
+    private fun retire(scene: PageScene) {
+        retiring.add(scene)
         viewModelScope.launch {
-            val ready = withContext(Dispatchers.Default) { StrokeRebuild.usable(incoming) }
-            // The user may have moved to another page while the geometry was built; its strokes are not ours.
-            if (session.id != pageId) return@launch
-            if (store.merge(ready)) {
-                Log.i("PenwiseSync", "merged ${ready.size} remote strokes")
-                store.persist()
-            }
-            val serverSeeds = ready.mapTo(HashSet()) { it.seed }
-            val missing =
-                store
-                    .snapshot()
-                    .filter { it.seed !in serverSeeds && pushedSeeds.add(it.seed) }
-            if (missing.isNotEmpty()) {
-                Log.i("PenwiseSync", "pushing ${missing.size} local strokes the server lacks")
-                missing.forEach(sync::sendStroke)
-            }
+            delay(RETIRE_DELAY_MS)
+            if (retiring.remove(scene)) scene.close()
         }
     }
 
+    /** Shows `id`. */
+    fun selectPage(id: String) {
+        val list = _pages.value
+        if (id == list.active || list.page(id) == null) return
+        _pages.value = list.copy(active = id)
+        viewModelScope.launch { showActive() }
+    }
+
     /**
-     * Saves a new address/token and reconnects, resending the page so the mirror is immediately correct.
+     * Creates a page and switches to it; returns its id so the caller can navigate at once. `notebook` defaults to
+     * the first one.
+     */
+    fun newPage(
+        title: String,
+        template: PageTemplate,
+        notebook: String? = null,
+    ): String? {
+        val list = _pages.value
+        val target = notebook ?: list.books.firstOrNull { book -> book.pages.any { it.id == list.active } }?.id
+        val id = engine.library.newPage(title, template, target) ?: return null
+        publishCatalog(active = id)
+        return id
+    }
+
+    fun renamePage(
+        id: String,
+        title: String,
+    ) {
+        engine.library.renamePage(id, title)
+        publishCatalog()
+    }
+
+    /** Deletes a page (never the last one). */
+    fun deletePage(id: String) {
+        if (engine.library.deletePage(id)) publishCatalog()
+    }
+
+    fun createNotebook(title: String) {
+        engine.library.newNotebook(title)
+        publishCatalog()
+    }
+
+    fun renameNotebook(
+        id: String,
+        title: String,
+    ) {
+        engine.library.renameNotebook(id, title)
+        publishCatalog()
+    }
+
+    /** Deletes an empty notebook (the last one and non-empty ones are refused). */
+    fun deleteNotebook(id: String) {
+        if (engine.library.deleteNotebook(id)) publishCatalog()
+    }
+
+    /**
+     * Saves a new address/token and reconnects.
      *
      * A six-character code in the token field is a pairing code: it is exchanged for the real token (and the
      * server's URL) first, so nobody has to copy 43 characters by hand.
@@ -267,205 +297,49 @@ class PageViewModel(
                 } else {
                     null
                 }
-            applySync(resolved?.second?.ifBlank { url } ?: url, resolved?.first ?: token)
-        }
-    }
-
-    private fun applySync(
-        url: String,
-        token: String,
-    ) {
-        settings.overrideUrl = url
-        settings.token = token
-        pushedSeeds.clear()
-        sync.stop()
-        sync = newClient().also { it.pageId = session.id }
-        sync.start()
-    }
-
-    /** Loads the library and the active page, rebuilds its geometry off the main thread, then starts syncing. */
-    fun loadPage() {
-        if (loading || loaded) return
-        loading = true
-        viewModelScope.launch {
-            try {
-                val list = withContext(Dispatchers.IO) { library.load() }
-                val start = list.startPage() ?: PageList.firstRun().startPage() ?: return@launch
-                _pages.value = list.copy(active = start.id)
-                pageLock.withLock { openPage(start.id) }
-                loaded = true
-                sync.start()
-                if (pendingFixture != null) startPendingReplay()
-            } finally {
-                loading = false
-            }
-        }
-    }
-
-    /** Saves the visible page, then shows `id` with an empty undo history. */
-    fun selectPage(id: String) {
-        if (id == activePageId || _pages.value.page(id) == null) return
-        _pages.value = _pages.value.copy(active = id)
-        viewModelScope.launch { showActivePage() }
-    }
-
-    /**
-     * Opens the page the index marks active, if it is not open already.
-     *
-     * Every switch goes through here under [pageLock], and the target is read once the lock is held: of several
-     * quick taps only the last one loads anything, and a load never overlaps another load or its swap.
-     */
-    private suspend fun showActivePage() {
-        pageLock.withLock {
-            withContext(Dispatchers.IO) { library.save(_pages.value) }
-            val id = activePageId
-            if (session.id != id) {
-                openPage(id)
-                sync.sendSelect(id)
-            }
+            settings.overrideUrl = resolved?.second?.ifBlank { url } ?: url
+            settings.token = resolved?.first ?: token
+            engine.start()
         }
     }
 
     /**
-     * Creates a page locally, switches to it, and tells the server; returns the new page's id so the caller can
-     * navigate immediately. `notebook` defaults to the active page's.
-     */
-    fun newPage(
-        title: String,
-        template: PageTemplate,
-        notebook: String? = null,
-    ): String {
-        val list = _pages.value
-        val page =
-            PageMeta(
-                id = library.newPageId(),
-                title = title.ifBlank { list.nextTitle() },
-                infinite = template.infinite,
-                background = template.background,
-            )
-        // The switch is local and immediate: the server is told afterwards, so a slow or absent server cannot
-        // leave the strip showing one page while ink still lands in another.
-        _pages.value = list.withPage(page, notebook).copy(active = page.id)
-        viewModelScope.launch {
-            showActivePage()
-            withContext(Dispatchers.IO) { library.createRemote(page) }
-            if (session.id == page.id) sync.sendSelect(page.id)
-        }
-        return page.id
-    }
-
-    /** Seeds already offered to the server for the open page, so a reconnect does not resend them. */
-    private val pushedSeeds = HashSet<Long>()
-
-    /** Pending debug replay, run once the page has finished loading. */
-    private var pendingFixture: String? = null
-
-    /**
-     * Debug builds only: replays a recorded page onto the visible one. Deferred until [loadPage] finishes, because
-     * restoring the page file would otherwise replace the replayed strokes.
+     * Debug builds only: replays a recorded page onto the visible one, through the same scene → sync path a pen
+     * stroke takes. Deferred until [loadPage] has opened a page.
      */
     fun requestReplay(path: String) {
         if (!BuildConfig.DEBUG) return
-        pendingFixture = path
-        if (!loading) startPendingReplay()
+        if (ready) viewModelScope.launch { runReplay(path) } else pendingFixture = path
     }
 
-    /** Appends a recorded page's strokes through the normal path — store, file, sync — so it is a real test. */
-    private fun startPendingReplay(): Int {
-        val path = pendingFixture ?: return 0
-        pendingFixture = null
-        if (!BuildConfig.DEBUG) return 0
-        // `add` already persists and syncs; invoking the hook here too sent every stroke twice.
-        val added = FixtureReplay.replay(getApplication(), path) { stroke -> store.add(stroke) }
-        store.onPageChanged?.invoke()
-        return added
-    }
-
-    /** Renames a page locally and on the server. */
-    fun renamePage(
-        id: String,
-        title: String,
-    ) {
-        val page = _pages.value.page(id) ?: return
-        val renamed = page.copy(title = title.ifBlank { page.title })
-        val list = _pages.value.withUpdated(renamed)
-        _pages.value = list
-        viewModelScope.launch {
-            withContext(Dispatchers.IO) {
-                library.save(list)
-                library.renameRemote(id, renamed.title)
+    private suspend fun runReplay(path: String) {
+        val open = _scene.value ?: return
+        withContext(Dispatchers.Default) {
+            FixtureReplay.replay(getApplication(), path) { stroke ->
+                val edits =
+                    open.addStroke(
+                        open.newItemId(),
+                        stroke.preset,
+                        stroke.argb,
+                        stroke.scale,
+                        stroke.seed,
+                        stroke.samples,
+                        stroke.times,
+                    )
+                open.commit(edits)
             }
         }
     }
 
-    /** Creates a notebook locally and on the server. */
-    fun createNotebook(title: String) = notebooks.create(title)
-
-    /** Renames a notebook. */
-    fun renameNotebook(
-        id: String,
-        title: String,
-    ) = notebooks.rename(id, title)
-
-    /** Deletes an empty notebook (the last one and non-empty ones are refused). */
-    fun deleteNotebook(id: String) = notebooks.delete(id)
-
-    /** Deletes a page (never the last one) locally and on the server. */
-    fun deletePage(id: String) {
-        val before = _pages.value
-        val after = before.withoutPage(id)
-        if (after.all().size == before.all().size) return
-        _pages.value = after
-        viewModelScope.launch {
-            // Open the survivor first: only then does the screen, the store and the file agree again.
-            showActivePage()
-            withContext(Dispatchers.IO) { library.deleteRemote(id) }
-        }
+    /** Writes the sync state file now (the app is going to the background and may be killed). */
+    fun flushState() {
+        viewModelScope.launch(Dispatchers.IO) { engine.flush() }
     }
 
-    /**
-     * Loads `id`'s strokes and saved undo history, then swaps them in. Callers hold [pageLock].
-     *
-     * Everything slow happens before the swap and touches no shared state; the swap itself never suspends, so the
-     * store, the page file, the undo file and the sync scope change together.
-     */
-    private suspend fun openPage(id: String) {
-        val page = session.load(id)
-        if (session.id != id) saveLeavingHistory()
-        images.clear()
-        session.adopt(page)
-        pushedSeeds.clear()
-        sync.pageId = id
-        store.restore(page.strokes)
-        store.restoreHistory(page.undo, page.redo)
-        // Strokes from the oldest files have no seed; give them one so each can be addressed and removed.
-        val reseeded = store.assignMissingSeeds()
-        if (reseeded.isNotEmpty()) {
-            Log.i("PenwiseSync", "gave ${reseeded.size} legacy strokes a seed")
-            reseeded.forEach(sync::sendStroke)
-        }
-        store.onPageChanged?.invoke()
-        Log.i("PenwiseSync", "page $id loaded: ${page.strokes.size} strokes, ${page.undo.size} undo steps")
-    }
-
-    /** Writes the page being left its pending undo history now; the debounce would otherwise be cancelled. */
-    private fun saveLeavingHistory() {
-        historySave?.cancel()
-        val target = session.undoFile
-        val (undo, redo) = store.historySnapshot()
-        viewModelScope.launch { target.save(undo, redo) }
-    }
-
-    /** Writes the undo history after a short quiet period: drawing must never wait on a file. */
-    private fun scheduleHistorySave() {
-        historySave?.cancel()
-        historySave =
-            viewModelScope.launch {
-                delay(HISTORY_SAVE_DELAY_MS)
-                // Snapshot and file are read together on the UI thread, so they always belong to one page.
-                val target = session.undoFile
-                val (undo, redo) = store.historySnapshot()
-                target.save(undo, redo)
-            }
+    override fun onCleared() {
+        _scene.value?.close()
+        retiring.forEach(PageScene::close)
+        engine.close()
+        super.onCleared()
     }
 }

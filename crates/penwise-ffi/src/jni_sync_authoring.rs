@@ -262,3 +262,23 @@ pub extern "system" fn Java_dev_penwise_core_Native_syncLiveCancel<'local>(
         bytes_out(env, &frame)
     })
 }
+
+/// The deterministic id of a legacy `nb_…` notebook (`kind` 0) or `pg_…` page (`kind` 1), so the one-time
+/// import can create the ones the server's migration never saw under the id every device derives.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_penwise_core_Native_syncLegacyId<'local>(
+    mut env: EnvUnowned<'local>,
+    _this: JObject<'local>,
+    kind: jint,
+    text: JString<'local>,
+) -> JByteArray<'local> {
+    guarded(&mut env, |env| {
+        let text = string_in(env, &text)?;
+        let id = match kind {
+            0 => penwise_proto::legacy::legacy_notebook_id(&text).to_bytes(),
+            1 => penwise_proto::legacy::legacy_page_id(&text).to_bytes(),
+            _ => return Err(SyncError::BadArgument("legacy id kind").into()),
+        };
+        bytes_out(env, &id)
+    })
+}

@@ -15,14 +15,21 @@
     <string name="shape_rect">Rect</string>
     <string name="shape_ellipse">Ellipse</string>
     <string name="shape_arrow">Arrow</string>
+    <string name="tool_lasso">Select</string>
+    <string name="tool_delete_selection">Delete selection</string>
     <string name="tool_clear_page">Clear</string>
     <string name="tool_preset_color">Auto</string>
     <string name="tool_size_value">%1$.1f×</string>
     <!-- Penwise PC server, tried in order: home Wi-Fi, then Tailscale from anywhere (port 7420). -->
     <string-array name="sync_urls" translatable="false">
-        <item>ws://192.168.1.19:7420/ws</item>
-        <item>ws://100.64.10.100:7420/ws</item>
+        <item>ws://192.168.1.19:7420/sync</item>
+        <item>ws://100.64.10.100:7420/sync</item>
     </string-array>
+    <string name="sync_status_online">Connected</string>
+    <string name="sync_status_connecting">Connecting…</string>
+    <string name="sync_status_bad_token">The server refused the token</string>
+    <string name="sync_status_stopped">Not connected</string>
+    <string name="sync_status_pending">%1$s · changes waiting to send: %2$d</string>
     <string name="sync_title">Penwise sync</string>
     <string name="sync_running">Keeping the link to your PC alive</string>
     <string name="sync_connected">Connected to %1$s</string>

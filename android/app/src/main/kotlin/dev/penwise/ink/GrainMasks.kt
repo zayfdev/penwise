@@ -3,6 +3,7 @@ package dev.penwise.ink
 import android.graphics.Bitmap
 import android.graphics.BitmapShader
 import android.graphics.BlendMode
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Shader
 import androidx.core.graphics.createBitmap
@@ -13,27 +14,36 @@ import kotlin.math.roundToInt
 /**
  * Paper grain as `DST_IN` paints over a stroke layer. Mirrors core `grain_coverage`:
  * `lerp(1, smoothstep(1 − level − w, 1 − level + w, h), strength)` per page pixel, with `h` from `PaperGrain.bakeTile`.
- * Masks are cached per quantized (strength, level); shared by both render layers, hence synchronized.
+ * Masks are cached per quantized (strength, level, softness, scale); shared by both render layers, hence
+ * synchronized. The paper period scales with the brush's grain scale, applied as a shader matrix on the scale-1 tile.
  */
 internal class GrainMasks {
     private var heights: ByteArray? = null
-    private val cache = HashMap<Int, Paint?>()
+    private val cache = HashMap<Long, Paint?>()
 
     @Synchronized
     fun paint(
         strength: Float,
         level: Float,
+        softness: Float,
+        scale: Float,
     ): Paint? {
         val s = quantize(strength)
         val l = quantize(level)
-        val key = s * (STEPS + 1) + l
-        if (!cache.containsKey(key)) cache[key] = build(s.toFloat() / STEPS, l.toFloat() / STEPS)
+        val w = quantize(softness)
+        val z = (scale.coerceIn(MIN_SCALE, MAX_SCALE) * SCALE_STEPS).roundToInt()
+        val key = ((s.toLong() * (STEPS + 1) + l) * (STEPS + 1) + w) * (MAX_Z + 1) + z
+        if (!cache.containsKey(key)) {
+            cache[key] = build(s.toFloat() / STEPS, l.toFloat() / STEPS, w.toFloat() / STEPS, z.toFloat() / SCALE_STEPS)
+        }
         return cache[key]
     }
 
     private fun build(
         strength: Float,
         level: Float,
+        softness: Float,
+        scale: Float,
     ): Paint? {
         val tile = heights ?: PaperGrain.bakeTile(1f, TILE).also { heights = it }
         if (tile.size != TILE * TILE || strength <= 0f) return null
@@ -41,13 +51,16 @@ internal class GrainMasks {
         val mask = ByteArray(tile.size)
         for (i in tile.indices) {
             val h = (tile[i].toInt() and BYTE_MASK) / BYTE_MAX
-            val coverage = 1f + (smoothstep(edge - SOFTNESS, edge + SOFTNESS, h) - 1f) * strength
+            val coverage = 1f + (smoothstep(edge - softness, edge + softness, h) - 1f) * strength
             mask[i] = (coverage * BYTE_MAX).roundToInt().toByte()
         }
         val bitmap = createBitmap(TILE, TILE, Bitmap.Config.ALPHA_8)
         bitmap.copyPixelsFromBuffer(ByteBuffer.wrap(mask))
         return Paint().apply {
-            shader = BitmapShader(bitmap, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
+            shader =
+                BitmapShader(bitmap, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT).also {
+                    it.setLocalMatrix(Matrix().apply { setScale(scale, scale) })
+                }
             blendMode = BlendMode.DST_IN
         }
     }
@@ -68,8 +81,10 @@ internal class GrainMasks {
         const val TILE = 512
         const val STEPS = 32
 
-        /** Core keeps softness in BrushParams, which InkGeometry does not carry; a mid value of the presets. */
-        const val SOFTNESS = 0.2f
+        const val MIN_SCALE = 0.25f
+        const val MAX_SCALE = 4f
+        const val SCALE_STEPS = 8
+        const val MAX_Z = (MAX_SCALE * SCALE_STEPS).toInt()
         const val BYTE_MASK = 0xFF
         const val BYTE_MAX = 255f
         const val THREE = 3f

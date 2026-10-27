@@ -22,6 +22,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import dev.penwise.home.HomeActions
 import dev.penwise.home.HomeScreen
@@ -31,6 +32,7 @@ import dev.penwise.ink.PageStrip
 import dev.penwise.ink.PageStyle
 import dev.penwise.ink.PageViewModel
 import dev.penwise.ink.SyncService
+import dev.penwise.sync.SyncStatus
 import dev.penwise.tools.SyncDialog
 import dev.penwise.tools.Toolbar
 
@@ -52,6 +54,7 @@ class MainActivity : ComponentActivity() {
         handlePairing(intent)
         setContent {
             val pages by page.pages.collectAsState()
+            val status by page.status.collectAsState()
             var showSync by remember { mutableStateOf(false) }
             var openPage by remember { mutableStateOf<String?>(null) }
 
@@ -59,6 +62,7 @@ class MainActivity : ComponentActivity() {
                 SyncDialog(
                     initialUrl = page.syncUrl,
                     initialToken = page.syncToken,
+                    status = syncStatusText(status, page.pendingOps()),
                     onDismiss = { showSync = false },
                     onSave = { url, token ->
                         page.updateSync(url, token)
@@ -75,7 +79,7 @@ class MainActivity : ComponentActivity() {
                             openPage = id
                         },
                         newPage = { title, template, notebook ->
-                            openPage = page.newPage(title, template, notebook)
+                            page.newPage(title, template, notebook)?.let { openPage = it }
                         },
                         newNotebook = page::createNotebook,
                         renameNotebook = page::renameNotebook,
@@ -111,6 +115,11 @@ class MainActivity : ComponentActivity() {
         page.updateSync(url, code)
     }
 
+    override fun onStop() {
+        page.flushState()
+        super.onStop()
+    }
+
     override fun onDestroy() {
         SyncService.stop(this)
         super.onDestroy()
@@ -124,17 +133,35 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
+private fun syncStatusText(
+    status: SyncStatus,
+    pending: Int,
+): String {
+    val label =
+        stringResource(
+            when (status) {
+                SyncStatus.ONLINE -> R.string.sync_status_online
+                SyncStatus.CONNECTING -> R.string.sync_status_connecting
+                SyncStatus.BAD_TOKEN -> R.string.sync_status_bad_token
+                SyncStatus.STOPPED -> R.string.sync_status_stopped
+            },
+        )
+    return if (pending > 0) stringResource(R.string.sync_status_pending, label, pending) else label
+}
+
+@Composable
 private fun CanvasScreen(
     pages: PageList,
     page: PageViewModel,
     onHome: () -> Unit,
     onSync: () -> Unit,
 ) {
-    val store = page.store
     val tools = page.tools
+    val scene by page.scene.collectAsState()
+    val open = scene ?: return
     Box(modifier = Modifier.fillMaxSize()) {
         InkCanvas(
-            store = store,
+            scene = open,
             brushes = tools,
             style = PageStyle.of(pages.page(pages.active)),
             images = page.images,
@@ -152,9 +179,9 @@ private fun CanvasScreen(
         ) {
             Toolbar(
                 state = tools,
-                onUndo = store::undo,
-                onRedo = store::redo,
-                onClear = store::clear,
+                onUndo = { open.undo() },
+                onRedo = { open.redo() },
+                onClear = { open.clearPage() },
                 onSync = onSync,
                 onHome = onHome,
             )

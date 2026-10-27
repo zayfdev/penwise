@@ -6,7 +6,7 @@ use jni::EnvUnowned;
 use jni::objects::{JByteArray, JFloatArray, JIntArray, JObject};
 use jni::sys::{jboolean, jfloat, jint, jlong};
 use penwise_core::Seed;
-use penwise_core::brush::{BrushParams, Color};
+use penwise_core::brush::Color;
 use penwise_core::item::{ItemId, Layer};
 
 use crate::error::SyncError;
@@ -15,7 +15,8 @@ use crate::jni_util::{
     bytes_in, bytes_out, floats_in, guarded, handle_mut, handle_ref, ids_in, ints_in, item_in,
 };
 use crate::scene_handle::{
-    SceneHandle, ShapeSpec, StrokeSpec, encode_edits, handle_from_code, pairs, shape_kind,
+    SceneHandle, ShapeSpec, StrokeSpec, encode_edits, handle_from_code, pairs, shape_brush,
+    shape_kind,
 };
 use crate::stroke::FfiError;
 
@@ -89,7 +90,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneAddShape<'local>(
             start: [*x0, *y0],
             end: [*x1, *y1],
             constrain: *constrain != 0,
-            brush: BrushParams::for_preset(
+            brush: shape_brush(
                 usize::try_from(*preset).map_err(|_| SyncError::BadArgument("preset"))?,
                 argb.cast_unsigned(),
                 scale,

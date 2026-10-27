@@ -8,6 +8,7 @@ import androidx.compose.runtime.setValue
 import dev.penwise.core.InkPresets
 import dev.penwise.ink.BrushSource
 import dev.penwise.ink.BrushSpec
+import dev.penwise.ink.Selection
 import dev.penwise.ink.ShapeMode
 
 /** Selected brush, color and size; observed by the toolbar, read by the canvas at pen-down. */
@@ -65,7 +66,27 @@ class ToolState : BrushSource {
 
     fun toggleEraser() {
         eraserMode = !eraserMode
-        if (eraserMode) shapeMode = null
+        if (eraserMode) {
+            shapeMode = null
+            lassoMode = false
+        }
+    }
+
+    /** Lasso tool: the pen selects items and drags the selection instead of drawing. */
+    override var lassoMode by mutableStateOf(false)
+        private set
+
+    /** What the lasso selected; the toolbar offers to delete it. */
+    override val selection = Selection()
+
+    fun toggleLasso() {
+        lassoMode = !lassoMode
+        if (lassoMode) {
+            eraserMode = false
+            shapeMode = null
+        } else {
+            selection.clear()
+        }
     }
 
     /** Selected shape tool, or null for freehand. Turning on a shape leaves the eraser. */
@@ -74,7 +95,10 @@ class ToolState : BrushSource {
 
     fun toggleShape(mode: ShapeMode) {
         shapeMode = if (shapeMode == mode) null else mode
-        if (shapeMode != null) eraserMode = false
+        if (shapeMode != null) {
+            eraserMode = false
+            lassoMode = false
+        }
     }
 
     companion object {

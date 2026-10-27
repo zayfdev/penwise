@@ -72,6 +72,8 @@ pub struct Received {
     pub changed_pages: Vec<String>,
     /// Pages whose live preview changed (re-render the live layer only).
     pub live_pages: Vec<String>,
+    /// `SnapshotBegin`: `"all"`, `"catalog"` or the page id the snapshot replaces.
+    pub scope: Option<String>,
     /// Notebook/page lists changed (refresh the page list).
     pub catalog_changed: bool,
     /// `Welcome.server`.
@@ -84,6 +86,9 @@ pub struct Received {
     pub detail: Option<String>,
     /// `Ping`/`Pong` nonce (answer a `Ping` with `encode_pong(nonce)`).
     pub nonce: u64,
+    /// `Ack`: this client's ops the server logged / refused (`PushOps` gate re-opened).
+    pub acked: u32,
+    pub rejected: u32,
     /// Ops/snapshot rows in this frame the replica refused (logged to the console by the caller; never fatal).
     pub apply_errors: u32,
 }
@@ -158,11 +163,14 @@ impl Received {
             changed_pages: Vec::new(),
             live_pages: Vec::new(),
             catalog_changed: false,
+            scope: None,
             server: None,
             reject: None,
             error: None,
             detail: None,
             nonce: 0,
+            acked: 0,
+            rejected: 0,
             apply_errors: 0,
         }
     }

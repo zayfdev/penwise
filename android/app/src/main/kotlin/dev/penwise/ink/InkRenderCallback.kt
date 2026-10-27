@@ -8,22 +8,33 @@ import androidx.core.graphics.withClip
 import androidx.graphics.lowlatency.CanvasFrontBufferedRenderer
 
 /**
- * Front layer: the newest snapshot of the in-progress stroke (clearing only the area the previous snapshot covered).
- * Multi-buffered layer: white page, multiply strokes first (under-ink band), then normal strokes. Runs on the
- * renderer thread; the param is only a wake-up token, data comes from [LiveStroke] and [StrokeStore].
+ * Front layer: the newest frame of the gesture in flight (clearing only the area the previous frame covered).
+ * Multi-buffered layer: one `drawBitmap` of the [DryLayer], which holds the paper and the committed items and
+ * repaints only what the scene reported dirty. Runs on the renderer thread; the param is only a wake-up token.
  */
 internal class InkRenderCallback(
-    private val store: StrokeStore,
     private val live: LiveStroke,
     private val style: () -> PageStyle,
-    private val images: () -> PageImages? = { null },
+    images: () -> PageImages? = { null },
 ) : CanvasFrontBufferedRenderer.Callback<Unit> {
     private val grain = GrainMasks()
-    private val frontPainter = GeometryPainter(grain)
-    private val pagePainter = GeometryPainter(grain)
+    private val frontPainter = GeometryPainter(grain, images)
+    private val dry = DryLayer(GeometryPainter(grain, images))
     private val dirty = RectF()
     private val next = RectF()
     private var drawnStrokeId = NO_STROKE
+
+    @Volatile
+    private var cache: SceneRenderCache? = null
+
+    /** Shows [scene] (or nothing); the next multi-buffered draw repaints the page from it. */
+    fun attach(scene: PageScene?) {
+        cache = scene?.let { SceneRenderCache(it) }
+        dry.invalidate()
+    }
+
+    /** Repaints the whole page on the next multi-buffered draw. */
+    fun invalidate() = dry.invalidate()
 
     override fun onDrawFrontBufferedLayer(
         canvas: Canvas,
@@ -37,11 +48,11 @@ internal class InkRenderCallback(
             drawnStrokeId = frame.strokeId
             dirty.setEmpty()
         }
-        frame.geometry.boundsInto(next)
+        frame.paint.boundsInto(next)
         dirty.union(next)
         canvas.withClip(dirty) {
             drawColor(Color.TRANSPARENT, BlendMode.CLEAR)
-            frontPainter.draw(this, frame.geometry)
+            frame.paint.draw(this, frontPainter)
         }
         dirty.set(next)
     }
@@ -52,25 +63,8 @@ internal class InkRenderCallback(
         bufferHeight: Int,
         params: Collection<Unit>,
     ) {
-        PaperPainter.draw(canvas, style(), bufferWidth, bufferHeight)
-        drawPictures(canvas)
-        val strokes = store.strokes
-        for (g in strokes) if (g.multiply) pagePainter.draw(canvas, g)
-        for (g in strokes) if (!g.multiply) pagePainter.draw(canvas, g)
+        dry.drawInto(canvas, cache, style())
     }
-
-    /** Pictures sit on the paper, under every stroke: a screenshot is the page you are marking up. */
-    private fun drawPictures(canvas: Canvas) {
-        val page = images() ?: return
-        for (image in page.all()) {
-            val bitmap = page.bitmap(image.asset) ?: continue
-            rect.set(image.x, image.y, image.x + image.w, image.y + image.h)
-            canvas.drawBitmap(bitmap, null, rect, picturePaint)
-        }
-    }
-
-    private val rect = RectF()
-    private val picturePaint = android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG)
 
     private companion object {
         const val NO_STROKE = -1L

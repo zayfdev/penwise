@@ -1,7 +1,7 @@
 # Full gate: a change is done only when this passes.
 default: check
 
-check: fmt-check clippy test wasm-build wasm-test jni-symbols sizes deny
+check: fmt-check clippy test wasm-build wasm-test jni-symbols web-check sizes deny
 
 fmt-check:
     cargo fmt --all --check
@@ -69,17 +69,21 @@ ffi:
 extension-check:
     bun test extension
 
-# Browser drawing client: check the module bundles.
-draw-check:
-    bun build web/draw.js --target browser --outfile /tmp/penwise-draw-check.js
-
 # Components from a running page onto one Penwise page (needs Chrome/Chromium; CHROME= overrides).
 grab *ARGS:
     bun scripts/grab.mjs {{ARGS}}
 
 # Browser viewer bundle (wasm) — rebuild after changing core or penwise-wasm.
 web:
-    wasm-pack build crates/penwise-wasm --target web --out-dir ../../web/pkg --out-name penwise_wasm
+    cd web && npm run wasm && npm run build
+
+# Browser viewer: types, lint, unit tests (vitest against the real wasm).
+web-check:
+    cd web && npm install --package-lock=false --no-audit --no-fund && npm run wasm && npm run typecheck && npm run lint && npm test
+
+# Browser end to end: real server binary + headless Chromium.
+web-e2e:
+    cargo build -p penwise-server && cd web && npm run wasm && npm run e2e
 
 # PC mirror server on :7420 (PENWISE_PORT, PENWISE_WEB, PENWISE_DATA).
 serve: web

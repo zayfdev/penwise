@@ -39,6 +39,11 @@ android {
         buildConfig = true
     }
 
+    testOptions {
+        // Log calls in code under test return defaults instead of throwing "not mocked".
+        unitTests.isReturnDefaultValues = true
+    }
+
     lint {
         warningsAsErrors = true
         abortOnError = true
@@ -95,14 +100,67 @@ abstract class CargoNdkTask : DefaultTask() {
     }
 }
 
+/** Builds the host (JVM) `libpenwise_ffi.so` so unit tests run the real Rust through JNI. */
+abstract class CargoHostTask : DefaultTask() {
+    @get:Inject
+    abstract val execOperations: ExecOperations
+
+    @get:Internal
+    abstract val workspaceDir: DirectoryProperty
+
+    @get:InputFiles
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val rustSources: ConfigurableFileCollection
+
+    @get:Input
+    abstract val cargo: Property<String>
+
+    /** Cargo's host debug directory holding `libpenwise_ffi.so`. */
+    @get:OutputDirectory
+    abstract val libDir: DirectoryProperty
+
+    @TaskAction
+    fun build() {
+        execOperations.exec {
+            workingDir = workspaceDir.get().asFile
+            // The server binary is the real peer of the sync tests.
+            commandLine(cargo.get(), "build", "-p", "penwise-ffi", "-p", "penwise-server")
+        }
+    }
+}
+
+val repoRootDir: File = rootDir.parentFile
+
+// Gradle daemons often miss ~/.cargo/bin on PATH; prefer the rustup-managed cargo when it exists.
+val cargoBinary =
+    providers
+        .environmentVariable("CARGO_HOME")
+        .orElse(providers.systemProperty("user.home").map { "$it/.cargo" })
+        .map { home -> File(home, "bin/cargo").takeIf(File::canExecute)?.path ?: "cargo" }
+
+val cargoHost =
+    tasks.register<CargoHostTask>("cargoHost") {
+        workspaceDir.set(repoRootDir)
+        rustSources.from(
+            fileTree(File(repoRootDir, "crates")) { exclude("**/target/**") },
+            File(repoRootDir, "Cargo.toml"),
+            File(repoRootDir, "Cargo.lock"),
+        )
+        cargo.set(cargoBinary)
+        libDir.set(File(repoRootDir, "target/debug"))
+    }
+
+tasks.withType<Test>().configureEach {
+    dependsOn(cargoHost)
+    systemProperty("java.library.path", File(repoRootDir, "target/debug").absolutePath)
+    systemProperty("penwise.server.bin", File(repoRootDir, "target/debug/penwise-server").absolutePath)
+    // Native.kt's `System.loadLibrary` finds the host cdylib through `java.library.path`.
+    inputs.files(cargoHost.map { it.libDir })
+}
+
 androidComponents {
-    val repoRoot = rootDir.parentFile
-    // Gradle daemons often miss ~/.cargo/bin on PATH; prefer the rustup-managed cargo when it exists.
-    val cargoPath =
-        providers
-            .environmentVariable("CARGO_HOME")
-            .orElse(providers.systemProperty("user.home").map { "$it/.cargo" })
-            .map { home -> File(home, "bin/cargo").takeIf(File::canExecute)?.path ?: "cargo" }
+    val repoRoot = repoRootDir
+    val cargoPath = cargoBinary
     val ndkDirectory = sdkComponents.ndkDirectory
     onVariants { variant ->
         val cargoNdk =
