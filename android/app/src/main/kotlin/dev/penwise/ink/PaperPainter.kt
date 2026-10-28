@@ -43,7 +43,8 @@ internal object PaperPainter {
     /** What shows where the page is not (yet) drawn: the desk around a fixed sheet, paper for an infinite one. */
     fun backdrop(style: PageStyle): Int = if (style.infinite) Color.WHITE else DESK_COLOR
 
-    /** Paints the sheet through [view]; a page without a pattern is simply white. */
+    /** Paints the sheet through [view]; a page without a pattern is simply white. Serialised: the paints are shared. */
+    @Synchronized
     fun draw(
         canvas: Canvas,
         style: PageStyle,

@@ -10,7 +10,8 @@ import androidx.graphics.lowlatency.CanvasFrontBufferedRenderer
 /**
  * Front layer: the newest frame of the gesture in flight, drawn through the [viewport] transform (clearing only the
  * screen area the previous frame covered). Multi-buffered layer: one `drawBitmap` of the [DryLayer], which holds the
- * paper and the committed items and repaints only what the scene reported dirty or the view changed. Runs on the
+ * paper and the committed items, repaints only what the scene reported dirty and re-renders off-thread after the view
+ * changed. Runs on the
  * renderer thread; the param is only a wake-up token.
  */
 internal class InkRenderCallback(
@@ -18,9 +19,10 @@ internal class InkRenderCallback(
     private val viewport: ViewportState,
     private val style: () -> PageStyle,
     images: () -> PageImages? = { null },
+    onSettled: () -> Unit = {},
 ) : CanvasFrontBufferedRenderer.Callback<Unit> {
     private val frontPainter = GeometryPainter(images)
-    private val dry = DryLayer(GeometryPainter(images))
+    private val dry = DryLayer(GeometryPainter(images), images, onSettled)
     private val dirty = RectF()
     private val next = RectF()
     private val nextScreen = RectF()
@@ -33,8 +35,11 @@ internal class InkRenderCallback(
     /** Shows [scene] (or nothing); the next multi-buffered draw repaints the page from it. */
     fun attach(scene: PageScene?) {
         cache = scene?.let { SceneRenderCache(it) }
-        dry.invalidate()
+        dry.reset()
     }
+
+    /** Stops the background render thread; the callback is not used afterwards. */
+    fun release() = dry.release()
 
     /** Repaints the whole page on the next multi-buffered draw. */
     fun invalidate() = dry.invalidate()

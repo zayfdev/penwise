@@ -22,12 +22,15 @@ internal class FingerRouter(
         val index = event.actionIndex
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+                // A first finger down means the previous sequence is over, whatever its UP did (it may be lost).
+                if (event.actionMasked == MotionEvent.ACTION_DOWN) navigation.cancel()
                 if (usable(event, index)) {
                     navigation.down(event.getPointerId(index), event.getX(index), event.getY(index), event.eventTime)
                 }
             }
 
             MotionEvent.ACTION_MOVE -> {
+                navigation.retain { id -> event.findPointerIndex(id) >= 0 }
                 for (i in 0 until event.pointerCount) {
                     if (event.getToolType(i) == MotionEvent.TOOL_TYPE_FINGER) {
                         navigation.move(event.getPointerId(i), event.getX(i), event.getY(i))
@@ -37,12 +40,14 @@ internal class FingerRouter(
             }
 
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
-                if (event.getToolType(index) != MotionEvent.TOOL_TYPE_FINGER) return
-                if (event.flags and MotionEvent.FLAG_CANCELED != 0) {
-                    navigation.cancel()
-                } else {
+                val finger = event.getToolType(index) == MotionEvent.TOOL_TYPE_FINGER
+                if (finger && event.flags and MotionEvent.FLAG_CANCELED == 0) {
                     navigation.up(event.getPointerId(index), event.eventTime)
+                } else {
+                    navigation.cancel()
                 }
+                // The last pointer is up: nothing may stay tracked, even if an earlier UP never arrived.
+                if (event.actionMasked == MotionEvent.ACTION_UP) navigation.cancel()
             }
 
             MotionEvent.ACTION_CANCEL -> {

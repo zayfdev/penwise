@@ -76,9 +76,11 @@ class FingerPanZoomTest {
         nav.down(1, 900f, 100f, 150)
         val before = steps.size
         moveTo(500f, 520f, 910f, 110f)
+        assertEquals("a re-landed finger starts a new gesture only past the slop", before, steps.size)
+        moveTo(500f, 520f, 960f, 110f)
         val step = steps[before]
-        assertEquals(1f, step.factor, 0.01f)
         assertEquals(700f, step.fromX, 1e-3f)
+        assertEquals(310f, step.fromY, 1e-3f)
     }
 
     @Test

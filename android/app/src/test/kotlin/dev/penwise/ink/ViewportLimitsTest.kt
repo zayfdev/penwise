@@ -34,12 +34,40 @@ class ViewportLimitsTest {
         val state = viewport(fixed)
         state.transformBy(1f, 0f, 0f, 100_000f, 100_000f)
         val far = state.transform
-        assertTrue("page edge stays near the screen", far.tx <= 256f + EPS && far.ty <= 160f + EPS)
+        assertEquals(2560f - ViewportState.KEEP_PX, far.tx, EPS)
+        assertEquals(1600f - ViewportState.KEEP_PX, far.ty, EPS)
         state.transformBy(4f, 1280f, 800f, 1280f, 800f)
         state.transformBy(1f, 0f, 0f, -100_000f, -100_000f)
         val view = state.transform
-        assertTrue("right edge stays on screen", view.tx + 2560f * view.scale >= 2560f * 0.9f - TOL)
-        assertTrue("bottom edge stays on screen", view.ty + 1600f * view.scale >= 1600f * 0.9f - TOL)
+        assertEquals(ViewportState.KEEP_PX, view.tx + 2560f * view.scale, TOL)
+        assertEquals(ViewportState.KEEP_PX, view.ty + 1600f * view.scale, TOL)
+    }
+
+    @Test
+    fun the_top_left_corner_of_a_fixed_page_can_fill_the_screen_at_4x() {
+        val state = viewport(fixed)
+        state.transformBy(4f, 0f, 0f, 0f, 0f)
+        // Pull the page right and down until its top-left corner sits in the screen's top-left corner.
+        state.transformBy(1f, 0f, 0f, 2_000f, 1_000f)
+        state.transformBy(1f, 2_000f, 1_000f, 0f, 0f)
+        val view = state.transform
+        assertEquals(4f, view.scale, EPS)
+        assertEquals(0f, view.tx, TOL)
+        assertEquals(0f, view.ty, TOL)
+        assertEquals(0f, view.toPageX(0f), TOL)
+        assertEquals(640f, view.toPageX(2560f), TOL)
+    }
+
+    @Test
+    fun any_corner_of_a_fixed_page_can_be_brought_to_the_screen_centre() {
+        val state = viewport(fixed)
+        state.transformBy(4f, 1280f, 800f, 1280f, 800f)
+        state.transformBy(1f, 0f, 0f, -100_000f, -100_000f)
+        val view = state.transform
+        // The bottom-right of the page is the last thing visible, so it can be dragged back to mid-screen.
+        state.transformBy(1f, view.toScreenX(2560f), view.toScreenY(1600f), 1280f, 800f)
+        assertEquals(1280f, state.transform.toScreenX(2560f), TOL)
+        assertEquals(800f, state.transform.toScreenY(1600f), TOL)
     }
 
     @Test

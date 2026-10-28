@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.AttributeSet
 import android.view.InputDevice
 import android.view.MotionEvent
+import android.view.PointerIcon
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.ViewConfiguration
@@ -95,7 +96,7 @@ class InkSurfaceView
             val current = scene ?: return
             requestUnbufferedDispatch(InputDevice.SOURCE_CLASS_POINTER)
             predictor = MotionEventPredictor.newInstance(this)
-            val draw = InkRenderCallback(live, viewport, { pageStyle }, { images })
+            val draw = InkRenderCallback(live, viewport, { pageStyle }, { images }, { post(::redrawPage) })
             callback = draw
             draw.attach(current)
             renderer = CanvasFrontBufferedRenderer(this, draw)
@@ -122,6 +123,7 @@ class InkSurfaceView
             controller = null
             renderer?.release(true)
             renderer = null
+            callback?.release()
             callback = null
             predictor = null
             super.onDetachedFromWindow()
@@ -157,6 +159,21 @@ class InkSurfaceView
                 penHoverUntil = if (exit) 0L else event.eventTime + HOVER_HOLD_MS
             }
             return super.onHoverEvent(event)
+        }
+
+        /**
+         * The system draws a hover dot (stylus pointer icon) under a hovering pen; over the page it only sits on the
+         * ink being written, so the pen and the eraser get the null icon. Mice and other pointers keep theirs.
+         */
+        override fun onResolvePointerIcon(
+            event: MotionEvent,
+            pointerIndex: Int,
+        ): PointerIcon? {
+            val tool = event.getToolType(pointerIndex)
+            if (tool == MotionEvent.TOOL_TYPE_STYLUS || tool == MotionEvent.TOOL_TYPE_ERASER) {
+                return PointerIcon.getSystemIcon(context, PointerIcon.TYPE_NULL)
+            }
+            return super.onResolvePointerIcon(event, pointerIndex)
         }
 
         private fun penNear(now: Long): Boolean = now < penHoverUntil

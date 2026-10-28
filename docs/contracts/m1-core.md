@@ -100,7 +100,8 @@ codec::stroke stores {params, seed, quantized samples}; geometry is always re-de
    identical `canonical_bytes()` to one `push` of everything. Engines carry all cross-push state in fields
    (`extend(a ++ b)` ≡ `extend(a); extend(b)`); `update_tail` never changes committed state.
 4. **Hold-back + pen-up.** The newest filtered point is the pending tail (tentative). `finish` commits it with its
-   raw quantized position (strokes end where the pen left).
+   raw quantized position (strokes end where the pen left); the live view shows the tail at that same raw position,
+   so the last live frame is exactly the finished stroke.
 5. **Stable vs tentative** (ink-rendering.md §4.3): stable outline prefixes / stable dabs never change once
    exposed through `GeometryView`; tentative parts are replaced on every push.
 6. **Seeded randomness only through `stamp::prng`** keyed by `(seed, dab_index, channel)`; no sequential streams,

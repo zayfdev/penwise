@@ -6,10 +6,11 @@
 //! ([`OutlineEngine`] or [`StampEngine`]).
 //!
 //! **Hold-back rule:** the newest filtered point is kept as the *pending tail*. Every earlier point is
-//! *committed* to the engine with `extend`; the tail is shown through `update_tail` (tentative). On
-//! [`StrokeBuilder::finish`] the tail's position is replaced by its raw (quantized, unfiltered) position —
-//! perfect-freehand's `last` behaviour, so strokes end where the pen left — and committed via the engine's
-//! `finish`.
+//! *committed* to the engine with `extend`; the tail is shown through `update_tail` (tentative), at its raw
+//! (quantized, unfiltered) position: the stroke as if the pen lifted now. On [`StrokeBuilder::finish`] the tail
+//! is committed at that same raw position — perfect-freehand's `last` behaviour, so strokes end where the pen
+//! left — via the engine's `finish`. The last live frame is therefore exactly the finished stroke, and the only
+//! live geometry that is ever replaced is the tentative tail.
 //!
 //! **Acceptance property (chunk invariance):** for any sample sequence `S` and any split of `S` into chunks,
 //! `new + push(chunk)… + finish` returns geometry whose [`StrokeGeometry::canonical_bytes`] are identical to
@@ -83,7 +84,10 @@ impl StrokeBuilder {
                 self.committed.push(previous);
             }
         }
-        let tail = self.tail.as_ref().map(|(point, _)| point);
+        // The tentative tail is the stroke as if the pen lifted now: the newest point at its raw position, exactly
+        // what `finish` commits, so the last live frame and the finished stroke are the same geometry.
+        let tail = self.tail.map(|(point, [x, y])| InkPoint { x, y, ..point });
+        let tail = tail.as_ref();
         match &mut self.engine {
             Engine::Outline(engine) => {
                 if !self.committed.is_empty() {
@@ -172,3 +176,6 @@ impl StrokeBuilder {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod live_tests;

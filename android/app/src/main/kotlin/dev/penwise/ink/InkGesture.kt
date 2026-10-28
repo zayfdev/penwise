@@ -6,8 +6,9 @@ import kotlin.random.Random
 
 /**
  * A freehand stroke. Every sample is kept for the commit (the core builds the final geometry, quantizes the
- * samples and stores them); the front buffer shows a thinned preview built by [PreviewStroke], plus the predicted
- * tail when motion prediction is available. The other devices get the raw deltas through [LiveOut].
+ * samples and stores them); the front buffer shows the same stroke built live by [PreviewStroke] from the same
+ * samples, so what is drawn under the pen is what is committed at pen-up, plus a short predicted tail (clipped by
+ * [PredictionClip]) when motion prediction is available. The other devices get the raw deltas through [LiveOut].
  */
 internal class InkGesture(
     private val env: GestureEnv,
@@ -24,7 +25,10 @@ internal class InkGesture(
     private val predicted = SampleBuffer()
     private val accumulated = StrokeAccumulator()
     private val view = env.viewport.transform
-    private val preview = PreviewStroke(PREVIEW_SPACING_PX / view.scale)
+    private val preview = PreviewStroke()
+    private val recentX = FloatArray(HEADING_SAMPLES)
+    private val recentY = FloatArray(HEADING_SAMPLES)
+    private var recentCount = 0
     private var lastPreviewAtMs = 0L
 
     init {
@@ -79,6 +83,7 @@ internal class InkGesture(
         buffer.fill(event, index, startNanos, view)
         accumulated.add(buffer.samples, buffer.times, buffer.count)
         preview.push(buffer.samples, buffer.times, buffer.count)
+        trackHeading()
         env.liveOut?.samples(buffer.samples, buffer.times, buffer.count)
         // Order matters: `claimFrame` marks a render as in flight, and only a render clears it. Claiming a frame
         // the gate then declines leaves the flag stuck, and nothing is drawn again until the stroke ends.
@@ -97,15 +102,38 @@ internal class InkGesture(
             if (index < 0 || buffer.count == 0) return null
             predicted.fill(event, index, startNanos, view)
             val last = (buffer.count - 1) * SAMPLE_STRIDE
+            val lastX = buffer.samples[last]
+            val lastY = buffer.samples[last + 1]
+            val oldest = if (recentCount < HEADING_SAMPLES) 0 else recentCount % HEADING_SAMPLES
+            val keep =
+                PredictionClip.clip(
+                    predicted.samples,
+                    predicted.count,
+                    lastX,
+                    lastY,
+                    lastX - recentX[oldest],
+                    lastY - recentY[oldest],
+                    MAX_TAIL_PX / view.scale,
+                )
             return preview.tail(
                 buffer.samples.copyOfRange(last, last + SAMPLE_STRIDE),
                 buffer.times[buffer.count - 1],
                 predicted.samples,
                 predicted.times,
-                predicted.count,
+                keep,
             )
         } finally {
             event.recycle()
+        }
+    }
+
+    /** Remembers the newest pen positions: the oldest of them to the newest is the pen's heading. */
+    private fun trackHeading() {
+        for (i in 0 until buffer.count) {
+            val slot = recentCount % HEADING_SAMPLES
+            recentX[slot] = buffer.samples[i * SAMPLE_STRIDE]
+            recentY[slot] = buffer.samples[i * SAMPLE_STRIDE + 1]
+            recentCount++
         }
     }
 
@@ -118,8 +146,11 @@ internal class InkGesture(
     }
 
     private companion object {
-        /** Distance (screen px) between preview points while the pen is down; the committed stroke keeps them all. */
-        const val PREVIEW_SPACING_PX = 3.5f
+        /** Longest predicted tail, screen px: a tail replaced every frame must not reach far past the pen. */
+        const val MAX_TAIL_PX = 8f
+
+        /** Samples (about 33 ms of pen travel at the digitizer rate) the heading is measured over. */
+        const val HEADING_SAMPLES = 16
 
         /** Longest gap between preview geometry rebuilds, so a fast pen still shows motion. */
         const val PREVIEW_INTERVAL_MS = 12L

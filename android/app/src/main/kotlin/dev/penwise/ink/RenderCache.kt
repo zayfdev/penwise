@@ -53,6 +53,9 @@ internal class SceneRenderCache(
 
     operator fun get(key: ItemKey): ItemRender? = items[key]
 
+    /** A frozen copy of the decoded items (they are immutable) for a render on another thread. */
+    fun snapshotItems(): Map<ItemKey, ItemRender> = HashMap(items)
+
     /** Union of the bounds of [keys] (selection frame); empty when none is drawable. */
     fun boundsOf(keys: Collection<ItemKey>): Bounds =
         Bounds().also { union -> keys.forEach { key -> items[key]?.let { union.add(it.bounds) } } }

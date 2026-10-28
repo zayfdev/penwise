@@ -26,16 +26,12 @@ internal class FingerNavigation(
     private val onActive: (Boolean) -> Unit = {},
     private val tapTimeoutMs: Long = TAP_TIMEOUT_MS,
 ) {
-    private val ids = IntArray(MAX_FINGERS)
-    private val xs = FloatArray(MAX_FINGERS)
-    private val ys = FloatArray(MAX_FINGERS)
-    private val startX = FloatArray(MAX_FINGERS)
-    private val startY = FloatArray(MAX_FINGERS)
-    private var count = 0
+    private val fingers = FingerSet()
     private var startTimeMs = 0L
     private var peak = 0
     private var spoiled = false
     private var navigating = false
+    private var navigated = false
     private var prevX = 0f
     private var prevY = 0f
     private var prevSpan = 0f
@@ -47,26 +43,22 @@ internal class FingerNavigation(
         y: Float,
         timeMs: Long,
     ) {
-        if (count == 0) {
+        if (fingers.count == 0) {
             startTimeMs = timeMs
             peak = 0
             spoiled = false
             navigating = false
+            navigated = false
         }
-        if (indexOf(id) >= 0) return
-        if (count == MAX_FINGERS) {
-            spoiled = true
+        if (fingers.indexOf(id) >= 0) return
+        if (fingers.isFull) {
+            spoil()
             return
         }
-        ids[count] = id
-        xs[count] = x
-        ys[count] = y
-        startX[count] = x
-        startY[count] = y
-        count++
-        peak = maxOf(peak, count)
-        if (count > 2) spoiled = true
-        if (count == 2 && !spoiled) rebase()
+        fingers.add(id, x, y)
+        peak = maxOf(peak, fingers.count)
+        if (fingers.count > 2) spoil()
+        if (fingers.count == 2 && !spoiled) rebase()
     }
 
     /** Records where finger [id] is now; call [update] after all pointers of one event were moved. */
@@ -75,23 +67,22 @@ internal class FingerNavigation(
         x: Float,
         y: Float,
     ) {
-        val i = indexOf(id)
-        if (i < 0) return
-        xs[i] = x
-        ys[i] = y
+        val i = fingers.indexOf(id)
+        if (i >= 0) fingers.moveTo(i, x, y)
     }
 
     /** Evaluates the two fingers' new positions: starts navigation past the slop, then reports a step. */
     fun update() {
-        if (spoiled || count != 2) return
+        if (spoiled || fingers.count != 2) return
         if (!navigating) {
-            if (!moved()) return
+            if (!fingers.movedBeyond(slopPx)) return
             navigating = true
+            navigated = true
             onActive(true)
         }
-        val span = span()
-        val x = (xs[0] + xs[1]) / 2f
-        val y = (ys[0] + ys[1]) / 2f
+        val span = fingers.span
+        val x = fingers.midX
+        val y = fingers.midY
         val factor = if (prevSpan > MIN_SPAN && span > MIN_SPAN) span / prevSpan else 1f
         onStep(NavStep(factor, prevX, prevY, x, y))
         prevX = x
@@ -104,63 +95,71 @@ internal class FingerNavigation(
         id: Int,
         timeMs: Long,
     ) {
-        val i = indexOf(id)
+        val i = fingers.indexOf(id)
         if (i < 0) return
-        remove(i)
-        if (count > 0) return
-        val tap = !spoiled && !navigating && peak == 2 && timeMs - startTimeMs <= tapTimeoutMs
+        drop(i)
+        if (fingers.count > 0) return
+        val tap = !spoiled && !navigated && peak == 2 && timeMs - startTimeMs <= tapTimeoutMs
         finish()
         if (tap) onTap()
     }
 
     /** Abandons the session (stylus, palm, system cancel): no tap, navigation stops. */
     fun cancel() {
-        count = 0
+        fingers.clear()
         finish()
+    }
+
+    /**
+     * Drops every tracked finger except the ones [present] accepts (the pointers a touch event still reports): an
+     * UP that was never delivered must not leave the session, and the canvas, stuck in a gesture.
+     */
+    fun retain(present: (Int) -> Boolean) {
+        var i = 0
+        while (i < fingers.count) {
+            if (present(fingers.id(i))) i++ else drop(i)
+        }
+        if (fingers.count == 0) finish()
+    }
+
+    /**
+     * Removes finger [index]. One finger never pans: the view freezes and the gesture ends; a finger that lands
+     * again starts a new gesture from where the fingers are then.
+     */
+    private fun drop(index: Int) {
+        fingers.remove(index)
+        if (fingers.count == 2 && !spoiled) rebase()
+        endNavigation()
+    }
+
+    private fun spoil() {
+        spoiled = true
+        endNavigation()
+    }
+
+    private fun endNavigation() {
+        if (!navigating || (fingers.count == 2 && !spoiled)) return
+        navigating = false
+        onActive(false)
     }
 
     private fun finish() {
         val was = navigating
         navigating = false
         spoiled = false
+        navigated = false
         peak = 0
         if (was) onActive(false)
     }
 
     private fun rebase() {
-        prevX = (xs[0] + xs[1]) / 2f
-        prevY = (ys[0] + ys[1]) / 2f
-        prevSpan = span()
-    }
-
-    private fun span(): Float = hypot(xs[0] - xs[1], ys[0] - ys[1])
-
-    private fun moved(): Boolean {
-        for (i in 0 until count) {
-            if (abs(xs[i] - startX[i]) > slopPx || abs(ys[i] - startY[i]) > slopPx) return true
-        }
-        return false
-    }
-
-    private fun indexOf(id: Int): Int {
-        for (i in 0 until count) if (ids[i] == id) return i
-        return -1
-    }
-
-    private fun remove(index: Int) {
-        for (i in index until count - 1) {
-            ids[i] = ids[i + 1]
-            xs[i] = xs[i + 1]
-            ys[i] = ys[i + 1]
-            startX[i] = startX[i + 1]
-            startY[i] = startY[i + 1]
-        }
-        count--
-        if (count == 2 && !spoiled) rebase()
+        prevX = fingers.midX
+        prevY = fingers.midY
+        prevSpan = fingers.span
+        fingers.restart()
     }
 
     private companion object {
-        const val MAX_FINGERS = 10
         const val TAP_TIMEOUT_MS = 300L
         const val MIN_SPAN = 1f
     }

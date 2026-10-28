@@ -3,7 +3,6 @@ package dev.penwise.ink
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlin.math.max
 import kotlin.math.min
 
 /** Page → screen mapping: `screen = page * scale + (tx, ty)`. A plain value; the render thread reads snapshots. */
@@ -133,16 +132,14 @@ class ViewportState {
         )
     }
 
-    /** The page edge may leave the screen by at most [KEEP_FRACTION] of it; a page smaller than the screen stays on. */
+    /** Any page point may sit anywhere on screen, as long as [KEEP_PX] of the page (or all of a smaller page) shows. */
     private fun clampAxis(
         offset: Float,
         pageSize: Float,
         viewSize: Float,
     ): Float {
-        val slack = viewSize * KEEP_FRACTION
-        val low = min(0f, viewSize - pageSize) - slack
-        val high = max(0f, viewSize - pageSize) + slack
-        return offset.coerceIn(low, high)
+        val keep = min(KEEP_PX, min(pageSize, viewSize))
+        return offset.coerceIn(keep - pageSize, viewSize - keep)
     }
 
     private fun apply(next: ViewTransform) {
@@ -155,6 +152,8 @@ class ViewportState {
     companion object {
         const val MIN_SCALE = 0.5f
         const val MAX_SCALE = 8f
-        private const val KEEP_FRACTION = 0.1f
+
+        /** Screen px of a fixed page that always stay visible. */
+        const val KEEP_PX = 64f
     }
 }
