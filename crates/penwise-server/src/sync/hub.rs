@@ -26,6 +26,9 @@ pub struct SyncConfig {
     pub outbound_capacity: usize,
     pub handshake_timeout: Duration,
     pub ping_interval: Duration,
+    /// How often a connected tablet or agent has its delivery cursor re-recorded as its ack, so a long-lived
+    /// connection does not pin the retention floor at its `Hello`.
+    pub ack_interval: Duration,
     pub idle_timeout: Duration,
 }
 
@@ -40,6 +43,7 @@ impl SyncConfig {
             outbound_capacity: 64,
             handshake_timeout: Duration::from_millis(HANDSHAKE_TIMEOUT_MS),
             ping_interval: Duration::from_millis(PING_INTERVAL_MS),
+            ack_interval: Duration::from_secs(60),
             idle_timeout: Duration::from_millis(IDLE_TIMEOUT_MS),
         }
     }

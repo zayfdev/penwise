@@ -21,6 +21,8 @@ import dev.penwise.R
  * process foreground priority and hold a Wi-Fi lock, which is what Android otherwise revokes after the screen
  * sleeps — the socket then dies with "software caused connection abort" and every reconnect re-announces the page.
  *
+ * The Wi-Fi lock is held only while the socket is online ([EXTRA_ONLINE]): offline there is nothing to keep alive.
+ *
  * Deliberately no CPU wake lock: the socket pings every 20 s, and each ping wakes the CPU briefly through the
  * Wi-Fi chip. A permanent partial lock would keep the processor busy for nothing.
  */
@@ -38,15 +40,32 @@ class SyncService : Service() {
         startId: Int,
     ): Int {
         val notification = buildNotification(intent?.getStringExtra(EXTRA_STATUS).orEmpty())
-        // minSdk is 34, so the typed startForeground is always available.
-        startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-        acquireLocks()
+        try {
+            // minSdk is 34, so the typed startForeground is always available.
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        } catch (error: IllegalStateException) {
+            // ForegroundServiceStartNotAllowedException: the app is in the background and may not start one.
+            Log.w(TAG, "foreground sync not allowed: ${error.message}")
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        if (intent?.getBooleanExtra(EXTRA_ONLINE, false) == true) acquireLocks() else releaseLocks()
         Log.i(TAG, "foreground sync started")
         // Not sticky: if the system kills us, the app restarting is enough to bring sync back.
         return START_NOT_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    /** Android 15 caps a dataSync service at about 6 h a day; past that it must stop itself or the app is killed. */
+    override fun onTimeout(
+        startId: Int,
+        fgsType: Int,
+    ) {
+        Log.w(TAG, "foreground sync timed out; stopping")
+        releaseLocks()
+        stopSelf()
+    }
 
     override fun onDestroy() {
         releaseLocks()
@@ -101,14 +120,28 @@ class SyncService : Service() {
         /** Extra carrying the status line the notification shows. */
         const val EXTRA_STATUS = "status"
 
-        /** Starts (or updates) the foreground service; safe to call repeatedly. */
+        /** Extra that is true while the socket is online (the Wi-Fi lock is held only then). */
+        const val EXTRA_ONLINE = "online"
+
+        /**
+         * Starts (or updates) the foreground service; safe to call repeatedly. Android refuses a foreground start
+         * from the background (`ForegroundServiceStartNotAllowedException`); that must never reach the caller, which
+         * is often the middle of handling a server frame.
+         */
         fun start(
             context: Context,
             status: String = "",
+            online: Boolean = false,
         ) {
             val intent =
-                Intent(context, SyncService::class.java).putExtra(EXTRA_STATUS, status)
-            ContextCompat.startForegroundService(context, intent)
+                Intent(context, SyncService::class.java)
+                    .putExtra(EXTRA_STATUS, status)
+                    .putExtra(EXTRA_ONLINE, online)
+            try {
+                ContextCompat.startForegroundService(context, intent)
+            } catch (error: IllegalStateException) {
+                Log.w(TAG, "cannot start the foreground sync service now: ${error.message}")
+            }
         }
 
         /** Stops it when the app goes away. */

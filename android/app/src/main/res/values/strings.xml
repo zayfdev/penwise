@@ -19,7 +19,7 @@
     <string name="tool_eraser">Eraser</string>
     <string name="tool_home">Home</string>
     <string name="tool_sync">Sync</string>
-    <string name="sync_url_label">PC server (ws://…/ws)</string>
+    <string name="sync_url_label">PC server (ws://…/sync)</string>
     <string name="sync_token_label">Access token</string>
     <string name="save">Save</string>
     <string name="cancel">Cancel</string>
@@ -42,9 +42,18 @@
     <string name="sync_status_online">Connected</string>
     <string name="sync_status_connecting">Connecting…</string>
     <string name="sync_status_bad_token">The server refused the token</string>
+    <string name="sync_status_held">Waiting for your choice (different server)</string>
     <string name="sync_status_stopped">Not connected</string>
     <string name="sync_status_pending">%1$s · changes waiting to send: %2$d</string>
     <string name="sync_status_refused">%1$s · refused by the server: %2$d</string>
+    <string name="sync_pair_failed">Pairing failed: the code was wrong, expired, or the server could not be reached. Nothing was changed.</string>
+    <string name="page_delete_refused">The last page of the library cannot be deleted.</string>
+    <string name="notebook_delete_refused">Only an empty notebook can be deleted, and the last notebook stays. Delete or move its pages first.</string>
+    <string name="notice_dismiss">Tap to dismiss.</string>
+    <string name="sync_dot_online">Synced</string>
+    <string name="sync_dot_connecting">Connecting to the server</string>
+    <string name="sync_dot_offline">Offline</string>
+    <string name="sync_dot_pending">%1$s · waiting to send: %2$d</string>
     <string name="sync_dead_letters_title">Refused by the server (kept on this tablet)</string>
     <string name="sync_dead_letter_row">%1$s · %2$s · %3$s</string>
     <string name="sync_dead_letters_export">Export to a file</string>

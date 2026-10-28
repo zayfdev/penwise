@@ -249,3 +249,37 @@ async fn the_delivery_cursor_is_recorded_as_the_ack_at_disconnect() {
         "the cursor the session reached is the ack"
     );
 }
+
+#[tokio::test]
+async fn a_connected_tablet_keeps_bumping_its_ack_but_a_browser_never_does() {
+    let store = FakeStore::new(16);
+    store.commit(vec![
+        item_op(2, 1, page_id(1), "a"),
+        item_op(2, 2, page_id(1), "b"),
+    ]);
+    let mut cfg = config();
+    cfg.ping_interval = std::time::Duration::from_millis(20);
+    cfg.ack_interval = std::time::Duration::ZERO;
+    let hub = Hub::new(store.clone(), cfg);
+    let mut tablet = Rig::on(std::sync::Arc::clone(&hub));
+    tablet.connect(device(1), ClientKind::Tablet, 0).await;
+    collect_catch_up(&mut tablet).await;
+    let mut browser = Rig::on(hub);
+    browser.connect(device(2), ClientKind::Browser, 0).await;
+    for _ in 0..100 {
+        if store.noted().contains(&(device(1), ClientKind::Tablet, 2)) {
+            break;
+        }
+        tablet.quiet().await;
+        browser.quiet().await;
+    }
+    let noted = store.noted();
+    assert!(
+        noted.contains(&(device(1), ClientKind::Tablet, 2)),
+        "the tablet's ack moved while it stayed connected: {noted:?}"
+    );
+    assert!(
+        noted.iter().filter(|n| n.1 == ClientKind::Browser).count() <= 1,
+        "browsers are recorded at Hello only: {noted:?}"
+    );
+}

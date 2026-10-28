@@ -22,14 +22,19 @@ class Selection {
     /** Registered by the canvas; runs the delete as one undo step. */
     internal var onDelete: (() -> Unit)? = null
 
+    /** Registered by the canvas; runs when a non-empty selection is cleared, to wipe its frame off the front buffer. */
+    internal var onCleared: (() -> Unit)? = null
+
     fun select(ids: ByteArray) {
         this.ids = ids
         count = ids.size / ItemKey.SIZE
     }
 
     fun clear() {
+        val framed = count > 0
         select(ByteArray(0))
         box.setEmpty()
+        if (framed) onCleared?.invoke()
     }
 
     /** Toolbar action: delete the selected items. */

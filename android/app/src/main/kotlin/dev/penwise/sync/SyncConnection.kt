@@ -74,18 +74,25 @@ class SyncConnection(
             listener.onStatus(next)
         }
     private var running = false
-    private var everWelcomed = false
-    private var unreachableReported = false
+    private val firstContact = FirstContact(endpoints, listener::onUnreachable)
     private val quiet = QuietTimer(thread, QUIET_CATCH_UP_MS, ::quietElapsed)
     private var reconnect: ScheduledFuture<*>? = null
 
-    /** Starts (or restarts, after a settings change) connecting. */
-    fun start() {
+    /** The endpoint the socket is open to (or being opened to); `null` while stopped. */
+    @Volatile
+    var currentUrl: String? = null
+        private set
+
+    /**
+     * Starts (or restarts) connecting, at the endpoint that last worked. After a settings change pass
+     * [forgetGood]: the endpoint list changed, so its first entry (the new override) is tried first.
+     */
+    fun start(forgetGood: Boolean = false) {
         thread.run {
             running = true
             reconnect?.cancel(false)
             closeSocket()
-            backoff.reset()
+            backoff.restart(forgetGood)
             open()
         }
     }
@@ -115,9 +122,11 @@ class SyncConnection(
         val urls = endpoints()
         if (urls.isEmpty()) {
             status = SyncStatus.STOPPED
+            firstContact.failed(null)
             return
         }
-        val url = urls[backoff.endpoint(urls.size)]
+        val url = urls[backoff.endpoint(urls)]
+        currentUrl = url
         Log.i(TAG, "connecting to $url")
         status = SyncStatus.CONNECTING
         socket = client.newWebSocket(Request.Builder().url(url).build(), Link())
@@ -158,8 +167,8 @@ class SyncConnection(
         outcome.replies.forEach { link.send(it.toByteString()) }
         when {
             outcome.kind == Kind.WELCOME -> {
-                backoff.reset()
-                everWelcomed = true
+                currentUrl?.let(backoff::welcomed)
+                firstContact.welcomed()
                 status = SyncStatus.ONLINE
                 quiet.rearm()
             }
@@ -168,6 +177,7 @@ class SyncConnection(
                 Log.w(TAG, "server rejected the handshake (code ${outcome.code})")
                 if (outcome.code == Kind.REJECT_BAD_TOKEN) status = SyncStatus.BAD_TOKEN
                 closeSocket()
+                firstContact.failed(currentUrl)
                 scheduleReconnect()
             }
 
@@ -180,7 +190,7 @@ class SyncConnection(
         if (outcome.reconnect) {
             // A different server: the replica was reset; say hello again right away.
             closeSocket()
-            backoff.reset()
+            backoff.restart()
             open()
         }
     }
@@ -194,10 +204,7 @@ class SyncConnection(
         socket = null
         quiet.cancel()
         core.offline()
-        if (!everWelcomed && !unreachableReported) {
-            unreachableReported = true
-            listener.onUnreachable()
-        }
+        firstContact.failed(currentUrl)
         if (status != SyncStatus.BAD_TOKEN) status = SyncStatus.CONNECTING
         scheduleReconnect()
     }

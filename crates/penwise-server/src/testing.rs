@@ -65,7 +65,7 @@ impl Rig {
             data_dir: Arc::new(self.dir.path().to_path_buf()),
             web: Arc::new(self.dir.path().to_path_buf()),
             pairing: Arc::new(Pairing::new()),
-            urls: Arc::new(Vec::new()),
+            urls: Arc::new(crate::urls::Urls::fixed(Vec::new())),
             assets: Arc::clone(&self.assets),
             ocr_url: Arc::new(self.ocr_url.clone()),
         }

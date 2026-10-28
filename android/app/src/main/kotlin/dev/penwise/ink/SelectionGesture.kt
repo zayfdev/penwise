@@ -18,7 +18,9 @@ internal class SelectionGesture(
     private val startX = view.toPageX(event.getX(index))
     private val startY = view.toPageY(event.getY(index))
     private val frameId = env.nextFrameId()
-    private val dragging = selection.count > 0 && selection.box.contains(startX, startY)
+    private val dragging =
+        selection.count > 0 &&
+            selection.box.let { hitsSelection(it.left, it.top, it.right, it.bottom, startX, startY, view.scale) }
     private var loop = FloatArray(INITIAL_POINTS * 2)
     private var loopCount = 0
     private var dx = 0f
@@ -140,3 +142,22 @@ internal class SelectionGesture(
         const val MIN_MOVE_PX = 1f
     }
 }
+
+/** Screen px a pen-down may miss the selection frame by and still grab it (a thin stroke at 0.5× is ~1 px wide). */
+internal const val GRAB_SLOP_PX = 20f
+
+/** True when page point ([x], [y]) is inside the frame inflated by [GRAB_SLOP_PX] screen px (at [scale]). */
+internal fun hitsSelection(
+    left: Float,
+    top: Float,
+    right: Float,
+    bottom: Float,
+    x: Float,
+    y: Float,
+    scale: Float,
+): Boolean {
+    val slop = GRAB_SLOP_PX / scale.coerceAtLeast(MIN_SCALE)
+    return x >= left - slop && x <= right + slop && y >= top - slop && y <= bottom + slop
+}
+
+private const val MIN_SCALE = 1e-3f

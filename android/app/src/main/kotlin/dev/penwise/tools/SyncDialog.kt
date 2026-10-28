@@ -15,7 +15,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -59,8 +59,8 @@ fun SyncDialog(
     onDismiss: () -> Unit,
     onSave: (url: String, token: String) -> Unit,
 ) {
-    var url by remember { mutableStateOf(initialUrl) }
-    var token by remember { mutableStateOf(initialToken) }
+    var url by rememberSaveable { mutableStateOf(initialUrl) }
+    var token by rememberSaveable { mutableStateOf(initialToken) }
     Dialog(onDismissRequest = onDismiss) {
         Column(
             Modifier

@@ -66,6 +66,7 @@ class ToolState : BrushSource {
 
     fun toggleEraser() {
         eraserMode = !eraserMode
+        selection.clear()
         if (eraserMode) {
             shapeMode = null
             lassoMode = false
@@ -95,6 +96,7 @@ class ToolState : BrushSource {
 
     fun toggleShape(mode: ShapeMode) {
         shapeMode = if (shapeMode == mode) null else mode
+        selection.clear()
         if (shapeMode != null) {
             eraserMode = false
             lassoMode = false

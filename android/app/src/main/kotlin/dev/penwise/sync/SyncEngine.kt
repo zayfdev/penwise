@@ -51,9 +51,12 @@ class SyncEngine(
     /** Connection state. */
     val status: SyncStatus get() = connection.status
 
-    /** Connects (again, after a settings change). */
-    fun start() {
-        connection.start()
+    /** The endpoint the socket is on (the one connected, when [status] is online); `null` before the first dial. */
+    val connectedUrl: String? get() = connection.currentUrl
+
+    /** Connects (again, after a settings change: [forgetGood] starts over from the first endpoint). */
+    fun start(forgetGood: Boolean = false) {
+        connection.start(forgetGood)
     }
 
     /** Tells other devices which page the tablet shows (the browser follows). */

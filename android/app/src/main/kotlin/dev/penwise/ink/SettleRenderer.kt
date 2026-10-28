@@ -2,6 +2,7 @@ package dev.penwise.ink
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.util.Log
 import androidx.core.graphics.createBitmap
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicReference
@@ -14,31 +15,13 @@ internal class SettleRequest(
     val height: Int,
     val order: List<ItemKey>,
     val items: Map<ItemKey, ItemRender>,
-    /** The scene state the snapshot shows ([DryLayer] compares it with the live one before swapping). */
-    val epoch: Long,
-) {
-    /** Does this request already render [view] / [style] at scene state [epoch]? */
-    fun covers(
-        view: ViewTransform,
-        epoch: Long,
-        style: PageStyle,
-    ): Boolean = this.view == view && this.epoch == epoch && this.style == style
-}
+)
 
-/** A finished render: [bitmap] shows the page under [view] as of scene state [epoch]. */
+/** A finished render: [bitmap] shows the page under [view] as of the snapshot it was requested with. */
 internal class SettleResult(
     val bitmap: Bitmap,
     val view: ViewTransform,
-    val epoch: Long,
-) {
-    /** Is this the render of exactly this [view], scene state and bitmap size? */
-    fun matches(
-        view: ViewTransform,
-        epoch: Long,
-        width: Int,
-        height: Int,
-    ): Boolean = this.view == view && this.epoch == epoch && bitmap.width == width && bitmap.height == height
-}
+)
 
 /**
  * Renders the visible page into a spare bitmap on a background thread once a pan/zoom has settled, so the render
@@ -59,7 +42,8 @@ internal class SettleRenderer(
                 priority = Thread.NORM_PRIORITY - 2
             }
         }
-    private val latest = LatestRenderer(executor, ::render, { recycle(it.bitmap) }, onReady)
+    private val latest = LatestRenderer(executor, ::render, { recycle(it.bitmap) }, onReady, ::failed)
+    private var reported = false
 
     val pending: Boolean get() = latest.pending
 
@@ -104,10 +88,18 @@ internal class SettleRenderer(
             val item = request.items[key] ?: continue
             if (item.bounds.intersects(visible)) painter.draw(surface, item)
         }
-        return SettleResult(bitmap, view, request.epoch)
+        return SettleResult(bitmap, view)
     }
 
-    private fun acquire(
+    /** A render that threw (out of memory, malformed item): logged once; the page keeps showing the scaled bitmap. */
+    private fun failed(error: Throwable) {
+        if (reported) return
+        reported = true
+        Log.e(TAG, "settle render failed", error)
+    }
+
+    /** A bitmap of this size to render into: the kept spare or a new one. Safe from any thread. */
+    fun acquire(
         width: Int,
         height: Int,
     ): Bitmap {
@@ -115,5 +107,9 @@ internal class SettleRenderer(
         if (kept != null && kept.width == width && kept.height == height) return kept
         kept?.recycle()
         return createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    }
+
+    private companion object {
+        const val TAG = "PenwiseSettle"
     }
 }

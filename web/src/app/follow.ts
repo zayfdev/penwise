@@ -58,12 +58,10 @@ export function planReceived(
 ): Plan {
   const touches = (pages: readonly string[]) => shown !== null && pages.includes(shown);
   let switchTo: string | null = null;
-  if (received.kind === MessageKind.SwitchPage && mode !== "free" && received.page) {
-    switchTo = received.page;
-  }
-  if (received.kind === MessageKind.Welcome && shown === null && received.page) {
-    switchTo = received.page;
-  }
+  const switches = received.kind === MessageKind.SwitchPage && mode !== "free";
+  // After a reconnect the tablet may be elsewhere: Welcome counts like SwitchPage (any mode when nothing is shown).
+  const welcomed = received.kind === MessageKind.Welcome && (shown === null || mode !== "free");
+  if ((switches || welcomed) && received.page) switchTo = received.page;
   const catalogEnded = endedScope === "catalog" || endedScope === "all";
   return {
     repaintCommitted:
@@ -75,4 +73,35 @@ export function planReceived(
     switchTo,
     catalogReady: catalogEnded,
   };
+}
+
+/**
+ * A page the server asked us to show that cannot be shown yet: the catalog may not list it (the tablet's
+ * `SwitchPage` is a live frame and can beat the page's `Create` op) or the user's stroke is still open.
+ */
+export class PendingSwitch {
+  private page: string | null = null;
+
+  /** Remembers the newest request. */
+  request(page: string): void {
+    this.page = page;
+  }
+
+  /** Forgets it (the user chose a page or left follow mode). */
+  clear(): void {
+    this.page = null;
+  }
+
+  /** The page to show now, if the request can be honoured; consumed on success or when already shown. */
+  take(known: (page: string) => boolean, current: string | null, drawing: boolean): string | null {
+    const page = this.page;
+    if (page === null || drawing) return null;
+    if (page === current) {
+      this.page = null;
+      return null;
+    }
+    if (!known(page)) return null;
+    this.page = null;
+    return page;
+  }
 }

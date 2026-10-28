@@ -50,8 +50,8 @@ pub struct AppState {
     /// Directory of the static viewer.
     pub web: Arc<PathBuf>,
     pub pairing: Arc<Pairing>,
-    /// URLs this machine is reachable at (handed out when pairing).
-    pub urls: Arc<Vec<String>>,
+    /// Where this machine is reachable (handed out when pairing; recomputed per request).
+    pub urls: Arc<crate::urls::Urls>,
     pub assets: Arc<Assets>,
     /// Base URL of the handwriting model (`ServerConfig::ocr_url`).
     pub ocr_url: Arc<String>,

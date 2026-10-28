@@ -154,8 +154,22 @@ pub(crate) async fn page_text(
 #[derive(serde::Deserialize)]
 struct TextQuery {
     page: Option<String>,
+    #[serde(default, deserialize_with = "flag")]
     refresh: Option<bool>,
     scale: Option<f32>,
+}
+
+/// A query flag spelled `true`/`false` or `1`/`0`.
+fn flag<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<bool>, D::Error> {
+    use serde::Deserialize as _;
+    match Option::<String>::deserialize(deserializer)?.as_deref() {
+        None | Some("") => Ok(None),
+        Some("true" | "1") => Ok(Some(true)),
+        Some("false" | "0") => Ok(Some(false)),
+        Some(other) => Err(serde::de::Error::custom(format!(
+            "`{other}` is not a flag (use true, false, 1 or 0)"
+        ))),
+    }
 }
 
 /// `GET /text?page=<id>&refresh=1` — the page's handwriting as text.

@@ -71,7 +71,11 @@ page_anchors, page_anchors_seen    -- server-local element maps (sidecar.rs, anc
   migration gives legacy strokes deterministic ids so a tablet importing its own old files converges with it.
 - **Retention** (`storage/compact.rs`, constants in `storage/types.rs`): ops older than `RETENTION_DAYS = 7` are
   dropped and tombstoned items past the cutoff purged; a device unseen for `DEVICE_IDLE_DAYS = 30` stops holding
-  the floor. Compaction raises `log_floor`; a client that has seen less than the floor receives a snapshot
+  the floor; browsers (`kind = 1`) never hold it, and connected tablets/agents re-record their delivery cursor as
+  their ack every minute. Compaction runs once a day (and once when the server starts, off the listening path) in
+  slices of 5,000 rows, one transaction each, so pushes and acks interleave; after a slice it runs
+  `PRAGMA incremental_vacuum`, which only shrinks the file if the database was created with
+  `auto_vacuum = INCREMENTAL` (existing files are `NONE` and would need a one-off `VACUUM`). Compaction raises `log_floor`; a client that has seen less than the floor receives a snapshot
   (`SnapshotBegin/Chunk/End`, `SNAPSHOT_CHUNK_ITEMS = 512`) instead of a diff.
 
 ## Restore
@@ -98,7 +102,7 @@ the scene (pictures sit in their z band under ink).
 
 Recognized handwriting is stored as `Add(Text)` items on `Layer::Text` whose `sources` are the strokes they were
 read from (`ocr.rs`, `textlayer.rs`). A page's text is the union of its live text items in reading order; a page
-whose ink strokes are not all covered by some text item's sources is read again (or when `refresh=1`). The model
+whose ink strokes are not all covered by some text item's sources is read again (or when `refresh=true`; `1`/`0` work too). The model
 is a local Ollama (`PENWISE_OCR_URL`, default `http://127.0.0.1:11434`; `PENWISE_OCR_MODEL`, default
 `qwen2.5vl:3b`); with no model reachable `GET /text` answers `503` and everything else keeps working. Only the
 ink is sent, cropped to its bounds + 48 px, at most 1400 px a side. `GET /search?q=` scans the live text items of

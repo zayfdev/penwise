@@ -28,11 +28,17 @@ class LibraryClient(
         return token to url
     }
 
-    /** `GET /assets/<id>` decoded as a bitmap; `null` when the server is away or the asset is gone. */
-    fun asset(asset: String): android.graphics.Bitmap? {
-        val url = URL(base(httpBase(baseUrl), "/assets/$asset"))
+    /**
+     * `GET /assets/<id>` decoded as a bitmap of at most about [maxPixels] pixels (downsampled while decoding, so a
+     * photo never costs its full size in memory); `null` when the server is away or the asset is gone.
+     */
+    fun asset(
+        asset: String,
+        maxPixels: Int,
+    ): android.graphics.Bitmap? {
         val connection =
-            runCatching { url.openConnection() as HttpURLConnection }.getOrNull() ?: return null
+            runCatching { URL(base(httpBase(baseUrl), "/assets/$asset")).openConnection() as HttpURLConnection }
+                .getOrNull() ?: return null
         return try {
             connection.requestMethod = "GET"
             connection.connectTimeout = TIMEOUT_MS
@@ -42,7 +48,7 @@ class LibraryClient(
                 Log.w(TAG, "GET /assets/$asset -> ${connection.responseCode}")
                 null
             } else {
-                android.graphics.BitmapFactory.decodeStream(connection.inputStream)
+                decodeScaled(connection.inputStream.use { it.readBytes() }, maxPixels)
             }
         } catch (error: IOException) {
             Log.w(TAG, "GET /assets/$asset failed: ${error.message}")
@@ -52,14 +58,27 @@ class LibraryClient(
         }
     }
 
+    private fun decodeScaled(
+        bytes: ByteArray,
+        maxPixels: Int,
+    ): android.graphics.Bitmap? {
+        val options =
+            android.graphics.BitmapFactory
+                .Options()
+                .apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+        options.inSampleSize = PageImages.sampleSize(options.outWidth, options.outHeight, maxPixels)
+        options.inJustDecodeBounds = false
+        return android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+    }
+
     private fun send(
         method: String,
         path: String,
         body: String?,
     ): String? {
-        val url = URL(base(httpBase(baseUrl), path))
         val connection =
-            runCatching { url.openConnection() as HttpURLConnection }
+            runCatching { URL(base(httpBase(baseUrl), path)).openConnection() as HttpURLConnection }
                 .getOrNull()
                 ?: return null
         return try {
@@ -86,20 +105,31 @@ class LibraryClient(
         }
     }
 
-    /** `ws://host:port/sync` becomes the `http://host:port` base; extra query parts are dropped. */
-    private fun httpBase(wsUrl: String): String =
-        wsUrl
-            .substringBefore('?')
-            .removeSuffix("/sync")
-            .replaceFirst("wss://", "https://")
-            .replaceFirst("ws://", "http://")
-
     private fun base(
         root: String,
         path: String,
     ): String = root.trimEnd('/') + path + (if (token.isEmpty()) "" else "?token=$token")
 
     companion object {
+        /**
+         * `ws://host:port/sync` becomes the `http://host:port` base; a bare `host:port` gets `http://`; extra query
+         * parts are dropped. Whatever was typed, the result always carries a scheme, so building a URL never throws.
+         */
+        internal fun httpBase(typed: String): String {
+            val url =
+                typed
+                    .trim()
+                    .substringBefore('?')
+                    .trimEnd('/')
+                    .removeSuffix("/sync")
+            return when {
+                url.startsWith("wss://", ignoreCase = true) -> "https://" + url.substring("wss://".length)
+                url.startsWith("ws://", ignoreCase = true) -> "http://" + url.substring("ws://".length)
+                url.startsWith("http://", ignoreCase = true) || url.startsWith("https://", ignoreCase = true) -> url
+                else -> "http://$url"
+            }
+        }
+
         /** A pairing code is six characters from the server's unambiguous alphabet. */
         fun looksLikeCode(input: String): Boolean = input.trim().replace("-", "").length == CODE_LEN
 

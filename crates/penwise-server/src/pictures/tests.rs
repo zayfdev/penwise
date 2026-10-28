@@ -219,3 +219,38 @@ async fn bad_placements_are_refused() {
             .len()
     );
 }
+
+#[tokio::test]
+async fn placing_the_id_of_a_deleted_picture_is_a_clear_conflict() {
+    let mut rig = Rig::new();
+    let page = rig.fixed_page().await;
+    let stored = rig.picture(8, 4, [0, 0, 255, 255]);
+    let base = rig.serve(routes()).await;
+    let client = reqwest::Client::new();
+    let url = format!("{base}/pages/{page}/images");
+    let body = json!({"asset": stored.asset, "x": 1.0, "y": 1.0, "w": 40.0, "h": 20.0});
+    let placed: Value = client
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let id = placed["id"].as_str().unwrap().to_owned();
+    client
+        .delete(&url)
+        .json(&json!({"ids": [id]}))
+        .send()
+        .await
+        .unwrap();
+    let again = client
+        .post(&url)
+        .json(&json!({"id": id, "asset": stored.asset, "x": 1.0, "y": 1.0, "w": 40.0, "h": 20.0}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(409, again.status().as_u16());
+    assert!(again.text().await.unwrap().contains("deleted"));
+}

@@ -10,6 +10,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ProduceStateScope
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -33,6 +34,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private const val INFO_REFRESH_MS = 1_000L
+private const val PENDING_REFRESH_MS = 2_000L
 
 class MainActivity : ComponentActivity() {
     private val page: PageViewModel by viewModels()
@@ -42,18 +44,15 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         SyncService.start(this)
         page.loadPage()
-        // Debug-only end-to-end replay: `am start … --es fixture <path>`.
-        intent?.getStringExtra("fixture")?.let { path ->
-            Log.i("PenwiseFixture", "replay requested: $path")
-            page.requestReplay(path)
-        }
-        handlePairing(intent)
+        // A restored activity still holds the launch intent, whose pairing code is spent and fixture already ran.
+        if (savedInstanceState == null) handleLaunch(intent)
         setContent {
             val pages by page.pages.collectAsState()
             val status by page.status.collectAsState()
+            val held by page.syncUi.serverChanged.collectAsState()
             val scope = rememberCoroutineScope()
-            var showSync by remember { mutableStateOf(false) }
-            var openPage by remember { mutableStateOf<String?>(null) }
+            var showSync by rememberSaveable { mutableStateOf(false) }
+            var openPage by rememberSaveable { mutableStateOf<String?>(null) }
             // Kept here, not in CanvasScreen, so the drawer stays as the user left it across page switches.
             var drawerOpen by rememberSaveable { mutableStateOf(false) }
 
@@ -65,19 +64,22 @@ class MainActivity : ComponentActivity() {
                     delay(INFO_REFRESH_MS)
                 }
             }
+            // The dot on the page's bar: edits waiting to send, refreshed while a page is open.
+            val waiting by produceState(0, openPage != null) { pollPending(page, openPage != null) }
             val exportRefused = rememberFileExport("penwise-refused-ops.pwdl") { page.syncUi.exportDeadLetters(it) }
 
             if (showSync) {
                 SyncDialog(
                     initialUrl = page.syncUrl,
                     initialToken = page.syncToken,
-                    status = syncStatusText(status, info.pending, info.deadLetters.size),
+                    status = syncStatusText(status, held, info.pending, info.deadLetters.size),
                     deadLetters = info.deadLetters,
                     onExportDeadLetters = exportRefused,
                     onClearDeadLetters = { scope.launch { page.syncUi.clearDeadLetters() } },
                     onDismiss = { showSync = false },
                     onSave = { url, token ->
-                        page.updateSync(url, token)
+                        // The field is prefilled with the address in use; saving it unchanged must not pin it.
+                        page.updateSync(if (url == page.syncUrl) null else url, token)
                         showSync = false
                     },
                 )
@@ -104,6 +106,8 @@ class MainActivity : ComponentActivity() {
 
             // Back never leaves the app from a page: it closes the drawer, then returns to the home screen.
             BackHandler(enabled = openPage != null) {
+                // A palm on the edge while writing is a Back gesture too: not while the pen is on or near the page.
+                if (page.pen.active()) return@BackHandler
                 if (drawerOpen) drawerOpen = false else openPage = null
             }
 
@@ -117,9 +121,20 @@ class MainActivity : ComponentActivity() {
                     onDrawerOpenChange = { drawerOpen = it },
                     onHome = { openPage = null },
                     onSync = { showSync = true },
+                    syncStatus = status,
+                    pending = waiting,
                 )
             }
         }
+    }
+
+    private fun handleLaunch(intent: Intent?) {
+        // Debug-only end-to-end replay: `am start … --es fixture <path>`.
+        intent?.getStringExtra("fixture")?.let { path ->
+            Log.i("PenwiseFixture", "replay requested: $path")
+            page.requestReplay(path)
+        }
+        handlePairing(intent)
     }
 
     /** `penwise://pair?code=…&url=…`: exchange the code for a token and point sync at that server. */
@@ -127,8 +142,10 @@ class MainActivity : ComponentActivity() {
         val data = intent?.data ?: return
         if (data.scheme != "penwise" || data.host != "pair") return
         val code = data.getQueryParameter("code") ?: return
-        val url = data.getQueryParameter("url").orEmpty()
-        Log.i("PenwisePair", "pairing with code from ${url.ifBlank { "settings" }}")
+        val url = data.getQueryParameter("url")?.takeIf { it.isNotBlank() }
+        // Consume the link: the code works once, and nothing may replay it.
+        intent.data = null
+        Log.i("PenwisePair", "pairing with code from ${url ?: "settings"}")
         page.updateSync(url, code)
     }
 
@@ -149,18 +166,33 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+private suspend fun ProduceStateScope<Int>.pollPending(
+    page: PageViewModel,
+    open: Boolean,
+) {
+    while (open) {
+        value = page.syncUi.pending()
+        delay(PENDING_REFRESH_MS)
+    }
+}
+
 @Composable
 private fun syncStatusText(
     status: SyncStatus,
+    held: Boolean,
     pending: Int,
     refused: Int,
 ): String {
     val label =
         stringResource(
             when (status) {
-                SyncStatus.ONLINE -> R.string.sync_status_online
+                // Online, but nothing is applied or sent until the user answers the "different server" question.
+                SyncStatus.ONLINE -> if (held) R.string.sync_status_held else R.string.sync_status_online
+
                 SyncStatus.CONNECTING -> R.string.sync_status_connecting
+
                 SyncStatus.BAD_TOKEN -> R.string.sync_status_bad_token
+
                 SyncStatus.STOPPED -> R.string.sync_status_stopped
             },
         )

@@ -9,13 +9,14 @@ import java.util.concurrent.atomic.AtomicReference
  * before, [cancel] drops it, and a result that is no longer current is passed to [dispose] instead of being
  * published. [render] runs on the [executor] and should poll its `current` argument to stop early. Never blocks the
  * caller: [submit], [cancel] and [take] only touch atomics. [onReady] runs on the executor thread when a current
- * result is waiting for [take].
+ * result is waiting for [take]. A [render] that throws is reported to [onError] and counts as no result.
  */
 internal class LatestRenderer<Req, Res : Any>(
     private val executor: Executor,
     private val render: (Req, current: () -> Boolean) -> Res?,
     private val dispose: (Res) -> Unit,
     private val onReady: () -> Unit,
+    private val onError: (Throwable) -> Unit = {},
 ) {
     private class Done<Res>(
         val generation: Long,
@@ -63,7 +64,17 @@ internal class LatestRenderer<Req, Res : Any>(
     ) {
         val current = { generation.get() == mine }
         if (!current()) return
-        val result = render(request, current) ?: return finishRun(mine)
+        val result =
+            try {
+                render(request, current)
+            } catch (
+                @Suppress("TooGenericExceptionCaught") error: Throwable,
+            ) {
+                // Out of memory or a malformed item: never let it reach the thread's uncaught handler, and never
+                // leave `running` set, or the caller waits for a result that will not come.
+                onError(error)
+                null
+            } ?: return finishRun(mine)
         if (!current()) {
             dispose(result)
             return

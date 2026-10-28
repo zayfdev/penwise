@@ -6,13 +6,21 @@ import java.nio.ByteBuffer
 import kotlin.math.roundToInt
 
 /**
- * Scratch for rasterizing one stamp stroke at a time: the coverage floats, their bytes and an `ALPHA_8` bitmap,
- * all reused between strokes. Not thread-safe (one per [GeometryPainter]).
+ * Scratch for rasterizing one stamp stroke at a time: the coverage floats, their bytes, the paper-height cache and
+ * `ALPHA_8` bitmaps, all reused between strokes. Not thread-safe (one per [GeometryPainter]).
+ *
+ * A hardware canvas records `drawBitmap` and reads the pixels when it replays, after the draw call returned, so a
+ * bitmap just drawn must not be rewritten for the next frame: [bitmaps] of them are used in turn (a painter on a
+ * software canvas, which reads at once, needs one).
  */
-internal class StampBuffer {
+internal class StampBuffer(
+    bitmaps: Int = 1,
+) {
     private var coverage = FloatArray(0)
     private var bytes = ByteArray(0)
-    private var bitmap: Bitmap? = null
+    private var paper = FloatArray(0)
+    private val ring = arrayOfNulls<Bitmap>(bitmaps)
+    private var next = 0
 
     /** Pixel position of the last bitmap's top-left corner. */
     var left = 0
@@ -38,7 +46,7 @@ internal class StampBuffer {
             coverage.fill(0f, 0, n)
         }
         val heights = grain?.let { g -> HeightSource { x, y -> PaperNoise.height(x, y, g.scale) } }
-        StampRaster.accumulate(coverage, rect, pixelDabs, view, grain, heights)
+        paper = StampRaster.accumulate(coverage, rect, pixelDabs, view, grain, heights, paper) ?: paper
         for (i in 0 until n) bytes[i] = (coverage[i] * BYTE_MAX).roundToInt().toByte()
         left = rect.left
         top = rect.top
@@ -47,19 +55,24 @@ internal class StampBuffer {
         return target
     }
 
+    /** The next ring bitmap sized [w] x [h]; a too-small one is replaced, never recycled (it may be replaying). */
     private fun bitmapFor(
         w: Int,
         h: Int,
     ): Bitmap {
-        val existing = bitmap
+        val slot = next
+        next = (next + 1) % ring.size
+        val existing = ring[slot]
         if (existing != null && existing.allocationByteCount >= w * h) {
             existing.reconfigure(w, h, Bitmap.Config.ALPHA_8)
             return existing
         }
-        return createBitmap(w, h, Bitmap.Config.ALPHA_8).also { bitmap = it }
+        return createBitmap(w, h, Bitmap.Config.ALPHA_8).also { ring[slot] = it }
     }
 
-    private companion object {
-        const val BYTE_MAX = 255f
+    companion object {
+        /** Bitmaps a painter on the hardware front buffer rotates through: drawn, queued and being rewritten. */
+        const val HARDWARE_RING = 3
+        private const val BYTE_MAX = 255f
     }
 }

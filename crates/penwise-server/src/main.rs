@@ -49,8 +49,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let token = auth::load_or_create(&data);
     let mut config = ServerConfig::new(&data, token.clone());
     config.web_dir = web;
-    config.urls = urls::platform_urls(port);
-    let urls = config.urls.clone();
     let addr: SocketAddr = format!("{host}:{port}").parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
     let handle = match serve(listener, config).await {
@@ -67,9 +65,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(error) => return Err(error.into()),
     };
     tracing::info!(addr = %handle.addr, "penwise-server listening");
-    for url in &urls {
-        tracing::info!("viewer: {url}/?token={token}");
-    }
+    // Discovery runs helper programs; log from a task so listening never waits for them.
+    let logged_token = token.clone();
+    tokio::spawn(async move {
+        for url in urls::platform_urls(port).await {
+            tracing::info!("viewer: {url}/?token={logged_token}");
+        }
+    });
     tracing::info!("token: {token}  (also in {}/token)", data.display());
     tracing::info!(
         "pairing code: {}  (single use, {} minutes; show it in the viewer)",

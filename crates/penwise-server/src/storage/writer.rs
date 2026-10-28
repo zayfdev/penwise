@@ -9,7 +9,7 @@ use rusqlite::{Connection, TransactionBehavior, params};
 use tokio::sync::{broadcast, oneshot};
 
 use super::apply::{self, FrameEnv};
-use super::compact::{self, CompactReport};
+use super::compact;
 use super::error::{AppendError, RestoreError, StorageError};
 use super::random::random_u128;
 use super::read::ReadPool;
@@ -43,7 +43,7 @@ pub(crate) enum Command {
         reply: oneshot::Sender<Result<Restored, RestoreError>>,
     },
     Compact {
-        reply: oneshot::Sender<Result<CompactReport, StorageError>>,
+        reply: oneshot::Sender<Result<compact::Step, StorageError>>,
     },
 }
 
@@ -75,7 +75,6 @@ pub(crate) fn start(config: StorageConfig) -> Result<Storage, StorageError> {
         ops: ops.clone(),
         fault: config.fault,
     };
-    writer.compact_at_start();
     std::thread::Builder::new()
         .name("penwise-storage-writer".into())
         .spawn(move || {
@@ -164,7 +163,7 @@ impl Writer {
                 let _ = reply.send(restore::run(self, page, to_seq));
             }
             Command::Compact { reply } => {
-                let _ = reply.send(compact::run(&mut self.conn, (self.now_ms)()));
+                let _ = reply.send(compact::step(&mut self.conn, (self.now_ms)()));
             }
         }
     }
@@ -216,11 +215,5 @@ impl Writer {
             params![&device.id.0[..], device.name, kind, now, to_i64(acked_seq)],
         )?;
         Ok(())
-    }
-
-    fn compact_at_start(&mut self) {
-        if let Err(error) = compact::run(&mut self.conn, (self.now_ms)()) {
-            tracing::warn!(%error, "startup compaction failed");
-        }
     }
 }

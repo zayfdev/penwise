@@ -21,10 +21,10 @@ internal class InkRenderCallback(
     images: () -> PageImages? = { null },
     onSettled: () -> Unit = {},
 ) : CanvasFrontBufferedRenderer.Callback<Unit> {
-    private val frontPainter = GeometryPainter(images)
+    private val frontPainter = GeometryPainter(images, StampBuffer.HARDWARE_RING)
     private val dry = DryLayer(GeometryPainter(images), images, onSettled)
     private val dirty = RectF()
-    private val next = RectF()
+    private val next = DirtyRects()
     private var drawnPaint: FrontPaint? = null
     private var drawnView: ViewTransform? = null
     private var drawnStrokeId = NO_STROKE
@@ -61,27 +61,30 @@ internal class InkRenderCallback(
         frontPainter.view = view
         // Only what changed since the frame on the buffer is cleared and redrawn (see GeometryChange): clearing
         // and repainting the whole stroke every frame shows up as flashing lines on the single-buffered layer.
+        next.clear()
         frame.paint.changedInto(drawnPaint, next)
         drawnPaint = frame.paint
-        if (next.isEmpty) return
-        screenBounds(view, next, dirty)
-        canvas.withClip(dirty) {
-            drawColor(Color.TRANSPARENT, BlendMode.CLEAR)
-            frame.paint.draw(this, frontPainter)
+        for (i in 0 until next.size) {
+            screenBounds(view, next, i, dirty)
+            canvas.withClip(dirty) {
+                drawColor(Color.TRANSPARENT, BlendMode.CLEAR)
+                frame.paint.draw(this, frontPainter)
+            }
         }
     }
 
-    /** The screen rect of a page-space [page] rect, with room for anti-aliasing and round caps. */
+    /** The screen rect of page-space area [i] of [page], with room for anti-aliasing and round caps. */
     private fun screenBounds(
         view: ViewTransform,
-        page: RectF,
+        page: DirtyRects,
+        i: Int,
         out: RectF,
     ) {
         out.set(
-            view.toScreenX(page.left) - EDGE_PX,
-            view.toScreenY(page.top) - EDGE_PX,
-            view.toScreenX(page.right) + EDGE_PX,
-            view.toScreenY(page.bottom) + EDGE_PX,
+            view.toScreenX(page.left(i)) - EDGE_PX,
+            view.toScreenY(page.top(i)) - EDGE_PX,
+            view.toScreenX(page.right(i)) + EDGE_PX,
+            view.toScreenY(page.bottom(i)) + EDGE_PX,
         )
     }
 

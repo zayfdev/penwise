@@ -31,11 +31,18 @@ internal class StylusStrokeController(
 
     /** Returns true when the event belongs to an active or starting pen gesture. */
     fun onTouchEvent(event: MotionEvent): Boolean {
-        when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> begin(event)
-            MotionEvent.ACTION_MOVE -> move(event)
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> end(event)
-            MotionEvent.ACTION_CANCEL -> cancel()
+        try {
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> begin(event)
+                MotionEvent.ACTION_MOVE -> move(event)
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> end(event)
+                MotionEvent.ACTION_CANCEL -> cancel()
+            }
+        } catch (_: IllegalStateException) {
+            // The page was closed under the pen (it was deleted or replaced mid-stroke): drop the stroke.
+            gesture = null
+            penId = NO_POINTER
+            env.sink.cancelStroke()
         }
         return isDrawing || isStylus(event, event.actionIndex)
     }
@@ -45,6 +52,9 @@ internal class StylusStrokeController(
         cancel()
         brushes.selection?.onDelete = null
     }
+
+    /** Abandons the gesture in flight but stays in use (the view was resized under the pen). */
+    fun abandon() = cancel()
 
     private fun begin(event: MotionEvent) {
         if (gesture != null) return

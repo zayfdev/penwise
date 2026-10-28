@@ -240,14 +240,31 @@ impl Storage {
         .await?
     }
 
-    /// Runs retention now: drops log rows and tombstoned items older than [`RETENTION_DAYS`] that every
+    /// Runs retention now, in slices of at most 5,000 rows so the writer is never held long: drops log rows and
+    /// tombstoned items older than [`RETENTION_DAYS`] that every
     /// active device has acked, and raises `log_floor`.
     ///
     /// # Errors
     /// `Closed`, `Sqlite`.
     pub async fn compact(&self) -> Result<CompactReport, StorageError> {
-        self.call(|reply| writer::Command::Compact { reply })
-            .await?
+        let mut total = CompactReport {
+            log_floor: 0,
+            ops_deleted: 0,
+            items_purged: 0,
+        };
+        loop {
+            let step = self
+                .call(|reply| writer::Command::Compact { reply })
+                .await??;
+            total.log_floor = step.report.log_floor;
+            total.ops_deleted += step.report.ops_deleted;
+            total.items_purged += step.report.items_purged;
+            if !step.more {
+                return Ok(total);
+            }
+            // Each slice is its own writer command, so pushes and acks queued meanwhile run between slices.
+            tokio::task::yield_now().await;
+        }
     }
 
     async fn call<T>(

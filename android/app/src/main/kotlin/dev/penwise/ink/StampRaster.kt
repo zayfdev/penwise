@@ -128,7 +128,12 @@ internal object StampRaster {
         val opacity = d[o + Dab.OPACITY].coerceIn(0f, 1f)
         val rxPage = d[o + Dab.RADIUS_X]
         val ryPage = d[o + Dab.RADIUS_Y]
-        val finite = listOf(d[o + Dab.X], d[o + Dab.Y], d[o + Dab.ANGLE], rxPage, ryPage).all { it.isFinite() }
+        val finite =
+            d[o + Dab.X].isFinite() &&
+                d[o + Dab.Y].isFinite() &&
+                d[o + Dab.ANGLE].isFinite() &&
+                rxPage.isFinite() &&
+                ryPage.isFinite()
         if (!(rxPage > 0f && ryPage > 0f && opacity > 0f && finite)) return null
         val cx = (d[o + Dab.X] - view.originX) * view.scale
         val cy = (d[o + Dab.Y] - view.originY) * view.scale
@@ -243,8 +248,10 @@ internal object StampRaster {
     }
 
     /**
-     * Accumulates [dabs] into [buffer] (`rect.width * rect.height` values over [rect]) with the union rule, dab by
-     * dab like core's `render_stamps`. Paper heights are read once per pixel.
+     * Accumulates [dabs] into [buffer] (`rect.width * rect.height` values over [rect]; the array may be longer) with
+     * the union rule, dab by dab like core's `render_stamps`. Paper heights are read once per pixel, into [scratch]
+     * (grown by [paperScratch] when too small; the array used is returned so the caller keeps it), so a grained
+     * stroke does not allocate a buffer per call.
      */
     fun accumulate(
         buffer: FloatArray,
@@ -253,8 +260,9 @@ internal object StampRaster {
         view: RasterView,
         grain: GrainStyle?,
         heights: HeightSource?,
-    ) {
-        val paper = if (grain != null && heights != null) FloatArray(buffer.size) { Float.NaN } else null
+        scratch: FloatArray? = null,
+    ): FloatArray? {
+        val paper = if (grain != null && heights != null) paperScratch(scratch, rect.width * rect.height) else null
         for (pd in dabs) {
             val lx = max(rect.left, floor(pd.cx - pd.extent).toInt())
             val hx = min(rect.right, ceil(pd.cx + pd.extent).toInt())
@@ -262,6 +270,17 @@ internal object StampRaster {
             val hy = min(rect.bottom, ceil(pd.cy + pd.extent).toInt())
             for (row in ly until hy) stampRow(buffer, rect, pd, row, lx until hx, view, grain, heights, paper)
         }
+        return paper ?: scratch
+    }
+
+    /** The paper-height cache for [n] pixels: [scratch] if big enough, else a new array of exactly [n]; NaN-filled. */
+    fun paperScratch(
+        scratch: FloatArray?,
+        n: Int,
+    ): FloatArray {
+        val paper = if (scratch != null && scratch.size >= n) scratch else FloatArray(n)
+        paper.fill(Float.NaN, 0, n)
+        return paper
     }
 
     @Suppress("LongParameterList") // one row of one dab: all the context the pixels need

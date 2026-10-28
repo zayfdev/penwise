@@ -80,7 +80,7 @@ export class Api {
   /** `GET /text?page=…` — the page's handwriting as text (`refresh` re-reads it with the vision model). */
   async pageText(page: string, refresh: boolean): Promise<string> {
     const q = new URLSearchParams({ page });
-    if (refresh) q.set("refresh", "1");
+    if (refresh) q.set("refresh", "true");
     return text(record(await this.json("GET", `/text?${q}`)).text);
   }
 

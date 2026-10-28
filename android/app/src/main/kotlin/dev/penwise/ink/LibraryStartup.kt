@@ -22,7 +22,7 @@ internal class LibraryStartup(
     private val scope: CoroutineScope,
     private val onImported: () -> Unit,
 ) {
-    /** Completes when the first sync is over for good or ill (caught up, or the server is unreachable). */
+    /** Completes when the first sync is over for good or ill (caught up, or every endpoint failed). */
     private val firstContact = CompletableDeferred<Unit>()
 
     /** Completes only when the core says the replica holds what the server announced. */
@@ -34,7 +34,7 @@ internal class LibraryStartup(
         firstContact.complete(Unit)
     }
 
-    /** No server answered (`SyncListener.onUnreachable`). */
+    /** Every endpoint failed (`SyncListener.onUnreachable`). */
     fun unreachable() {
         firstContact.complete(Unit)
     }
@@ -47,7 +47,13 @@ internal class LibraryStartup(
                 .all()
                 .isEmpty()
         val importing = open.legacy.pending()
-        if (empty || importing) withTimeoutOrNull(FIRST_SYNC_TIMEOUT_MS) { firstContact.await() }
+        // An empty library waits for a verdict from the server (caught up, or every endpoint failed): creating a
+        // notebook before that duplicates the one the server is about to send.
+        if (empty) {
+            firstContact.await()
+        } else if (importing) {
+            withTimeoutOrNull(FIRST_SYNC_TIMEOUT_MS) { firstContact.await() }
+        }
         if (open.library
                 .list(null)
                 .all()

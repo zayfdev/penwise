@@ -5,7 +5,11 @@ sidebar of notebooks/pages from the synced catalog, the page on a HiDPI canvas, 
 pen/mouse tool, own undo/redo, a text panel (`/text`), search (`/search`) and a pairing panel (`/pair/code`,
 `/pair.png`). On the server's own PC, run `just install-desktop` once: it installs the server as a login service
 (`penwise.service`) and a **Penwise** launcher that opens the viewer as its own window at `http://127.0.0.1:7420/`;
-the viewer fetches the token itself from `GET /pair/local` and follows the tablet's page. From another machine open
+the viewer fetches the token itself from `GET /pair/local` and follows the tablet's page. The paths are fixed under
+`~/.local/share` (`XDG_DATA_HOME` is not honoured); a re-install restarts the server first, then swaps the viewer
+through the `penwise-app/web` symlink. If the server does not answer, the launcher shows a notification with the
+`journalctl --user -u penwise` hint. `/pair` and `/pair.png` work out the LAN/Tailscale addresses per request
+(cached 30 s, helper programs time out after 2 s). The token file is mode `0600`. From another machine open
 `http://host:7420/?token=…` (the token is kept in `localStorage`; without one the viewer asks for a pairing code
 and exchanges it through `POST /pair`).
 

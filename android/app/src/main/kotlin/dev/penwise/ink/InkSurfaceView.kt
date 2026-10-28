@@ -40,7 +40,7 @@ class InkSurfaceView
         private var pageStyle: PageStyle = PageStyle.BLANK
 
         private var viewport = ViewportState()
-        private var penHoverUntil = 0L
+        private var pen = PenActivity()
 
         /** Runs on the UI thread whenever the stylus touches down (the canvas is about to be written on). */
         var onPenDown: () -> Unit = {}
@@ -61,7 +61,9 @@ class InkSurfaceView
             viewport: ViewportState,
             images: PageImages? = null,
             liveOut: LiveOut? = null,
+            pen: PenActivity = PenActivity(),
         ) {
+            this.pen = pen
             this.viewport = viewport
             this.brushes = brushes
             this.images = images
@@ -74,6 +76,7 @@ class InkSurfaceView
             if (scene === next) return
             controller?.release()
             brushes?.selection?.clear()
+            pen.drawing = false
             scene?.onChanged = null
             scene = next
             callback?.attach(next)
@@ -101,6 +104,7 @@ class InkSurfaceView
             draw.attach(current)
             renderer = CanvasFrontBufferedRenderer(this, draw)
             controller = newController(current)
+            brushes?.selection?.onCleared = ::cancelStroke
             holder.addCallback(this)
             viewport.setViewSize(width.toFloat(), height.toFloat())
             viewport.setPage(pageStyle)
@@ -121,6 +125,8 @@ class InkSurfaceView
             holder.removeCallback(this)
             controller?.release()
             controller = null
+            brushes?.selection?.onCleared = null
+            pen.drawing = false
             renderer?.release(true)
             renderer = null
             callback?.release()
@@ -137,16 +143,23 @@ class InkSurfaceView
         ) {
             super.onSizeChanged(w, h, oldw, oldh)
             viewport.setViewSize(w.toFloat(), h.toFloat())
+            if (controller?.isDrawing == true && (w != oldw || h != oldh)) {
+                // Samples were mapped with the old size; a stroke continued across a resize would be displaced.
+                controller?.abandon()
+                cancelStroke()
+                pen.drawing = false
+            }
         }
 
         override fun onTouchEvent(event: MotionEvent): Boolean {
             predictor?.record(event)
             val stylus = controller?.onTouchEvent(event) ?: false
             if (stylus) {
-                penHoverUntil = event.eventTime + HOVER_HOLD_MS
+                pen.nearUntil = event.eventTime + HOVER_HOLD_MS
                 if (isPenDown(event)) onPenDown()
             }
-            fingers.onTouchEvent(event, stylus || controller?.isDrawing == true || penNear(event.eventTime))
+            pen.drawing = controller?.isDrawing == true
+            fingers.onTouchEvent(event, stylus || pen.drawing || penNear(event.eventTime))
             if (event.actionMasked == MotionEvent.ACTION_UP && !stylus) performClick()
             return true
         }
@@ -156,7 +169,9 @@ class InkSurfaceView
             val tool = event.getToolType(0)
             if (tool == MotionEvent.TOOL_TYPE_STYLUS || tool == MotionEvent.TOOL_TYPE_ERASER) {
                 val exit = event.actionMasked == MotionEvent.ACTION_HOVER_EXIT
-                penHoverUntil = if (exit) 0L else event.eventTime + HOVER_HOLD_MS
+                pen.nearUntil = if (exit) 0L else event.eventTime + HOVER_HOLD_MS
+                // Claiming the hover is what makes the system send HOVER_EXIT when the pen leaves.
+                return true
             }
             return super.onHoverEvent(event)
         }
@@ -176,7 +191,7 @@ class InkSurfaceView
             return super.onResolvePointerIcon(event, pointerIndex)
         }
 
-        private fun penNear(now: Long): Boolean = now < penHoverUntil
+        private fun penNear(now: Long): Boolean = now < pen.nearUntil
 
         private fun isPenDown(event: MotionEvent): Boolean {
             val action = event.actionMasked
@@ -236,8 +251,12 @@ class InkSurfaceView
         private companion object {
             const val TAP_SLOP_FACTOR = 1.5f
 
-            /** How long a stylus that stopped reporting hover still counts as near (the exit event can be lost). */
-            const val HOVER_HOLD_MS = 1_200L
+            /**
+             * How long a stylus that stopped reporting hover still counts as near. Hover events arrive every frame
+             * while the pen is in range, so this only bridges touch-up to the next hover event; a longer hold made
+             * the two-finger undo dead right after writing.
+             */
+            const val HOVER_HOLD_MS = 250L
             val REDRAW = listOf(Unit)
         }
     }

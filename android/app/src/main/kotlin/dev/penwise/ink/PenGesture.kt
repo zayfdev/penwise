@@ -2,6 +2,7 @@ package dev.penwise.ink
 
 import android.view.MotionEvent
 import androidx.input.motionprediction.MotionEventPredictor
+import java.util.concurrent.atomic.AtomicLong
 
 /** What the gestures need from the renderer; all calls happen on the UI thread. */
 internal interface StrokeSink {
@@ -24,10 +25,8 @@ internal class GestureEnv(
     val predictor: MotionEventPredictor?,
     val viewport: ViewportState,
 ) {
-    private var frames = 0L
-
     /** A fresh id for the next front-buffer frame sequence (the render thread clears when it changes). */
-    fun nextFrameId(): Long = ++frames
+    fun nextFrameId(): Long = frames.incrementAndGet()
 
     /** Shows [paint] on the front buffer now. */
     fun show(
@@ -36,6 +35,14 @@ internal class GestureEnv(
     ) {
         live.publish(LiveFrame(frameId, paint))
         sink.requestFrontFrame()
+    }
+
+    private companion object {
+        /**
+         * Process-wide: the render callback outlives the controller (rebuilt on every page switch) and remembers the
+         * last id it drew, so ids from two controllers must never collide.
+         */
+        val frames = AtomicLong()
     }
 }
 

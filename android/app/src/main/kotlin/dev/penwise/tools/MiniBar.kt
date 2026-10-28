@@ -33,6 +33,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.penwise.R
+import dev.penwise.sync.SyncStatus
 
 private const val BAR_COLOR = 0xF2FFFFFF
 private const val BAR_RADIUS_DP = 22
@@ -43,6 +44,11 @@ private const val RING_DP = 2
 private const val RING_COLOR = 0xFF202124
 private const val LABEL_SP = 13
 private const val LABEL_COLOR = 0xFF23252A
+private const val DOT_DP = 12
+private const val DOT_PAD_DP = 8
+private const val DOT_ONLINE = 0xFF2E9E5B
+private const val DOT_CONNECTING = 0xFFE0A100
+private const val DOT_OFFLINE = 0xFFC0392B
 
 /**
  * The only chrome on a collapsed page: current colour (opens the drawer), undo, redo and the "Tools" expander.
@@ -55,6 +61,9 @@ fun MiniBar(
     onToggle: () -> Unit,
     onUndo: () -> Unit,
     onRedo: () -> Unit,
+    syncStatus: SyncStatus,
+    pending: Int,
+    onSync: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -67,7 +76,46 @@ fun MiniBar(
         CurrentColor(state, onClick = onToggle)
         ToolButton(ToolIcons.Undo, stringResource(R.string.tool_undo), false, onUndo)
         ToolButton(ToolIcons.Redo, stringResource(R.string.tool_redo), false, onRedo)
+        SyncDot(syncStatus, pending, onSync)
         Expander(expanded, onToggle)
+    }
+}
+
+/** Link state at a glance: green synced, amber connecting, red offline, with the edits still waiting to send. */
+@Composable
+private fun SyncDot(
+    status: SyncStatus,
+    pending: Int,
+    onClick: () -> Unit,
+) {
+    val label =
+        stringResource(
+            when (status) {
+                SyncStatus.ONLINE -> R.string.sync_dot_online
+                SyncStatus.CONNECTING -> R.string.sync_dot_connecting
+                SyncStatus.BAD_TOKEN, SyncStatus.STOPPED -> R.string.sync_dot_offline
+            },
+        )
+    val description = if (pending > 0) stringResource(R.string.sync_dot_pending, label, pending) else label
+    val color =
+        when (status) {
+            SyncStatus.ONLINE -> DOT_ONLINE
+            SyncStatus.CONNECTING -> DOT_CONNECTING
+            SyncStatus.BAD_TOKEN, SyncStatus.STOPPED -> DOT_OFFLINE
+        }
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(BAR_RADIUS_DP.dp))
+            .combinedClickable(role = Role.Button, onClick = onClick)
+            .semantics { contentDescription = description }
+            .padding(horizontal = DOT_PAD_DP.dp, vertical = DOT_PAD_DP.dp),
+        horizontalArrangement = Arrangement.spacedBy(BAR_GAP_DP.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(DOT_DP.dp).background(Color(color), CircleShape))
+        if (pending > 0) {
+            BasicText(pending.toString(), style = TextStyle(color = Color(LABEL_COLOR), fontSize = LABEL_SP.sp))
+        }
     }
 }
 

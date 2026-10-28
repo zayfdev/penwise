@@ -15,6 +15,7 @@ use crate::assets::Assets;
 use crate::pairing::Pairing;
 use crate::storage::{FaultPlan, NowMs, Storage, StorageConfig, StorageError, system_now_ms};
 use crate::sync::{Hub, SyncConfig};
+use crate::urls::Urls;
 
 /// File name of the database inside the data directory.
 pub const DB_FILE: &str = "penwise.db";
@@ -38,7 +39,7 @@ pub struct ServerConfig {
     pub sync: Option<SyncConfig>,
     /// Directory of the static viewer (missing files answer 404).
     pub web_dir: PathBuf,
-    /// URLs this machine is reachable at, handed out when pairing.
+    /// URLs handed out when pairing; empty means discover them per request (LAN, Tailscale, loopback).
     pub urls: Vec<String>,
     /// Base URL of the local vision model (Ollama) that reads handwriting.
     pub ocr_url: String,
@@ -105,6 +106,10 @@ pub async fn serve(
     }
     storage_config.fault = config.fault;
     std::fs::create_dir_all(&config.data_dir).map_err(|e| ServeError::Io(e.to_string()))?;
+    let addr = listener
+        .local_addr()
+        .map_err(|e| ServeError::Io(e.to_string()))?;
+    let addr_port = addr.port();
     let storage = tokio::task::spawn_blocking(move || Storage::open(storage_config))
         .await
         .map_err(|e| ServeError::Io(e.to_string()))??;
@@ -123,15 +128,16 @@ pub async fn serve(
         data_dir: Arc::new(config.data_dir),
         web: Arc::new(config.web_dir),
         pairing: Arc::clone(&pairing),
-        urls: Arc::new(config.urls),
+        urls: Arc::new(if config.urls.is_empty() {
+            Urls::discovered(addr_port)
+        } else {
+            Urls::fixed(config.urls)
+        }),
         ocr_url: Arc::new(config.ocr_url),
     };
     let router = Router::new()
         .merge(api::router(app))
         .merge(crate::sync::routes(Arc::clone(&hub)));
-    let addr = listener
-        .local_addr()
-        .map_err(|e| ServeError::Io(e.to_string()))?;
     let task = tokio::spawn(async move {
         let app = router.into_make_service_with_connect_info::<SocketAddr>();
         if let Err(error) = axum::serve(listener, app).await {

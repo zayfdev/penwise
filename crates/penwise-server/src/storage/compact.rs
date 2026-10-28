@@ -22,11 +22,31 @@ pub struct CompactReport {
     pub items_purged: u64,
 }
 
-/// Runs retention in one transaction.
+/// Rows deleted per transaction: the writer thread is shared with every push and ack, so one run never holds
+/// it for long ([`Storage::compact`](super::Storage::compact) calls [`step`] until nothing is left).
+pub const BATCH_ROWS: usize = 5_000;
+/// Free pages returned to the OS per batch when the database uses `auto_vacuum = INCREMENTAL` (a no-op for the
+/// default `NONE`; changing that on an existing file needs a full `VACUUM`, which this server never runs).
+const VACUUM_PAGES: u32 = 1_000;
+
+/// One bounded slice of retention.
+#[derive(Debug, Clone, Copy)]
+pub struct Step {
+    /// What this slice did (`log_floor` is the floor after it).
+    pub report: CompactReport,
+    /// More rows are waiting: call again (other writer commands run in between).
+    pub more: bool,
+}
+
+/// Runs one retention slice in one transaction: raises `log_floor` (together with the first deletes, so a
+/// reader never sees a log with holes below the floor) and deletes at most [`BATCH_ROWS`] old ops and purges at
+/// most [`BATCH_ROWS`] tombstoned items.
+///
+/// Devices of `kind = 1` (browsers) never hold the floor back: they keep no cursor and refetch a snapshot.
 ///
 /// # Errors
 /// `Sqlite`, `Corrupt`.
-pub fn run(conn: &mut Connection, now_ms: u64) -> Result<CompactReport, StorageError> {
+pub fn step(conn: &mut Connection, now_ms: u64) -> Result<Step, StorageError> {
     let cutoff = to_i64(now_ms.saturating_sub(RETENTION_DAYS * DAY_MS));
     let idle_cutoff = to_i64(now_ms.saturating_sub(DEVICE_IDLE_DAYS * DAY_MS));
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -38,7 +58,7 @@ pub fn run(conn: &mut Connection, now_ms: u64) -> Result<CompactReport, StorageE
     )?;
     let min_ack: Option<i64> = tx
         .query_row(
-            "SELECT MIN(acked_seq) FROM devices WHERE last_seen_ms > ?1",
+            "SELECT MIN(acked_seq) FROM devices WHERE last_seen_ms > ?1 AND kind != 1",
             [idle_cutoff],
             |r| r.get(0),
         )
@@ -49,14 +69,26 @@ pub fn run(conn: &mut Connection, now_ms: u64) -> Result<CompactReport, StorageE
         .min(min_ack.map_or(head, |a| u64::try_from(a).unwrap_or(0)))
         .min(head)
         .max(old_floor);
-    if floor == old_floor {
-        return Ok(CompactReport {
-            log_floor: floor,
-            ops_deleted: 0,
-            items_purged: 0,
+    let leftover: bool = tx.query_row(
+        "SELECT EXISTS (SELECT 1 FROM ops WHERE seq <= ?1)",
+        [to_i64(floor)],
+        |r| r.get(0),
+    )?;
+    if floor == old_floor && !leftover {
+        return Ok(Step {
+            report: CompactReport {
+                log_floor: floor,
+                ops_deleted: 0,
+                items_purged: 0,
+            },
+            more: false,
         });
     }
-    let ops_deleted = tx.execute("DELETE FROM ops WHERE seq <= ?1", [to_i64(floor)])?;
+    meta_put_u64(&tx, "log_floor", floor)?;
+    let ops_deleted = tx.execute(
+        "DELETE FROM ops WHERE seq IN (SELECT seq FROM ops WHERE seq <= ?1 ORDER BY seq LIMIT ?2)",
+        params![to_i64(floor), i64::try_from(BATCH_ROWS).unwrap_or(i64::MAX)],
+    )?;
     let purge = purgeable_items(&tx, floor, u64::try_from(cutoff).unwrap_or(0))?;
     for (id, created) in &purge {
         // Remember the id forever: a late `Add` of a purged item must not bring it back.
@@ -67,12 +99,18 @@ pub fn run(conn: &mut Connection, now_ms: u64) -> Result<CompactReport, StorageE
         tx.execute("DELETE FROM image_labels WHERE item = ?1", [&id[..]])?;
         tx.execute("DELETE FROM items WHERE id = ?1", [&id[..]])?;
     }
-    meta_put_u64(&tx, "log_floor", floor)?;
     tx.commit()?;
-    Ok(CompactReport {
-        log_floor: floor,
-        ops_deleted: ops_deleted as u64,
-        items_purged: purge.len() as u64,
+    if ops_deleted > 0 || !purge.is_empty() {
+        // Returns freed pages when the file is `auto_vacuum = INCREMENTAL`; otherwise nothing happens.
+        conn.execute_batch(&format!("PRAGMA incremental_vacuum({VACUUM_PAGES})"))?;
+    }
+    Ok(Step {
+        report: CompactReport {
+            log_floor: floor,
+            ops_deleted: ops_deleted as u64,
+            items_purged: purge.len() as u64,
+        },
+        more: ops_deleted >= BATCH_ROWS || purge.len() >= BATCH_ROWS,
     })
 }
 
@@ -94,6 +132,9 @@ fn purgeable_items(
             .map_err(|e| StorageError::Corrupt(format!("item stamps: {e}")))?;
         if stamps.get(Field::Deleted).wall_ms < cutoff_ms {
             out.push((id, stamps.created));
+            if out.len() >= BATCH_ROWS {
+                break;
+            }
         }
     }
     Ok(out)

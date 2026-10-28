@@ -16,18 +16,21 @@ internal interface FrontPaint {
     fun boundsInto(out: RectF)
 
     /**
-     * Writes the page-space area that must be cleared and redrawn to turn what [previous] (the frame on the buffer,
-     * or null for a clean buffer) left there into this frame: by default everything either covers.
+     * Adds to [out] the page-space areas that must be cleared and redrawn to turn what [previous] (the frame on the
+     * buffer, or null for a clean buffer) left there into this frame: by default everything either covers.
      */
     fun changedInto(
         previous: FrontPaint?,
-        out: RectF,
+        out: DirtyRects,
     ) {
-        boundsInto(out)
-        if (previous == null) return
-        val before = RectF()
-        previous.boundsInto(before)
-        if (!before.isEmpty) out.union(before)
+        val box = RectF()
+        boundsInto(box)
+        if (previous != null) {
+            val before = RectF()
+            previous.boundsInto(before)
+            if (!before.isEmpty) box.union(before)
+        }
+        out.add(box.left, box.top, box.right, box.bottom)
     }
 
     fun draw(
@@ -37,20 +40,26 @@ internal interface FrontPaint {
 }
 
 /**
- * The stroke under the pen plus an optional predicted tail (motion prediction), which is never committed. A stamp
- * stroke has no tail: its dabs are one layer (a second layer would double the stroke opacity where they overlap, and
- * both would be drawn from the one reused raster bitmap), and the live geometry already reaches the pen.
+ * The stroke under the pen plus an optional predicted tail (motion prediction), which is never committed. A stroke
+ * that is translucent (opacity below 1) or multiplies has no tail, and neither does a stamp stroke: the tail is a
+ * second layer that overlaps the stroke tip, which would show as a darker patch riding the pen (and, for stamps, be
+ * drawn from the one reused raster bitmap); the live geometry already reaches the pen.
+ *
+ * Live multiply is approximate: the front buffer is transparent, so multiplying against it reduces to plain alpha
+ * compositing of the stroke color. The highlighter therefore looks like a tinted overlay until pen-up, when the
+ * committed layer multiplies against the page for real.
  */
 internal class StrokeFrame(
     private val geometry: InkGeometry,
     predicted: InkGeometry?,
 ) : FrontPaint {
-    private val tail = predicted.takeUnless { geometry.isStamps }
+    private val tail = predicted.takeUnless { !hasTail(geometry) }
 
     /** True when a predicted tail is drawn after the stroke. */
     val drawsTail: Boolean get() = tail != null
     private val tailBounds = RectF()
     private val changeBox = FloatArray(4)
+    private val union = RectF()
 
     override fun boundsInto(out: RectF) {
         geometry.boundsInto(out)
@@ -63,16 +72,16 @@ internal class StrokeFrame(
     /** Only the stroke's changed part and the old and new tails: the rest is already on the buffer. */
     override fun changedInto(
         previous: FrontPaint?,
-        out: RectF,
+        out: DirtyRects,
     ) {
         val before = previous as? StrokeFrame
         if (before == null) {
             super.changedInto(previous, out)
             return
         }
-        out.setEmpty()
+        union.setEmpty()
         if (GeometryChange.between(before.geometry, geometry, changeBox)) {
-            out.set(
+            union.set(
                 changeBox[GeometryChange.LEFT],
                 changeBox[GeometryChange.TOP],
                 changeBox[GeometryChange.RIGHT],
@@ -81,8 +90,9 @@ internal class StrokeFrame(
         }
         for (tailGeometry in arrayOf(before.tail, tail)) {
             tailGeometry?.boundsInto(tailBounds)
-            if (tailGeometry != null && !tailBounds.isEmpty) out.union(tailBounds)
+            if (tailGeometry != null && !tailBounds.isEmpty) union.union(tailBounds)
         }
+        out.add(union.left, union.top, union.right, union.bottom)
     }
 
     override fun draw(
@@ -91,6 +101,11 @@ internal class StrokeFrame(
     ) {
         painter.draw(canvas, geometry)
         tail?.let { painter.draw(canvas, it) }
+    }
+
+    companion object {
+        /** Does a stroke of [geometry] get a predicted tail? Only a solid, normal-blend outline stroke does. */
+        fun hasTail(geometry: InkGeometry): Boolean = !geometry.isStamps && geometry.opacity >= 1f && !geometry.multiply
     }
 }
 
@@ -117,6 +132,23 @@ internal class ShapeGuideFrame(
         out.set(minOf(x0, x1), minOf(y0, y1), maxOf(x0, x1), maxOf(y0, y1))
         out.inset(-(widthPx + ARROW_PAD), -(widthPx + ARROW_PAD))
     }
+
+    /** A rectangle drag moves two edges only: those are cleared, not the whole box. */
+    override fun changedInto(
+        previous: FrontPaint?,
+        out: DirtyRects,
+    ) {
+        val before = previous as? ShapeGuideFrame
+        if (before == null || !sameRectDrag(before)) {
+            super.changedInto(previous, out)
+            return
+        }
+        RectGuideChange.between(x0, y0, before.x1, before.y1, x1, y1, widthPx + ARROW_PAD, out)
+    }
+
+    /** Is this a rectangle drag from the same corner with the same line as [other] (only the far corner moved)? */
+    private fun sameRectDrag(other: ShapeGuideFrame): Boolean =
+        mode == ShapeMode.Rect && other.mode == mode && other.widthPx == widthPx && other.x0 == x0 && other.y0 == y0
 
     override fun draw(
         canvas: Canvas,
@@ -149,6 +181,8 @@ internal class LassoFrame(
     points: FloatArray,
     count: Int,
 ) : FrontPaint {
+    private val points = points.copyOf(count * 2)
+    private val changeBox = FloatArray(4)
     private val path = Path()
     private val screenPath = Path()
     private val matrix = Matrix()
@@ -172,6 +206,26 @@ internal class LassoFrame(
     override fun boundsInto(out: RectF) {
         out.set(box)
         if (!out.isEmpty) out.inset(-LINE_PX * 2, -LINE_PX * 2)
+    }
+
+    /** The loop only grows: the part from the old last vertex on is cleared and redrawn, not the whole loop box. */
+    override fun changedInto(
+        previous: FrontPaint?,
+        out: DirtyRects,
+    ) {
+        val before = previous as? LassoFrame
+        if (before == null) {
+            super.changedInto(previous, out)
+            return
+        }
+        if (!GeometryChange.polyline(before.points, points, changeBox)) return
+        val pad = LINE_PX * 2
+        out.add(
+            changeBox[GeometryChange.LEFT] - pad,
+            changeBox[GeometryChange.TOP] - pad,
+            changeBox[GeometryChange.RIGHT] + pad,
+            changeBox[GeometryChange.BOTTOM] + pad,
+        )
     }
 
     override fun draw(

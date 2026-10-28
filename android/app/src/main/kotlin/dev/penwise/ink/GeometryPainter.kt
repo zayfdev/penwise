@@ -21,13 +21,15 @@ import dev.penwise.core.InkGeometry
  */
 internal class GeometryPainter(
     private val images: () -> PageImages? = { null },
+    /** Raster bitmaps for stamp strokes; on a hardware canvas use [StampBuffer.HARDWARE_RING]. */
+    stampBitmaps: Int = 1,
 ) {
     private val path = Path()
     private val bounds = RectF()
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val stampPaint = Paint()
     private val layerPaint = Paint()
-    private val stampBuffer = StampBuffer()
+    private val stampBuffer = StampBuffer(stampBitmaps)
     private val maskPaint =
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
@@ -128,10 +130,9 @@ internal class GeometryPainter(
             if (cached == null) {
                 path.also { buildPath(it, points, contourEnds, evenOdd) }
             } else {
-                cached.nativePath as? Path ?: Path().also {
-                    cached.nativePath = it
-                    buildPath(it, points, contourEnds, evenOdd)
-                }
+                // Built completely before it is published: the settle and render threads both draw cached items.
+                cached.nativePath as? Path
+                    ?: Path().also { buildPath(it, points, contourEnds, evenOdd) }.also { cached.nativePath = it }
             }
         fillPaint.color = argb
         fillPaint.alpha = alpha255(Color.alpha(argb) / MAX_ALPHA * opacity)

@@ -24,7 +24,7 @@ import { fitView, type Viewport } from "../view";
 import { MessageKind, type Received, type Viewer, type Wasm } from "../wasm";
 import { Actions } from "./actions";
 import { choosePage, findPage, type NotebookGroup, readCatalog } from "./catalog";
-import { type FollowMode, planReceived, SnapshotTracker } from "./follow";
+import { type FollowMode, PendingSwitch, planReceived, SnapshotTracker } from "./follow";
 import { historyState, stepHistory } from "./history";
 import { exposeProbe } from "./probe";
 import { Unsent } from "./unsent";
@@ -56,6 +56,9 @@ export class App {
   private refitOnData = false;
   /** A page we just created: shown as soon as the catalog has it. */
   private pendingSelect: string | null = null;
+  /** A page the server asked us to show but the catalog (or the pen) was not ready for. */
+  private readonly pendingSwitch = new PendingSwitch();
+  private readonly images: ImageCache;
   private connState: ConnectionState = "closed";
   private readonly snapshots = new SnapshotTracker();
 
@@ -65,6 +68,7 @@ export class App {
   ) {
     this.stage = byId("stage", HTMLElement);
     this.viewer = new wasm.Viewer();
+    this.status = new StatusPill(byId("status", HTMLElement));
     const entropy = new BigUint64Array(crypto.getRandomValues(new Uint8Array(8)).buffer)[0] ?? 1n;
     this.unsent = new Unsent(
       this.viewer,
@@ -89,13 +93,13 @@ export class App {
       },
       problem: (message) => this.status.problem(message),
     });
-    this.status = new StatusPill(byId("status", HTMLElement));
     this.unlock = new Unlock(byId("unlock", HTMLElement), (code) => this.actions.pair(code));
     const grain = new PaperGrain();
-    const images = new ImageCache(
+    this.images = new ImageCache(
       (hash) => this.api.asset(hash),
       () => this.pageView.invalidateCommitted(),
     );
+    const images = this.images;
     this.pageView = new PageView(
       byId("committed", HTMLCanvasElement),
       byId("live", HTMLCanvasElement),
@@ -116,7 +120,10 @@ export class App {
       view: () => this.pageView.transform,
       brush: () => this.toolbar.brush(),
       origin: () => this.stage.getBoundingClientRect(),
-      liveChanged: () => this.pageView.invalidateLive(),
+      liveChanged: () => {
+        this.pageView.invalidateLive();
+        this.applyPendingSwitch();
+      },
       committedChanged: () => this.afterLocalEdit(),
       now: () => Date.now(),
       problem: (message) => this.status.problem(message),
@@ -128,6 +135,7 @@ export class App {
       fit: () => this.refit(true),
       mode: (mode) => {
         this.mode = mode;
+        if (mode === "free") this.pendingSwitch.clear();
       },
     });
     this.sidebar = new Sidebar(byId("pages", HTMLElement), {
@@ -219,6 +227,7 @@ export class App {
   }
 
   private onReceived(received: Received): void {
+    if (received.kind === MessageKind.Welcome) this.images.clearFailed();
     if (received.kind === MessageKind.Welcome && received.page) this.hint = received.page;
     const ended = this.snapshots.observe(received);
     const plan = planReceived(received, this.current, this.mode, ended, this.snapshots.inProgress);
@@ -227,13 +236,8 @@ export class App {
       const chosen = choosePage(this.groups, this.current, this.hint);
       if (chosen !== this.current) this.showPage(chosen);
     }
-    if (
-      plan.switchTo !== null &&
-      plan.switchTo !== this.current &&
-      findPage(this.groups, plan.switchTo)
-    ) {
-      this.showPage(plan.switchTo);
-    }
+    if (plan.switchTo !== null) this.pendingSwitch.request(plan.switchTo);
+    this.applyPendingSwitch();
     this.applyPendingSelect();
     if (plan.refreshCatalog) this.sidebar.render(this.groups, this.current);
     if (plan.repaintCommitted) {
@@ -245,10 +249,20 @@ export class App {
     this.refreshStatus();
   }
 
+  /** Opens the page the server asked for once the catalog has it and no stroke is open (never aborts a stroke). */
+  private applyPendingSwitch(): void {
+    const page = this.pendingSwitch.take(
+      (id) => findPage(this.groups, id) !== null,
+      this.current,
+      this.pen.drawing,
+    );
+    if (page !== null) this.showPage(page);
+  }
+
   /** Opens the page we just created once the catalog has it (the broadcast may beat the HTTP answer). */
   private applyPendingSelect(): void {
     const page = this.pendingSelect;
-    if (page === null || !findPage(this.groups, page)) return;
+    if (page === null || this.pen.drawing || !findPage(this.groups, page)) return;
     this.pendingSelect = null;
     this.showPage(page);
   }
@@ -259,6 +273,7 @@ export class App {
     this.userMoved = false;
     this.refitOnData = true;
     this.connection.watch(page);
+    this.images.clearFailed();
     this.sidebar.render(this.groups, page);
     this.refit(false);
     this.pageView.invalidateCommitted();
@@ -267,6 +282,7 @@ export class App {
   }
 
   private userSelect(page: string): void {
+    this.pendingSwitch.clear();
     if (this.mode === "follow") {
       this.mode = "free";
       byId("tool-mode", HTMLSelectElement).value = "free";

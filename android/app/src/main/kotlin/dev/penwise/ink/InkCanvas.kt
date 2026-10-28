@@ -17,12 +17,13 @@ fun InkCanvas(
     modifier: Modifier = Modifier,
     images: PageImages? = null,
     liveOut: LiveOut? = null,
+    pen: PenActivity = PenActivity(),
     onPenDown: () -> Unit = {},
 ) {
     AndroidView(
         factory = { context ->
             InkSurfaceView(context).apply {
-                bind(scene, brushes, viewport, images, liveOut)
+                bind(scene, brushes, viewport, images, liveOut, pen)
                 setPageStyle(style)
             }
         },

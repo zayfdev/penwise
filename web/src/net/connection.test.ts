@@ -92,6 +92,16 @@ describe("Connection", () => {
     expect(sockets).toHaveLength(1);
   });
 
+  it("keeps retrying after a reject that is not about the token", () => {
+    const { connection, sockets, states, clock } = rig();
+    connection.start();
+    sockets[0]?.onopen?.();
+    sockets[0]?.deliver(fixture("server_reject_rate_limited.bin"));
+    expect(states.at(-1)).toBe("closed");
+    clock.advance(RECONNECT_DELAYS_MS[0] ?? 0);
+    expect(sockets).toHaveLength(2);
+  });
+
   it("reconnects with backoff and re-sends Hello and Watch", () => {
     const { connection, sockets, states, clock } = rig();
     connection.watch("0000000000000000000000000A");

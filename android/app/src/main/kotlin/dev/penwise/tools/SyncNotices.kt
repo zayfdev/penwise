@@ -18,7 +18,10 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -82,32 +85,18 @@ fun SyncNotices(page: PageViewModel) {
     val startupError by ui.startupError.collectAsState()
     val changed by ui.serverChanged.collectAsState()
     val refused by ui.editRefused.collectAsState()
+    val notice by ui.notice.collectAsState()
+    // One answer per question: a second tap would ask the core to resolve a change it no longer holds.
+    var answered by remember(changed) { mutableStateOf(false) }
     val exportState = rememberFileExport("penwise-state-backup.pwsb") { ui.exportState(it) }
 
-    if (failing) {
-        Box(Modifier.safeDrawingPadding().fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
-            BasicText(
-                stringResource(R.string.sync_state_failing),
-                modifier =
-                    Modifier
-                        .background(Color(ERROR_COLOR), RoundedCornerShape(GAP_DP.dp))
-                        .padding(GAP_DP.dp),
-                style = TextStyle(fontSize = BODY_SP.sp, color = Color.White),
-            )
-        }
-    }
+    if (failing) Banner(stringResource(R.string.sync_state_failing), Alignment.TopCenter)
     if (refused != null) {
-        Box(Modifier.safeDrawingPadding().fillMaxWidth(), contentAlignment = Alignment.BottomCenter) {
-            BasicText(
-                stringResource(R.string.sync_edit_refused),
-                modifier =
-                    Modifier
-                        .background(Color(ERROR_COLOR), RoundedCornerShape(GAP_DP.dp))
-                        .clickable { ui.editRefused.value = null }
-                        .padding(GAP_DP.dp),
-                style = TextStyle(fontSize = BODY_SP.sp, color = Color.White),
-            )
-        }
+        Banner(stringResource(R.string.sync_edit_refused), Alignment.BottomCenter) { ui.editRefused.value = null }
+    }
+    notice?.let { message ->
+        val text = stringResource(message) + " " + stringResource(R.string.notice_dismiss)
+        Banner(text, Alignment.BottomCenter) { ui.notice.value = null }
     }
     if (changed) {
         NoticeDialog(
@@ -115,10 +104,20 @@ fun SyncNotices(page: PageViewModel) {
             body = stringResource(R.string.sync_server_changed_body),
         ) {
             val keep = stringResource(R.string.sync_server_keep)
-            ToolChip(keep, selected = true, onClick = { page.resolveServerChange(keep = true) })
+            ToolChip(keep, selected = true, onClick = {
+                if (!answered) {
+                    answered = true
+                    page.resolveServerChange(keep = true)
+                }
+            })
             ToolChip(stringResource(R.string.sync_server_export), selected = false, onClick = exportState)
             val drop = stringResource(R.string.sync_server_drop)
-            ToolChip(drop, selected = false, onClick = { page.resolveServerChange(keep = false) })
+            ToolChip(drop, selected = false, onClick = {
+                if (!answered) {
+                    answered = true
+                    page.resolveServerChange(keep = false)
+                }
+            })
         }
     } else if (startupError != null) {
         NoticeDialog(
@@ -132,6 +131,26 @@ fun SyncNotices(page: PageViewModel) {
         ) {
             ToolChip(stringResource(R.string.ok), selected = true, onClick = ui::dismissRecovery)
         }
+    }
+}
+
+/** A red strip over the page; tapping it runs [onDismiss] (none: it stays until the cause is gone). */
+@Composable
+private fun Banner(
+    text: String,
+    alignment: Alignment,
+    onDismiss: (() -> Unit)? = null,
+) {
+    Box(Modifier.safeDrawingPadding().fillMaxWidth(), contentAlignment = alignment) {
+        BasicText(
+            text,
+            modifier =
+                Modifier
+                    .background(Color(ERROR_COLOR), RoundedCornerShape(GAP_DP.dp))
+                    .then(if (onDismiss != null) Modifier.clickable(onClick = onDismiss) else Modifier)
+                    .padding(GAP_DP.dp),
+            style = TextStyle(fontSize = BODY_SP.sp, color = Color.White),
+        )
     }
 }
 

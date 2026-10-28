@@ -19,6 +19,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -47,9 +49,14 @@ class PageViewModel(
 
     /** Pictures placed on pages, fetched by asset hash and cached. */
     val images =
-        PageImages { asset ->
-            LibraryClient(settings.endpoints().firstOrNull().orEmpty(), settings.token).asset(asset)
+        PageImages { asset, maxPixels ->
+            // The connected endpoint first (away from home only Tailscale answers), then the others.
+            connectedFirst(engine?.connectedUrl, settings.endpoints())
+                .firstNotNullOfOrNull { LibraryClient(it, settings.token).asset(asset, maxPixels) }
         }
+
+    /** Whether the pen is writing or hovering: Back is ignored, and a left page is kept open, while it is. */
+    val pen = PenActivity()
 
     private val _pages = MutableStateFlow(PageList.EMPTY)
 
@@ -71,6 +78,7 @@ class PageViewModel(
 
     private val startup = LibraryStartup(viewModelScope, onImported = { publishCatalog(null) })
     private val pageLock = Mutex()
+    private val publishLock = Any()
     private val retiring = ArrayList<PageScene>()
     private var started = false
 
@@ -81,7 +89,14 @@ class PageViewModel(
 
     /** Notebook and page create/rename/delete; each runs on the catalog thread, never the UI thread. */
     val catalog =
-        CatalogCommands(viewModelScope, catalogDispatcher, { engine?.library }, { _pages.value }, ::publishCatalog)
+        CatalogCommands(
+            viewModelScope,
+            catalogDispatcher,
+            { engine?.library },
+            { _pages.value },
+            ::publishCatalog,
+            { syncUi.notice.value = it },
+        )
 
     /** Sync health and the dialogs' data (state file, kept-aside files, server identity, dead letters). */
     val syncUi = SyncUiState(catalogDispatcher) { engine }
@@ -112,7 +127,8 @@ class PageViewModel(
 
     private fun onOutcome(outcome: Outcome) {
         if (outcome.kind == Kind.WELCOME) serverPage = outcome.page?.let(Ids::hex)
-        if (outcome.serverChanged) syncUi.serverChanged.value = true
+        // The core may have been answered since this frame was queued: only a still-held core asks the question.
+        if (outcome.serverChanged && engine?.core?.serverChangePending() != false) syncUi.serverChanged.value = true
         if (!ready) return
         if (outcome.catalogChanged) publishCatalog(null)
         if (outcome.hasChanges) {
@@ -130,10 +146,10 @@ class PageViewModel(
 
         override fun onStatus(status: SyncStatus) {
             _status.value = status
-            if (status == SyncStatus.ONLINE) {
-                val app = getApplication<Application>()
-                SyncService.start(app, app.getString(R.string.sync_connected, settings.displayedUrl()))
-            }
+            val app = getApplication<Application>()
+            val online = status == SyncStatus.ONLINE
+            val where = engine?.connectedUrl ?: settings.displayedUrl()
+            SyncService.start(app, if (online) app.getString(R.string.sync_connected, where) else "", online)
         }
 
         override fun onCaughtUp() = startup.caughtUp()
@@ -190,8 +206,13 @@ class PageViewModel(
     /** Re-reads the catalog (off the UI thread); moves to another page when the open one is gone. */
     private fun publishCatalog(active: String?) {
         val open = engine ?: return
-        val list = open.library.list(active ?: _pages.value.active.ifEmpty { null })
-        _pages.value = list
+        // Read and publish under one lock so catalog snapshots land in the order they were read, and keep the page
+        // the user picked meanwhile (selectPage can run between the read and the write).
+        val list =
+            synchronized(publishLock) {
+                val fresh = open.library.list(active)
+                _pages.updateAndGet { current -> fresh.withPreferred(active ?: current.active.ifEmpty { null }) }
+            }
         if (list.active != shown) viewModelScope.launch { showActive() }
     }
 
@@ -229,21 +250,45 @@ class PageViewModel(
         }
     }
 
-    /** Closes a left page's scene a moment later: the renderer may still be drawing its last frame. */
+    /** Closes a left page's scene a moment later: the renderer may still draw its last frame, the pen may hold it. */
     private fun retire(scene: PageScene) {
         retiring.add(scene)
         viewModelScope.launch {
             delay(RETIRE_DELAY_MS)
+            while (pen.drawing) delay(RETIRE_DELAY_MS)
             if (retiring.remove(scene)) scene.close()
         }
     }
 
     /** Shows `id`. */
     fun selectPage(id: String) {
-        val list = _pages.value
-        if (id == list.active || list.page(id) == null) return
-        _pages.value = list.copy(active = id)
+        if (id == _pages.value.active || _pages.value.page(id) == null) return
+        _pages.update { if (it.page(id) != null) it.copy(active = id) else it }
         viewModelScope.launch { showActive() }
+    }
+
+    /** Undo on the page on screen. History work takes the core lock, so it runs off the UI thread, in order. */
+    fun undo() = edit { it.undo() }
+
+    fun redo() = edit { it.redo() }
+
+    /** Clears [scene] (the page the confirm dialog was opened for, which may no longer be the one on screen). */
+    fun clearPage(scene: PageScene) = edit(scene) { it.clearPage() }
+
+    private fun edit(
+        target: PageScene? = _scene.value,
+        action: (PageScene) -> Unit,
+    ) {
+        // The selection (and its frame) describe the page as it was before this change.
+        tools.selection.clear()
+        val scene = target ?: return
+        viewModelScope.launch(catalogDispatcher) {
+            try {
+                action(scene)
+            } catch (_: IllegalStateException) {
+                Log.i(TAG, "page closed before the edit ran") // the page was just left.
+            }
+        }
     }
 
     /**
@@ -253,24 +298,29 @@ class PageViewModel(
      * server's URL) first, so nobody has to copy 43 characters by hand.
      */
     fun updateSync(
-        url: String,
+        url: String?,
         token: String,
     ) {
         viewModelScope.launch {
-            val trimmed = token.trim()
-            val resolved =
-                if (LibraryClient.looksLikeCode(trimmed)) {
-                    val base = url.ifBlank { settings.displayedUrl() }
-                    withContext(Dispatchers.IO) {
-                        LibraryClient(base, "").pair(trimmed.replace("-", "").uppercase())
-                    }
-                } else {
-                    null
-                }
-            settings.overrideUrl = resolved?.second?.ifBlank { url } ?: url
-            settings.token = resolved?.first ?: token
-            engine?.start()
+            val update = withContext(Dispatchers.IO) { syncUpdateFor(url, token, ::pair) }
+            if (update == null) {
+                // Nothing changes: the code is not a token, and the old address and token may still work.
+                syncUi.notice.value = R.string.sync_pair_failed
+                return@launch
+            }
+            update.url?.let { settings.overrideUrl = it }
+            settings.token = update.token
+            engine?.start(forgetGood = true)
         }
+    }
+
+    /** Exchanges a pairing code at [url], or at each known endpoint when none was given. */
+    private fun pair(
+        url: String?,
+        code: String,
+    ): Pair<String, String>? {
+        val bases = url?.takeIf { it.isNotBlank() }?.let(::listOf) ?: settings.endpoints()
+        return bases.firstNotNullOfOrNull { runCatching { LibraryClient(it, "").pair(code) }.getOrNull() }
     }
 
     /**

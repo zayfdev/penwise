@@ -141,6 +141,29 @@ fn pictures_of(scene: &Scene) -> Vec<(&Item, &ImageItem)> {
         .collect()
 }
 
+/// A tombstoned item keeps its id forever, so placing a picture under it would "succeed" and stay invisible.
+fn refuse_deleted(view: &PageView, id: ItemId) -> Result<(), ApiError> {
+    if view
+        .replica
+        .items()
+        .any(|state| state.deleted && state.item.id == id)
+    {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "that picture id was deleted; place it again without an id (or restore the page)",
+        ));
+    }
+    Ok(())
+}
+
+/// The picture is already committed and synced, so a label that cannot be stored is logged, not a failed request
+/// (a retry would look like a duplicate).
+async fn store_label(app: &AppState, id: ItemId, label: String) {
+    if let Err(error) = labels::put(&app.data_dir, id, label).await {
+        tracing::warn!(status = %error.status, reason = %error.message, "picture placed but its label was not stored");
+    }
+}
+
 /// `POST /pages/<id>/images` — body `{"asset","x","y","w","h","label"?,"id"?,"layer"?}`.
 ///
 /// The picture is placed in page px: the extension sends a screenshot sized to the page, and components are
@@ -185,6 +208,7 @@ async fn image_place(
                 let label = labels::of_page(&app.data_dir, page).await?.remove(&id);
                 return Ok(axum::Json(picture_of(item, image, label)).into_response());
             }
+            refuse_deleted(&view, id)?;
             id
         }
         None => {
@@ -222,7 +246,7 @@ async fn image_place(
     author.item(page, Edit::Add(item)).await?;
     author.commit().await?;
     if let Some(label) = request.label {
-        labels::put(&app.data_dir, id, label).await?;
+        store_label(&app, id, label).await;
     }
     Ok(axum::Json(picture).into_response())
 }

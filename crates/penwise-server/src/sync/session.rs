@@ -33,6 +33,8 @@ pub(super) struct Session<S: SyncStore> {
     pub(super) open: BTreeMap<ItemRef, PageId>,
     last_inbound: Instant,
     ping_nonce: u64,
+    /// Cursor value last recorded as the device ack, and when.
+    acked: (u64, Instant),
 }
 
 /// Runs a session on an already-upgraded socket's channels until it ends.
@@ -84,13 +86,19 @@ impl<S: SyncStore> Session<S> {
             open: BTreeMap::new(),
             last_inbound: Instant::now(),
             ping_nonce: 0,
+            acked: (0, Instant::now()),
         }
     }
 
-    /// Records the delivery cursor as the device's ack (design: acks update at `Hello` and at disconnect). A
+    /// Records the delivery cursor as the device's ack (design: acks update at `Hello`, periodically while connected, and at disconnect). A
     /// tablet or agent that missed frames in flight reconnects behind the cursor, which at worst turns into a
     /// snapshot. Browsers hold no cursor.
     async fn record_disconnect(&self) {
+        self.record_ack("disconnect").await;
+    }
+
+    /// Records the delivery cursor as the device's ack (never for browsers or an empty cursor).
+    async fn record_ack(&self, when: &str) {
         if self.kind == ClientKind::Browser || self.cursor == 0 {
             return;
         }
@@ -100,7 +108,7 @@ impl<S: SyncStore> Session<S> {
             .note_device(self.device, self.kind, self.cursor)
             .await
         {
-            tracing::warn!(%error, session = self.id, "device ack not recorded at disconnect");
+            tracing::warn!(%error, session = self.id, "device ack not recorded at {when}");
         }
     }
 
@@ -188,6 +196,10 @@ impl<S: SyncStore> Session<S> {
     async fn on_tick(&mut self) -> Result<(), Stop> {
         if self.last_inbound.elapsed() >= self.hub.config.idle_timeout {
             return Err(Stop::Peer);
+        }
+        if self.cursor > self.acked.0 && self.acked.1.elapsed() >= self.hub.config.ack_interval {
+            self.record_ack("tick").await;
+            self.acked = (self.cursor, Instant::now());
         }
         self.ping_nonce = self.ping_nonce.wrapping_add(1);
         self.out

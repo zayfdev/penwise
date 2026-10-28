@@ -85,6 +85,12 @@ async fn recognition_is_stored_as_a_text_layer_item_and_cached_by_its_sources() 
     assert_eq!(1, model.calls());
     read(&client, &base, page, "&refresh=true").await;
     assert_eq!(2, model.calls());
+    // The browser's button spells the flag `1`; `0` means no refresh.
+    let one = read(&client, &base, page, "&refresh=1").await;
+    assert_eq!(200, one.status().as_u16());
+    assert_eq!(3, model.calls());
+    read(&client, &base, page, "&refresh=0").await;
+    assert_eq!(3, model.calls());
     assert_eq!(
         1,
         live_texts(&rig.view(page).await).len(),

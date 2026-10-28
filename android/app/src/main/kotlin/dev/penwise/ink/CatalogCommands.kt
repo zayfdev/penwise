@@ -1,5 +1,6 @@
 package dev.penwise.ink
 
+import dev.penwise.R
 import dev.penwise.sync.Library
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -18,6 +19,7 @@ class CatalogCommands(
     private val library: () -> Library?,
     private val pages: () -> PageList,
     private val publish: (active: String?) -> Unit,
+    private val refused: (message: Int) -> Unit = {},
 ) {
     private fun change(change: (Library) -> Unit) {
         scope.launch(dispatcher) {
@@ -51,8 +53,8 @@ class CatalogCommands(
         title: String,
     ) = change { it.renamePage(id, title) }
 
-    /** Deletes a page (never the last one). */
-    fun deletePage(id: String) = change { it.deletePage(id) }
+    /** Deletes a page (never the last one; the user is told when it is refused). */
+    fun deletePage(id: String) = change { if (!it.deletePage(id)) refused(R.string.page_delete_refused) }
 
     fun createNotebook(title: String) = change { it.newNotebook(title) }
 
@@ -61,6 +63,6 @@ class CatalogCommands(
         title: String,
     ) = change { it.renameNotebook(id, title) }
 
-    /** Deletes an empty notebook (the last one and non-empty ones are refused). */
-    fun deleteNotebook(id: String) = change { it.deleteNotebook(id) }
+    /** Deletes an empty notebook (the last one and non-empty ones are refused, and the user is told). */
+    fun deleteNotebook(id: String) = change { if (!it.deleteNotebook(id)) refused(R.string.notebook_delete_refused) }
 }

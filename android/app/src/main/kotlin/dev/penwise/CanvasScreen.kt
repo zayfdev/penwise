@@ -19,6 +19,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.BiasAlignment
@@ -27,9 +28,12 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import dev.penwise.ink.InkCanvas
 import dev.penwise.ink.PageList
+import dev.penwise.ink.PageScene
 import dev.penwise.ink.PageStrip
 import dev.penwise.ink.PageStyle
 import dev.penwise.ink.PageViewModel
+import dev.penwise.sync.Ids
+import dev.penwise.sync.SyncStatus
 import dev.penwise.tools.ConfirmDialog
 import dev.penwise.tools.MiniBar
 import dev.penwise.tools.Toolbar
@@ -47,7 +51,8 @@ private const val EXCLUSION_BIAS = 0.45f
 
 /**
  * An open page: the canvas fills the screen and the only chrome is the [MiniBar]; the full tools and the page strip
- * are a drawer under it ([drawerOpen]). The pen touching the page closes the drawer.
+ * are a drawer under it ([drawerOpen]). The pen touching the page closes the drawer. "Clear page" confirms for the
+ * page it was opened on (its id survives recreation); if another page is showing by then it does nothing.
  */
 @Composable
 fun CanvasScreen(
@@ -57,13 +62,15 @@ fun CanvasScreen(
     onDrawerOpenChange: (Boolean) -> Unit,
     onHome: () -> Unit,
     onSync: () -> Unit,
+    syncStatus: SyncStatus,
+    pending: Int,
 ) {
     val tools = page.tools
     val scene by page.scene.collectAsState()
     val open = scene ?: return
     val zoom by page.viewport.zoom.collectAsState()
     ImmersiveWhileOpen()
-    var confirmClear by remember { mutableStateOf(false) }
+    var confirmClear by rememberSaveable { mutableStateOf<String?>(null) }
     Box(modifier = Modifier.fillMaxSize()) {
         InkCanvas(
             scene = open,
@@ -72,6 +79,7 @@ fun CanvasScreen(
             style = PageStyle.of(pages.page(pages.active)),
             images = page.images,
             liveOut = page.liveOut,
+            pen = page.pen,
             onPenDown = { onDrawerOpenChange(false) },
             modifier = Modifier.fillMaxSize(),
         )
@@ -89,8 +97,11 @@ fun CanvasScreen(
                 state = tools,
                 expanded = drawerOpen,
                 onToggle = { onDrawerOpenChange(!drawerOpen) },
-                onUndo = { open.undo() },
-                onRedo = { open.redo() },
+                onUndo = page::undo,
+                onRedo = page::redo,
+                syncStatus = syncStatus,
+                pending = pending,
+                onSync = onSync,
             )
             AnimatedVisibility(
                 visible = drawerOpen,
@@ -105,7 +116,7 @@ fun CanvasScreen(
                         state = tools,
                         zoomPercent = (zoom * PERCENT).roundToInt(),
                         onFit = page.viewport::reset,
-                        onClear = { confirmClear = true },
+                        onClear = { confirmClear = Ids.hex(open.page) },
                         onSync = onSync,
                         onHome = onHome,
                     )
@@ -121,19 +132,28 @@ fun CanvasScreen(
             }
         }
     }
-    if (confirmClear) {
-        ConfirmDialog(
-            title = stringResource(R.string.clear_page_title),
-            message = stringResource(R.string.clear_page_message),
-            confirm = stringResource(R.string.tool_clear_page),
-            destructive = true,
-            onDismiss = { confirmClear = false },
-            onConfirm = {
-                confirmClear = false
-                open.clearPage()
-            },
-        )
-    }
+    confirmClear?.let { forPage -> ClearPageDialog(forPage, open, page) { confirmClear = null } }
+}
+
+/** Asks before clearing; confirms only for the page it was opened on. */
+@Composable
+private fun ClearPageDialog(
+    forPage: String,
+    open: PageScene,
+    page: PageViewModel,
+    onDone: () -> Unit,
+) {
+    ConfirmDialog(
+        title = stringResource(R.string.clear_page_title),
+        message = stringResource(R.string.clear_page_message),
+        confirm = stringResource(R.string.tool_clear_page),
+        destructive = true,
+        onDismiss = onDone,
+        onConfirm = {
+            onDone()
+            if (Ids.hex(open.page) == forPage) page.clearPage(open)
+        },
+    )
 }
 
 /**

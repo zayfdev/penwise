@@ -24,16 +24,41 @@ pub fn load_or_create(data_dir: &Path) -> String {
     if let Ok(token) = std::fs::read_to_string(&path) {
         let token = token.trim().to_owned();
         if !token.is_empty() {
+            // Files written by older builds followed the umask: tighten them.
+            restrict(&path);
             return token;
         }
     }
     let token = random_hex();
     if let Err(error) =
-        std::fs::create_dir_all(data_dir).and_then(|()| std::fs::write(&path, &token))
+        std::fs::create_dir_all(data_dir).and_then(|()| write_private(&path, &token))
     {
         tracing::warn!(%error, "could not persist the access token; it will change on restart");
     }
     token
+}
+
+/// Writes `text` to a file only the owner can read (the token is the credential).
+fn write_private(path: &Path, text: &str) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    options.open(path)?.write_all(text.as_bytes())?;
+    restrict(path);
+    Ok(())
+}
+
+/// Best effort: mode `0600` on Unix (a file that already existed keeps its old mode through `open`).
+fn restrict(path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+    #[cfg(not(unix))]
+    let _ = path;
 }
 
 /// 16 random bytes as hex. Falls back to a time/pid mix only if `/dev/urandom` is unreadable.
@@ -112,5 +137,26 @@ pub async fn require(State(token): State<Arc<String>>, request: Request, next: N
         next.run(request).await
     } else {
         deny()
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    use super::*;
+
+    #[test]
+    fn the_token_file_is_private_even_when_an_older_one_was_not() {
+        let dir = penwise_testkit::TempDir::new("token").expect("tempdir");
+        let token = load_or_create(dir.path());
+        let path = dir.path().join("token");
+        let mode = |p: &Path| std::fs::metadata(p).expect("meta").permissions().mode() & 0o777;
+        if std::env::var_os("PENWISE_TOKEN").is_none() {
+            assert_eq!(0o600, mode(&path));
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).expect("chmod");
+            assert_eq!(token, load_or_create(dir.path()));
+            assert_eq!(0o600, mode(&path));
+        }
     }
 }

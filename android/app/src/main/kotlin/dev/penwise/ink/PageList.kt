@@ -43,6 +43,13 @@ data class PageList(
     /** The page shown by default: [active] when it exists, else the first page. */
     fun startPage(): PageMeta? = page(active) ?: all().firstOrNull()
 
+    /**
+     * This catalog with [preferred] on screen when it still exists, else the fallback [active] already holds. A
+     * catalog re-read (from a remote frame, a rename) uses it to keep the page the user chose.
+     */
+    fun withPreferred(preferred: String?): PageList =
+        if (preferred != null && preferred != active && page(preferred) != null) copy(active = preferred) else this
+
     /** Title for the next appended page. */
     fun nextTitle(): String = "Page ${all().size + 1}"
 

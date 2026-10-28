@@ -9,7 +9,8 @@
  * - After every received frame the outbox is flushed (`poll_push`): the viewer decides when a `PushOps` may go.
  * - Keep-alive: answer `Ping` with `Pong`; ping after {@link PING_INTERVAL_MS} of silence; drop the socket
  *   (and reconnect) after {@link IDLE_TIMEOUT_MS}.
- * - Reconnect with {@link RECONNECT_DELAYS_MS} backoff (last value repeats), except after `Reject`.
+ * - Reconnect with {@link RECONNECT_DELAYS_MS} backoff (last value repeats), except after a `bad_token` `Reject`
+ *   (other rejects are reported and retried with the same backoff).
  */
 
 import { MessageKind, type Received, type Viewer } from "../wasm";
@@ -23,7 +24,7 @@ export const RECONNECT_DELAYS_MS: readonly number[] = [500, 1_000, 2_000, 5_000,
 /** How often keep-alive state is checked. */
 const TICK_MS = 5_000;
 
-/** Lifecycle as shown in the UI. `rejected` = the server refused the token (no retry). */
+/** Lifecycle as shown in the UI. `rejected` = the server refused the token (`bad_token`; no retry). */
 export type ConnectionState = "connecting" | "open" | "closed" | "rejected";
 
 /** The slice of a `WebSocket` the connection uses. */
@@ -187,8 +188,12 @@ export class Connection {
         this.send(this.frames.encode_pong(summary.nonce));
         break;
       case MessageKind.Reject:
-        this.stopped = true;
-        this.setState("rejected");
+        if (summary.reject === "bad_token") {
+          this.stopped = true;
+          this.setState("rejected");
+        } else {
+          this.events.problem(`server refused the connection: ${summary.reject ?? "unknown"}`);
+        }
         this.socket?.close();
         break;
       case MessageKind.Error:

@@ -1,5 +1,6 @@
 package dev.penwise.ink
 
+import android.util.Log
 import dev.penwise.sync.DeadLetter
 import dev.penwise.sync.Exports
 import dev.penwise.sync.Outcome
@@ -10,6 +11,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.OutputStream
+
+private const val TAG = "PenwiseSync"
 
 /** What the sync dialog shows beside the connection state. */
 data class SyncInfo(
@@ -39,6 +42,9 @@ class SyncUiState(
     /** True while the server named a different identity and the user has to decide about the tablet's ink. */
     val serverChanged = MutableStateFlow(false)
 
+    /** A message the user must see (a refused delete, a failed pairing) as a string resource; `null` once dismissed. */
+    val notice = MutableStateFlow<Int?>(null)
+
     /** The reason the last drawing change was refused (too large to save); `null` once dismissed. */
     val editRefused = MutableStateFlow<String?>(null)
 
@@ -53,6 +59,9 @@ class SyncUiState(
             val open = engine() ?: return@withContext SyncInfo()
             SyncInfo(open.core.outbox().pending, open.core.deadLetters(), open.stateFailing)
         }
+
+    /** Edits waiting to be sent to the server; read off the UI thread because it takes the core lock. */
+    suspend fun pending(): Int = withContext(dispatcher) { engine()?.core?.outbox()?.pending ?: 0 }
 
     /** Writes the refused ops to [out] (a file the user chose); returns how many. */
     suspend fun exportDeadLetters(out: OutputStream): Int =
@@ -72,13 +81,28 @@ class SyncUiState(
     }
 
     /** Answers "the server is a different one": keep the ink (re-send it) or drop it; [applied] gets the outcome. */
+    @Suppress("TooGenericExceptionCaught") // native errors surface as RuntimeException
     fun resolveServerChange(
         scope: CoroutineScope,
         keep: Boolean,
         applied: (Outcome) -> Unit,
     ) {
         scope.launch(dispatcher) {
-            val outcome = engine()?.resolveServerChange(keep) ?: return@launch
+            val open = engine() ?: return@launch
+            // A second tap, or a tap after a queued frame re-raised the question, finds nothing held: the core
+            // would refuse ("no server change pending"), so just close the question.
+            if (!open.core.serverChangePending()) {
+                serverChanged.value = false
+                return@launch
+            }
+            val outcome =
+                try {
+                    open.resolveServerChange(keep)
+                } catch (error: RuntimeException) {
+                    Log.w(TAG, "server change not resolved: ${error.message}")
+                    serverChanged.value = false
+                    return@launch
+                }
             serverChanged.value = false
             applied(outcome)
         }

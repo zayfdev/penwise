@@ -30,7 +30,7 @@ pub(super) async fn exchange(State(app): State<AppState>, Json(body): Json<Value
     if !app.pairing.exchange(code) {
         return (StatusCode::UNAUTHORIZED, "bad pairing code").into_response();
     }
-    Json(json!({ "ok": true, "token": *app.token, "urls": *app.urls })).into_response()
+    Json(json!({ "ok": true, "token": *app.token, "urls": app.urls.get().await })).into_response()
 }
 
 /// `GET /pair/code` — the current code, for the viewer to display.
@@ -56,7 +56,7 @@ struct QrQuery {
 
 /// `GET /pair.png?size=8` — the pairing deep link as a QR the device camera can open.
 async fn qr_png(State(app): State<AppState>, Query(query): Query<QrQuery>) -> Response {
-    let payload = qr::current_payload(&app.pairing, &app.urls);
+    let payload = qr::current_payload(&app.pairing, &app.urls.get().await);
     match qr::png(&payload, qr::module_px(query.size)) {
         Ok(png) => (
             [

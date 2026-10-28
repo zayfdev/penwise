@@ -6,6 +6,7 @@
     reason = "test fixtures: small counts and coordinates"
 )]
 
+mod compaction;
 mod lifecycle;
 mod lww;
 mod purge;

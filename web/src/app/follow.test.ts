@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { MessageKind } from "../wasm";
 import { choosePage, findPage, type NotebookGroup } from "./catalog";
-import { planReceived, type ReceivedView, SnapshotTracker } from "./follow";
+import { PendingSwitch, planReceived, type ReceivedView, SnapshotTracker } from "./follow";
 
 function received(partial: Partial<ReceivedView> & Pick<ReceivedView, "kind">): ReceivedView {
   return {
@@ -59,14 +59,16 @@ describe("planReceived", () => {
     expect([live.repaintCommitted, live.repaintLive]).toEqual([false, true]);
   });
 
-  it("follows SwitchPage unless free; the first Welcome page is adopted only when nothing is shown", () => {
+  it("follows SwitchPage unless free; Welcome's page is followed unless free (or adopted when nothing is shown)", () => {
     const sw = received({ kind: MessageKind.SwitchPage, page: "p9" });
     expect(planReceived(sw, "p1", "follow", null, false).switchTo).toBe("p9");
     expect(planReceived(sw, "p1", "lead", null, false).switchTo).toBe("p9");
     expect(planReceived(sw, "p1", "free", null, false).switchTo).toBeNull();
     const welcome = received({ kind: MessageKind.Welcome, page: "p3" });
     expect(planReceived(welcome, null, "free", null, false).switchTo).toBe("p3");
-    expect(planReceived(welcome, "p1", "follow", null, false).switchTo).toBeNull();
+    expect(planReceived(welcome, "p1", "follow", null, false).switchTo).toBe("p3");
+    expect(planReceived(welcome, "p1", "lead", null, false).switchTo).toBe("p3");
+    expect(planReceived(welcome, "p1", "free", null, false).switchTo).toBeNull();
   });
 
   it("a finished catalog snapshot refreshes the lists and says the catalog is ready", () => {
@@ -109,5 +111,34 @@ describe("SnapshotTracker", () => {
     expect(tracker.observe({ kind: MessageKind.SnapshotEnd, scope: undefined })).toBe("catalog");
     expect(tracker.inProgress).toBe(false);
     expect(tracker.observe({ kind: MessageKind.SnapshotEnd, scope: undefined })).toBeNull();
+  });
+});
+
+describe("PendingSwitch", () => {
+  const known = (page: string) => page === "new";
+
+  it("waits for the catalog to list the page, then fires once", () => {
+    const pending = new PendingSwitch();
+    pending.request("new");
+    expect(pending.take(() => false, "old", false)).toBeNull();
+    expect(pending.take(known, "old", false)).toBe("new");
+    expect(pending.take(known, "old", false)).toBeNull();
+  });
+
+  it("never fires while a stroke is open, and fires after pen-up", () => {
+    const pending = new PendingSwitch();
+    pending.request("new");
+    expect(pending.take(known, "old", true)).toBeNull();
+    expect(pending.take(known, "old", false)).toBe("new");
+  });
+
+  it("is dropped by clear and when the page is already shown", () => {
+    const pending = new PendingSwitch();
+    pending.request("new");
+    pending.clear();
+    expect(pending.take(known, "old", false)).toBeNull();
+    pending.request("new");
+    expect(pending.take(known, "new", false)).toBeNull();
+    expect(pending.take(known, "old", false)).toBeNull();
   });
 });

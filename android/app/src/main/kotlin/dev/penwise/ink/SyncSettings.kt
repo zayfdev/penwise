@@ -37,11 +37,12 @@ class SyncSettings(
             prefs.edit { putString(KEY_ACTIVE, value) }
         }
 
-    /** Candidates in try order, each as the `/sync` WebSocket URL (the token travels in the `Hello` frame). */
-    fun endpoints(): List<String> {
-        val bases = overrideUrl?.let { listOf(it) } ?: candidates()
-        return bases.map(::toWebSocketUrl)
-    }
+    /**
+     * Endpoints in try order, each as the `/sync` WebSocket URL (the token travels in the `Hello` frame): the
+     * override first, then the built-in candidates, so a stale override (an `adb reverse` address after the cable is
+     * gone) falls through to the LAN and Tailscale.
+     */
+    fun endpoints(): List<String> = endpointList(overrideUrl, candidates())
 
     private fun candidates(): List<String> = context.resources.getStringArray(R.array.sync_urls).toList()
 
@@ -52,6 +53,23 @@ class SyncSettings(
         const val KEY_ACTIVE = "active_page"
     }
 }
+
+/** The override (when set) followed by the built-in [candidates], as socket URLs without duplicates. */
+internal fun endpointList(
+    override: String?,
+    candidates: List<String>,
+): List<String> =
+    (listOfNotNull(override) + candidates)
+        .map(::toWebSocketUrl)
+        .filter { it.isNotEmpty() }
+        .distinct()
+
+/** [endpoints] with the one currently connected (if it is among them) moved to the front, for HTTP fetches. */
+internal fun connectedFirst(
+    connected: String?,
+    endpoints: List<String>,
+): List<String> =
+    if (connected != null && connected in endpoints) listOf(connected) + (endpoints - connected) else endpoints
 
 /** Path of the binary sync socket on the server. */
 internal const val SOCKET_PATH = "/sync"
@@ -94,4 +112,26 @@ internal fun toWebSocketUrl(url: String): String {
         }
     val authority = rest.substringBefore('/').substringBefore('?')
     return scheme + authority + SOCKET_PATH
+}
+
+/** What saving the sync dialog (or a pairing link) changes: [url] `null` = keep the saved address. */
+internal class SyncUpdate(
+    val url: String?,
+    val token: String,
+)
+
+/**
+ * The settings to save for [url] and [token]. A pairing code is exchanged through [pair] (`(token, server url)`)
+ * first; when that fails this returns `null` and nothing may be saved: the code is not a token, and overwriting the
+ * working address and token with it locks the tablet out.
+ */
+internal fun syncUpdateFor(
+    url: String?,
+    token: String,
+    pair: (url: String?, code: String) -> Pair<String, String>?,
+): SyncUpdate? {
+    val trimmed = token.trim()
+    if (!LibraryClient.looksLikeCode(trimmed)) return SyncUpdate(url, token)
+    val paired = pair(url, trimmed.replace("-", "").uppercase()) ?: return null
+    return SyncUpdate(paired.second.ifBlank { url.orEmpty() }.ifBlank { null }, paired.first)
 }

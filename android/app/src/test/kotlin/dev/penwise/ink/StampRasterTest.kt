@@ -116,6 +116,17 @@ class StampRasterTest {
     }
 
     @Test
+    fun `the paper cache is sized to the pixels used, not to the reused coverage buffer`() {
+        val fresh = StampRaster.paperScratch(null, 12)
+        assertEquals(12, fresh.size)
+        assertTrue(fresh.all { it.isNaN() })
+        fresh.fill(1f)
+        assertTrue("a big enough scratch is reused and reset", StampRaster.paperScratch(fresh, 8) === fresh)
+        assertTrue(fresh.take(8).all { it.isNaN() })
+        assertEquals(20, StampRaster.paperScratch(fresh, 20).size)
+    }
+
+    @Test
     fun `the buffer path matches core end to end with the ported noise`() {
         for (c in fix.cases) {
             val dabs = StampRaster.pixelDabs(c.dabs, c.view)

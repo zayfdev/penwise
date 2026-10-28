@@ -36,6 +36,16 @@ internal object GeometryChange {
         return if (new.isStamps) stamps(old.dabs, new.dabs, box) else outline(old.outline, new.outline, box)
     }
 
+    /**
+     * Writes the padded page-space box of what differs between two polylines (x,y pairs; lasso loop) into [box];
+     * false when they are equal. A polyline that only grew differs from the last old vertex on.
+     */
+    fun polyline(
+        old: FloatArray,
+        new: FloatArray,
+        box: FloatArray,
+    ): Boolean = outline(old, new, box)
+
     private fun outline(
         old: FloatArray,
         new: FloatArray,

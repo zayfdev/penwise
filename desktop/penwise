@@ -1,18 +1,36 @@
 #!/usr/bin/env bash
 # Penwise desktop window: makes sure the server runs, then opens the viewer as its own app window.
 # The viewer follows the tablet's page by default and takes the token from the server itself (GET /pair/local),
-# so there is nothing to type.
+# so there is nothing to type. PENWISE_PORT (default 7420) is passed on to the service when it has to be started.
 set -euo pipefail
 
 port="${PENWISE_PORT:-7420}"
 url="http://127.0.0.1:${port}/"
 
-if ! curl -fsS -o /dev/null "${url}pair/local" 2>/dev/null; then
-    systemctl --user start penwise.service
-    for _ in $(seq 50); do
-        curl -fsS -o /dev/null "${url}pair/local" 2>/dev/null && break
+reachable() { curl -fsS -m 2 -o /dev/null "${url}pair/local" 2>/dev/null; }
+
+fail() {
+    local message="Penwise server is not answering on port ${port}. Check: journalctl --user -u penwise -e"
+    echo "penwise: $message" >&2
+    notify-send -a Penwise -u critical "Penwise" "$message" 2>/dev/null || true
+    exit 1
+}
+
+if ! reachable; then
+    # A crash loop (port taken, bad data dir) leaves the unit failed and refusing starts until reset.
+    systemctl --user reset-failed penwise.service 2>/dev/null || true
+    if [[ -n "${PENWISE_PORT:-}" ]]; then
+        # The unit does not name a port; the user manager's environment reaches it at start.
+        systemctl --user set-environment "PENWISE_PORT=${PENWISE_PORT}"
+        systemctl --user restart penwise.service || fail
+    else
+        systemctl --user start penwise.service || fail
+    fi
+    for _ in $(seq 100); do
+        reachable && break
         sleep 0.1
     done
+    reachable || fail
 fi
 
 browser="${PENWISE_BROWSER:-$(command -v chromium || command -v google-chrome-stable || command -v chromium-browser || true)}"
@@ -20,4 +38,4 @@ if [[ -z "$browser" ]]; then
     exec xdg-open "$url"
 fi
 # Own profile: its own window class (launcher icon, alt-tab entry) and storage, apart from everyday browsing.
-exec "$browser" --app="$url" --class=Penwise --user-data-dir="${XDG_DATA_HOME:-$HOME/.local/share}/penwise-app/browser" "$@"
+exec "$browser" --app="$url" --class=Penwise --user-data-dir="$HOME/.local/share/penwise-app/browser" "$@"
