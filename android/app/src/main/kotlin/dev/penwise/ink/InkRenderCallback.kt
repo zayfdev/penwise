@@ -25,7 +25,7 @@ internal class InkRenderCallback(
     private val dry = DryLayer(GeometryPainter(images), images, onSettled)
     private val dirty = RectF()
     private val next = RectF()
-    private val nextScreen = RectF()
+    private var drawnPaint: FrontPaint? = null
     private var drawnView: ViewTransform? = null
     private var drawnStrokeId = NO_STROKE
 
@@ -56,17 +56,19 @@ internal class InkRenderCallback(
             canvas.drawColor(Color.TRANSPARENT, BlendMode.CLEAR)
             drawnStrokeId = frame.strokeId
             drawnView = view
-            dirty.setEmpty()
+            drawnPaint = null
         }
         frontPainter.view = view
-        frame.paint.boundsInto(next)
-        screenBounds(view, next, nextScreen)
-        dirty.union(nextScreen)
+        // Only what changed since the frame on the buffer is cleared and redrawn (see GeometryChange): clearing
+        // and repainting the whole stroke every frame shows up as flashing lines on the single-buffered layer.
+        frame.paint.changedInto(drawnPaint, next)
+        drawnPaint = frame.paint
+        if (next.isEmpty) return
+        screenBounds(view, next, dirty)
         canvas.withClip(dirty) {
             drawColor(Color.TRANSPARENT, BlendMode.CLEAR)
             frame.paint.draw(this, frontPainter)
         }
-        dirty.set(nextScreen)
     }
 
     /** The screen rect of a page-space [page] rect, with room for anti-aliasing and round caps. */
@@ -94,6 +96,6 @@ internal class InkRenderCallback(
 
     private companion object {
         const val NO_STROKE = -1L
-        const val EDGE_PX = 4f
+        const val EDGE_PX = 8f
     }
 }

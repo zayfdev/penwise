@@ -15,6 +15,21 @@ internal interface FrontPaint {
     /** Writes the page-space area this frame covers into [out] (empty when nothing is drawn). */
     fun boundsInto(out: RectF)
 
+    /**
+     * Writes the page-space area that must be cleared and redrawn to turn what [previous] (the frame on the buffer,
+     * or null for a clean buffer) left there into this frame: by default everything either covers.
+     */
+    fun changedInto(
+        previous: FrontPaint?,
+        out: RectF,
+    ) {
+        boundsInto(out)
+        if (previous == null) return
+        val before = RectF()
+        previous.boundsInto(before)
+        if (!before.isEmpty) out.union(before)
+    }
+
     fun draw(
         canvas: Canvas,
         painter: GeometryPainter,
@@ -27,12 +42,38 @@ internal class StrokeFrame(
     private val tail: InkGeometry?,
 ) : FrontPaint {
     private val tailBounds = RectF()
+    private val changeBox = FloatArray(4)
 
     override fun boundsInto(out: RectF) {
         geometry.boundsInto(out)
         tail?.let {
             it.boundsInto(tailBounds)
             out.union(tailBounds)
+        }
+    }
+
+    /** Only the stroke's changed part and the old and new tails: the rest is already on the buffer. */
+    override fun changedInto(
+        previous: FrontPaint?,
+        out: RectF,
+    ) {
+        val before = previous as? StrokeFrame
+        if (before == null) {
+            super.changedInto(previous, out)
+            return
+        }
+        out.setEmpty()
+        if (GeometryChange.between(before.geometry, geometry, changeBox)) {
+            out.set(
+                changeBox[GeometryChange.LEFT],
+                changeBox[GeometryChange.TOP],
+                changeBox[GeometryChange.RIGHT],
+                changeBox[GeometryChange.BOTTOM],
+            )
+        }
+        for (tailGeometry in arrayOf(before.tail, tail)) {
+            tailGeometry?.boundsInto(tailBounds)
+            if (tailGeometry != null && !tailBounds.isEmpty) out.union(tailBounds)
         }
     }
 
