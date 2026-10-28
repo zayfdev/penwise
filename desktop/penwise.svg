@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
+  <!-- Same mark as the tablet launcher (android/.../ic_launcher_foreground.xml). -->
+  <rect x="6" y="6" width="96" height="96" rx="22" fill="#ffffff"/>
+  <path fill="#1a1a1a" d="M38,74 L66,34 Q70,30 74,34 Q78,38 74,42 L46,82 L36,84 Z"/>
+</svg>

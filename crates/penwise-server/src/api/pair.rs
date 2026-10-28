@@ -1,9 +1,12 @@
-//! Pairing routes: `POST /pair` (public; the code is the credential) and the token-gated code/QR views.
+//! Pairing routes: `POST /pair` (public; the code is the credential), `GET /pair/local` (the token for a
+//! viewer on this machine) and the token-gated code/QR views.
+
+use std::net::{IpAddr, SocketAddr};
 
 use axum::Json;
 use axum::Router;
-use axum::extract::{Query, State};
-use axum::http::{StatusCode, header};
+use axum::extract::{ConnectInfo, Extension, Query, State};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use serde::Deserialize;
@@ -65,4 +68,39 @@ async fn qr_png(State(app): State<AppState>, Query(query): Query<QrQuery>) -> Re
             .into_response(),
         Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),
     }
+}
+
+/// `GET /pair/local` — the token, for a viewer running on this machine (the desktop launcher), so nobody
+/// copies it into a URL.
+///
+/// Answered only when the TCP peer is loopback *and* the `Host` header names loopback: a web page elsewhere
+/// cannot read it (no CORS headers), and the `Host` check defeats DNS rebinding (an attacker's hostname
+/// pointed at 127.0.0.1 still carries the attacker's `Host`). Anything else gets 403.
+pub(super) async fn local(
+    State(app): State<AppState>,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    headers: HeaderMap,
+) -> Response {
+    let peer = peer.map(|Extension(ConnectInfo(addr))| addr.ip());
+    let host = headers.get(header::HOST).and_then(|v| v.to_str().ok());
+    if !same_machine(peer, host) {
+        return (StatusCode::FORBIDDEN, "only for a viewer on this machine").into_response();
+    }
+    (
+        [(header::CACHE_CONTROL, "no-store")],
+        Json(json!({ "token": *app.token })),
+    )
+        .into_response()
+}
+
+/// Loopback peer and a loopback `Host` (`127.0.0.1`, `[::1]` or `localhost`, any port).
+fn same_machine(peer: Option<IpAddr>, host: Option<&str>) -> bool {
+    let Some(host) = host else { return false };
+    let name = match host.strip_prefix('[') {
+        Some(rest) => rest.split(']').next().unwrap_or_default(),
+        None => host.split(':').next().unwrap_or_default(),
+    };
+    let loopback_name = name.eq_ignore_ascii_case("localhost")
+        || name.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback());
+    peer.is_some_and(|ip| ip.is_loopback()) && loopback_name
 }

@@ -6,9 +6,9 @@
 import { byId } from "../dom";
 import { attachHistoryKeys } from "../input/keys";
 import { PenInput } from "../input/pen";
-import { Api } from "../net/api";
+import { Api, fetchLocalToken } from "../net/api";
 import { Connection, type ConnectionState } from "../net/connection";
-import { clearToken, resolveToken } from "../net/credentials";
+import { clearToken, resolveToken, TOKEN_KEY } from "../net/credentials";
 import { browserOptions } from "../net/socket";
 import { type DrawData, EMPTY_DRAW, readDrawList } from "../render/drawdata";
 import { PaperGrain } from "../render/grain";
@@ -162,8 +162,15 @@ export class App {
     }));
   }
 
-  /** Connects (or asks for a pairing code first). */
-  start(): void {
+  /** Connects: a stored token, else the same-machine token, else asks for a pairing code. */
+  async start(): Promise<void> {
+    if (this.token === "") {
+      const local = await fetchLocalToken();
+      if (local !== null) {
+        localStorage.setItem(TOKEN_KEY, local);
+        this.token = local;
+      }
+    }
     if (this.token === "")
       this.unlock.show("Enter the pairing code shown by the server or the tablet.");
     else this.connection.start();
@@ -195,9 +202,19 @@ export class App {
     this.connState = state;
     this.refreshStatus();
     if (state === "rejected") {
+      const refused = this.token;
       clearToken(localStorage);
       this.token = "";
-      this.unlock.show("The server refused this token. Enter a new pairing code.");
+      // On the server's own machine a changed token is picked up again without a pairing code.
+      void fetchLocalToken().then((local) => {
+        if (local !== null && local !== refused) {
+          localStorage.setItem(TOKEN_KEY, local);
+          this.token = local;
+          this.connection.start();
+        } else {
+          this.unlock.show("The server refused this token. Enter a new pairing code.");
+        }
+      });
     }
   }
 

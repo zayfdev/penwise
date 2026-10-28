@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Penwise
+Comment=Your tablet pages, live on this PC
+Exec=penwise
+Icon=penwise
+Terminal=false
+Categories=Office;Graphics;
+StartupWMClass=Penwise

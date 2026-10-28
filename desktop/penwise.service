@@ -1,0 +1,13 @@
+[Unit]
+Description=Penwise sync server (tablet, browser and agents)
+After=network-online.target
+
+[Service]
+ExecStart=%h/.local/bin/penwise-server
+Environment=PENWISE_DATA=%h/.local/share/penwise
+Environment=PENWISE_WEB=%h/.local/share/penwise-app/web
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

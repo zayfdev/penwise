@@ -3,9 +3,10 @@
 //! both the binary and the in-process tests.
 //!
 //! Every handler that reveals or changes a page sits behind the token middleware ([`crate::auth::require`]);
-//! only `POST /pair` (the code is the credential), `/sync` (authenticates in its handshake) and the static
-//! viewer are public. Writes are ops from the server device ([`crate::storage::Storage::server_device`]), so
-//! they reach tablets and browsers through the normal broadcast.
+//! only `POST /pair` (the code is the credential), `GET /pair/local` (loopback only), `/sync` (authenticates
+//! in its handshake) and the static viewer are public. Writes are ops from the server device
+//! ([`crate::storage::Storage::server_device`]), so they reach tablets and browsers through the normal
+//! broadcast.
 
 mod author;
 mod error;
@@ -76,6 +77,7 @@ pub fn router(app: AppState) -> Router {
         ));
     Router::new()
         .route("/pair", post(pair::exchange))
+        .route("/pair/local", get(pair::local))
         .merge(protected)
         .fallback(get(file))
         .with_state(app)

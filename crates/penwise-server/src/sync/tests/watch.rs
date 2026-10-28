@@ -84,21 +84,26 @@ async fn ops_already_inside_the_page_snapshot_are_not_replayed() {
     // seq 3 commits (and is broadcast) before the Watch is processed; the page snapshot includes it.
     store.commit(vec![item_op(2, 10, p, "a")]);
     rig.send(&ClientMsg::Watch { page: Some(p) }).await;
-    // Everything committed so far is delivered (here: seq 3 is filtered out, only the cursor moves) before the
-    // snapshot, so the snapshot never carries the client past an op it was not sent.
+    // Either the broadcast of seq 3 reaches the session first (then everything committed so far is delivered
+    // before the snapshot — here seq 3 is filtered out, only the cursor moves), or the Watch does (then the
+    // snapshot at head 3 already holds it). Both are correct; neither may replay seq 3 after the snapshot.
+    let mut first = rig.next().await;
+    if let ServerMsg::OpsSince {
+        from_seq,
+        upto_seq,
+        ops,
+        ..
+    } = &first
+    {
+        assert_eq!((*from_seq, *upto_seq), (2, 3));
+        assert!(ops.is_empty(), "seq 3 is on an unwatched page: filtered");
+        first = rig.next().await;
+    }
     assert!(matches!(
-        rig.next().await,
-        ServerMsg::OpsSince {
-            from_seq: 2,
-            upto_seq: 3,
-            ..
-        }
-    ));
-    assert!(matches!(
-        rig.next().await,
+        first,
         ServerMsg::SnapshotBegin {
+            head_seq: 3,
             scope: Scope::Page(_),
-            ..
         }
     ));
     rig.next().await;

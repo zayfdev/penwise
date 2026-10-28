@@ -89,6 +89,10 @@ web-e2e:
 serve: web
     cargo run -p penwise-server
 
+# This PC: release server as a login service + "Penwise" app launcher (scripts/install-desktop.sh).
+install-desktop:
+    scripts/install-desktop.sh
+
 # MCP (stdio) server for agents: reads the page from the running server.
 mcp:
     cargo run -q -p penwise-mcp

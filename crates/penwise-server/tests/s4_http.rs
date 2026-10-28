@@ -215,3 +215,24 @@ async fn h09_restore_edge_cases_and_restore_then_undo_restore() {
         .await;
     assert_eq!(a.live_items(page).len(), 2);
 }
+
+/// The desktop launcher's viewer gets the token from this machine without a URL; a page served under another
+/// hostname (DNS rebinding onto 127.0.0.1) does not.
+#[tokio::test]
+async fn the_token_is_handed_only_to_a_viewer_on_this_machine() {
+    let server = TestServer::start().await;
+    let url = format!("{}/pair/local", base(&server));
+    let local = client().get(&url).send().await.unwrap();
+    assert_eq!(local.status(), 200);
+    let body: serde_json::Value = local.json().await.unwrap();
+    assert_eq!(body["token"], common::TOKEN);
+    for host in ["evil.example", "evil.example:7420", "192.168.1.19:7420"] {
+        let refused = client()
+            .get(&url)
+            .header("Host", host)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(refused.status(), 403, "Host {host}");
+    }
+}

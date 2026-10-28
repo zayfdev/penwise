@@ -142,3 +142,17 @@ export async function exchangePairingCode(code: string, fetchFn: Fetch = fetch):
   if (token === "") throw new ApiError(500, "pairing answer has no token");
   return token;
 }
+
+/**
+ * `GET /pair/local` — the token, when this viewer runs on the server's own machine (the desktop launcher
+ * opens `http://127.0.0.1:7420/`). `null` anywhere else (the server answers 403) or when the server is away.
+ */
+export async function fetchLocalToken(fetchFn: Fetch = fetch): Promise<string | null> {
+  try {
+    const response = await fetchFn("/pair/local", { cache: "no-store" });
+    if (!response.ok) return null;
+    return text(record(await response.json()).token) || null;
+  } catch {
+    return null;
+  }
+}

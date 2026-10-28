@@ -19,7 +19,7 @@ async function main(): Promise<void> {
     Date.now(),
     random,
   );
-  new App(wasm, device).start();
+  await new App(wasm, device).start();
 }
 
 main().catch((error: unknown) => {
