@@ -89,7 +89,8 @@ internal class InkGesture(
         // the gate then declines leaves the flag stuck, and nothing is drawn again until the stroke ends.
         if (previewReady() && env.live.claimFrame()) {
             val geometry = preview.snapshot() ?: return
-            env.live.publish(LiveFrame(frameId, StrokeFrame(geometry, predictedTail())))
+            val tail = if (geometry.isStamps) null else predictedTail()
+            env.live.publish(LiveFrame(frameId, StrokeFrame(geometry, tail)))
             env.sink.requestFrontFrame()
         }
     }

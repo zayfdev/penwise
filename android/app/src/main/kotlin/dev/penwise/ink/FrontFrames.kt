@@ -36,11 +36,19 @@ internal interface FrontPaint {
     )
 }
 
-/** The stroke under the pen plus an optional predicted tail (motion prediction), which is never committed. */
+/**
+ * The stroke under the pen plus an optional predicted tail (motion prediction), which is never committed. A stamp
+ * stroke has no tail: its dabs are one layer (a second layer would double the stroke opacity where they overlap, and
+ * both would be drawn from the one reused raster bitmap), and the live geometry already reaches the pen.
+ */
 internal class StrokeFrame(
     private val geometry: InkGeometry,
-    private val tail: InkGeometry?,
+    predicted: InkGeometry?,
 ) : FrontPaint {
+    private val tail = predicted.takeUnless { geometry.isStamps }
+
+    /** True when a predicted tail is drawn after the stroke. */
+    val drawsTail: Boolean get() = tail != null
     private val tailBounds = RectF()
     private val changeBox = FloatArray(4)
 
