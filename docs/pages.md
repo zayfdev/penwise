@@ -124,7 +124,7 @@ Drawn under the items, identical in the browser, the tablet and the PNG (`BACKGR
 | `grid` | squares | `#DCE3EC` |
 | `dots` | dots at intersections | `#C6CEDA` |
 
-## HTTP (token: `?token=` or `X-Penwise-Token`; `POST /pair` and the static viewer are public)
+## HTTP (token: `?token=` or `X-Penwise-Token`; `POST /pair`, `GET /pair/local` and the static viewer are public)
 
 | Route | Purpose |
 |---|---|
@@ -141,6 +141,7 @@ Drawn under the items, identical in the browser, the tablet and the PNG (`BACKGR
 | `GET /pages/<id>/history`, `POST /pages/<id>/restore?to_seq=` | restore |
 | `GET /text?page=&refresh=`, `GET /search?q=` | handwriting as text |
 | `GET /health?page=` | `{ok, page, strokes, pages, head_seq}` |
+| `GET /pair/local` | `{token}` only to a loopback peer with a loopback `Host` (the desktop launcher's viewer); else 403 |
 | `POST /pair`, `GET/POST /pair/code`, `GET /pair.png` | pairing |
 | `WS /sync` | binary sync protocol (authenticates in its handshake) |
 

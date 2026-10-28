@@ -3,8 +3,11 @@
 `web/` is one TypeScript app (Vite, built to `web/dist`, served by `penwise-server`). It views **and** draws:
 sidebar of notebooks/pages from the synced catalog, the page on a HiDPI canvas, live ink from other devices, a
 pen/mouse tool, own undo/redo, a text panel (`/text`), search (`/search`) and a pairing panel (`/pair/code`,
-`/pair.png`). Open `http://host:7420/?token=…` (the token is kept in `localStorage`; without one the viewer asks
-for a pairing code and exchanges it through `POST /pair`).
+`/pair.png`). On the server's own PC, run `just install-desktop` once: it installs the server as a login service
+(`penwise.service`) and a **Penwise** launcher that opens the viewer as its own window at `http://127.0.0.1:7420/`;
+the viewer fetches the token itself from `GET /pair/local` and follows the tablet's page. From another machine open
+`http://host:7420/?token=…` (the token is kept in `localStorage`; without one the viewer asks for a pairing code
+and exchanges it through `POST /pair`).
 
 ## How it works
 
