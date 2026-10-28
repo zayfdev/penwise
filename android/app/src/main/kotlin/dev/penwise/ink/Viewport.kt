@@ -45,8 +45,11 @@ class ViewportState {
     /** The current scale, `1f` = 100 % (one page px per screen px). */
     val zoom: StateFlow<Float> = _zoom.asStateFlow()
 
-    /** Called after every change of [transform] or [gesturing]; the canvas repaints from it. */
-    internal var onChanged: (() -> Unit)? = null
+    /**
+     * Called after every change of [transform] or [gesturing], with the new transform: the canvas repaints from it, the
+     * paper and the frames move with it.
+     */
+    internal val observers = ViewObservers()
 
     private var viewWidth = 0f
     private var viewHeight = 0f
@@ -101,7 +104,7 @@ class ViewportState {
     internal fun setGesturing(active: Boolean) {
         if (gesturing == active) return
         gesturing = active
-        onChanged?.invoke()
+        observers.notify(transform)
     }
 
     private fun minScale(): Float = min(MIN_SCALE, fitScale())
@@ -146,7 +149,7 @@ class ViewportState {
         if (next == transform) return
         transform = next
         _zoom.value = next.scale
-        onChanged?.invoke()
+        observers.notify(next)
     }
 
     companion object {
@@ -155,5 +158,24 @@ class ViewportState {
 
         /** Screen px of a fixed page that always stay visible. */
         const val KEEP_PX = 64f
+    }
+}
+
+/** Who follows the canvas view: the ink surface, the paper view, the frames. UI thread only. */
+internal class ViewObservers {
+    private val observers = mutableListOf<(ViewTransform) -> Unit>()
+
+    fun add(observer: (ViewTransform) -> Unit) {
+        if (observers.contains(observer)) return
+        observers += observer
+    }
+
+    fun remove(observer: (ViewTransform) -> Unit) {
+        observers -= observer
+    }
+
+    /** Tells every observer the view is now [transform]; a snapshot, since an observer may detach while it runs. */
+    fun notify(transform: ViewTransform) {
+        for (observer in observers.toList()) observer(transform)
     }
 }

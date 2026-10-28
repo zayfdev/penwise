@@ -6,13 +6,15 @@ complexity:
   # stroke store is a page state machine (add/undo/redo/clear/erase). Both are one concept with one method per event.
   TooManyFunctions:
     ignoreOverridden: true
-    # Coordinators: one small function per platform event, kept flat on purpose.
+    # Coordinators: one small function per platform event, kept flat on purpose. FrameLayer does the same for the
+    # harness' WebView frames: placement, bridge messages and touch routing, one method per event.
     excludes:
       [
         '**/StylusStrokeController.kt',
         '**/PageViewModel.kt',
         '**/SyncCore.kt',
         '**/Glyph.kt',
+        '**/frames/FrameLayer.kt',
       ]
   # Axis/bounds checks naturally chain several comparisons; keep a ceiling but above detekt's default of 3.
   ComplexCondition:

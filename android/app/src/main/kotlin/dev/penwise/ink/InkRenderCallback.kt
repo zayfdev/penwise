@@ -11,8 +11,8 @@ import androidx.graphics.lowlatency.CanvasFrontBufferedRenderer
  * Front layer: the newest frame of the gesture in flight, drawn through the [viewport] transform (clearing only the
  * screen area the previous frame covered). Multi-buffered layer: one `drawBitmap` of the [DryLayer], which holds the
  * paper and the committed items, repaints only what the scene reported dirty and re-renders off-thread after the view
- * changed. Runs on the
- * renderer thread; the param is only a wake-up token.
+ * changed. [paper] turns the paper off while live pages sit under the surface (the surface is then translucent and
+ * only the ink is drawn). Runs on the renderer thread; the param is only a wake-up token.
  */
 internal class InkRenderCallback(
     private val live: LiveStroke,
@@ -20,6 +20,7 @@ internal class InkRenderCallback(
     private val style: () -> PageStyle,
     images: () -> PageImages? = { null },
     onSettled: () -> Unit = {},
+    private val paper: () -> Boolean = { true },
 ) : CanvasFrontBufferedRenderer.Callback<Unit> {
     private val frontPainter = GeometryPainter(images, StampBuffer.HARDWARE_RING)
     private val dry = DryLayer(GeometryPainter(images), images, onSettled)
@@ -94,7 +95,7 @@ internal class InkRenderCallback(
         bufferHeight: Int,
         params: Collection<Unit>,
     ) {
-        dry.drawInto(canvas, cache, style(), viewport.transform, viewport.gesturing)
+        dry.drawInto(canvas, cache, style(), viewport.transform, viewport.gesturing, paper())
     }
 
     private companion object {

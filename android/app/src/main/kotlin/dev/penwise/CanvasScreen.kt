@@ -26,6 +26,8 @@ import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import dev.penwise.frames.FrameSpec
+import dev.penwise.frames.FrameStage
 import dev.penwise.ink.InkCanvas
 import dev.penwise.ink.PageList
 import dev.penwise.ink.PageScene
@@ -53,6 +55,10 @@ private const val EXCLUSION_BIAS = 0.45f
  * An open page: the canvas fills the screen and the only chrome is the [MiniBar]; the full tools and the page strip
  * are a drawer under it ([drawerOpen]). The pen touching the page closes the drawer. "Clear page" confirms for the
  * page it was opened on (its id survives recreation); if another page is showing by then it does nothing.
+ *
+ * [frameSpecs] are live pages under the ink (M0: one, from the debug launch intent). With frames the paper and the
+ * pages are window views below the surface, so the ink draws over them; the readout at the top left is the scroll the
+ * page reported, which M2 needs to keep area marks on the document.
  */
 @Composable
 fun CanvasScreen(
@@ -64,25 +70,35 @@ fun CanvasScreen(
     onSync: () -> Unit,
     syncStatus: SyncStatus,
     pending: Int,
+    frameSpecs: List<FrameSpec> = emptyList(),
 ) {
     val tools = page.tools
     val scene by page.scene.collectAsState()
     val open = scene ?: return
     val zoom by page.viewport.zoom.collectAsState()
+    val style = PageStyle.of(pages.page(pages.active))
     ImmersiveWhileOpen()
     var confirmClear by rememberSaveable { mutableStateOf<String?>(null) }
     Box(modifier = Modifier.fillMaxSize()) {
-        InkCanvas(
-            scene = open,
-            brushes = tools,
+        FrameStage(
+            specs = frameSpecs,
             viewport = page.viewport,
-            style = PageStyle.of(pages.page(pages.active)),
-            images = page.images,
-            liveOut = page.liveOut,
-            pen = page.pen,
-            onPenDown = { onDrawerOpenChange(false) },
+            style = style,
             modifier = Modifier.fillMaxSize(),
-        )
+        ) { frames ->
+            InkCanvas(
+                scene = open,
+                brushes = tools,
+                viewport = page.viewport,
+                style = style,
+                images = page.images,
+                liveOut = page.liveOut,
+                pen = page.pen,
+                frames = frames,
+                onPenDown = { onDrawerOpenChange(false) },
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
         GestureExclusionStrips()
         Column(
             modifier =

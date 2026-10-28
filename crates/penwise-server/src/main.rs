@@ -65,6 +65,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(error) => return Err(error.into()),
     };
     tracing::info!(addr = %handle.addr, "penwise-server listening");
+    // Design harness M0 (§6.1): per-project ports are optional and must never take the main server down.
+    let projects = match std::env::var("PENWISE_PROJECTS") {
+        Ok(json) if !json.trim().is_empty() => {
+            match penwise_server::frames::start_all(&json, &token).await {
+                Ok(projects) => projects,
+                Err(error) => {
+                    tracing::error!(%error, "PENWISE_PROJECTS ignored");
+                    Vec::new()
+                }
+            }
+        }
+        _ => Vec::new(),
+    };
     // Discovery runs helper programs; log from a task so listening never waits for them.
     let logged_token = token.clone();
     tokio::spawn(async move {
@@ -81,13 +94,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::spawn(compact_forever(handle.storage.clone()));
     tokio::select! {
         () = handle.wait() => {}
-        _ = tokio::signal::ctrl_c() => tracing::info!("shutting down"),
+        () = shutdown_signal() => tracing::info!("shutting down"),
+    }
+    for project in projects {
+        project.shutdown().await;
     }
     Ok(())
 }
 
-const USAGE: &str = "usage: penwise-server            serve (env: PENWISE_PORT, PENWISE_HOST, PENWISE_DATA, PENWISE_WEB)\n       \
+const USAGE: &str = "usage: penwise-server            serve (env: PENWISE_PORT, PENWISE_HOST, PENWISE_DATA, PENWISE_WEB,\n                                              PENWISE_PROJECTS)\n       \
                      penwise-server migrate --db <path> [--dry-run]";
+
+/// Ctrl-c or SIGTERM (systemd stop). Either way `ServerHandle::drop` runs: the listener stops and Chromium is
+/// killed synchronously, so no headless browser outlives the server.
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut signal) => signal.recv().await,
+            Err(_) => std::future::pending::<Option<()>>().await,
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<Option<()>>();
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        _ = terminate => {}
+    }
+}
 
 /// Retention (design §3.3): at startup, then daily.
 async fn compact_forever(storage: Storage) {

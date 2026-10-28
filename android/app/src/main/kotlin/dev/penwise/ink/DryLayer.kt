@@ -3,6 +3,7 @@ package dev.penwise.ink
 import android.graphics.Bitmap
 import android.graphics.BlendMode
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Paint
 import androidx.core.graphics.createBitmap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -41,6 +42,10 @@ internal class DryLayer(
     private val pagePainter = PagePainter(painter)
     private val scaled = ScaledDraw()
     private val copyPaint = Paint().apply { blendMode = BlendMode.SRC }
+    private val replacePaint = Paint().apply { blendMode = BlendMode.SRC }
+
+    /** Draw the paper, or the ink alone on a transparent bitmap (a live page shows through the surface). */
+    private var paper = true
     private val stale = AtomicBoolean(true)
     private val discard = AtomicBoolean(false)
     private val settler = SettleRenderer(images, onSettled)
@@ -72,9 +77,10 @@ internal class DryLayer(
         style: PageStyle,
         view: ViewTransform,
         gesturing: Boolean,
+        paper: Boolean = true,
     ) {
         cooling.tick()
-        val full = takeFullRepaint(target.width, target.height)
+        val full = takeFullRepaint(target.width, target.height, paper)
         val plan = cache?.takeUnless { it.closed }?.update() ?: RenderPlan.Idle
         val live = cache?.takeUnless { it.closed }
         val changed = full || plan !is RenderPlan.Idle
@@ -85,8 +91,12 @@ internal class DryLayer(
             if (shown != null && shown != view) {
                 pendingFull = pendingFull || changed
                 if (gesturing) cancelSettle() else settle(live, style, view, target)
-                // What the old bitmap does not cover shows the backdrop.
-                target.drawColor(PaperPainter.backdrop(style))
+                // What the old bitmap does not cover shows the backdrop (or the live page, under a frame).
+                if (paper) {
+                    target.drawColor(PaperPainter.backdrop(style))
+                } else {
+                    target.drawColor(Color.TRANSPARENT, BlendMode.CLEAR)
+                }
                 bitmap?.let {
                     scaled.draw(target, it, shown, view)
                     exposed = true
@@ -99,7 +109,9 @@ internal class DryLayer(
             rendered = view
         }
         bitmap?.let {
-            target.drawBitmap(it, 0f, 0f, null)
+            // Over a live page the bitmap (which covers the whole surface) replaces the buffer: an ink-only layer
+            // must not be drawn over whatever the last multi-buffered frame left there.
+            target.drawBitmap(it, 0f, 0f, replacePaint.takeUnless { paper })
             exposed = true
         }
     }
@@ -113,7 +125,13 @@ internal class DryLayer(
     private fun takeFullRepaint(
         width: Int,
         height: Int,
+        paper: Boolean,
     ): Boolean {
+        if (paper != this.paper) {
+            // Turning the paper off (or back on) reinvents every pixel: forget this bitmap and any render for it.
+            this.paper = paper
+            reset()
+        }
         val resized = ensureBitmap(width, height)
         if (discard.getAndSet(false) || resized) {
             rendered = null
@@ -138,7 +156,7 @@ internal class DryLayer(
             if (!everything) Canvas(spare).drawBitmap(shownBitmap, 0f, 0f, copyPaint)
             install(spare)
         }
-        canvas?.let { pagePainter.paint(it, cache, style, view, plan, everything) }
+        canvas?.let { pagePainter.paint(it, cache, style, view, plan, everything, paper) }
     }
 
     /** Takes a finished background render in when it is for this view, repainting what the scene changed since. */
@@ -161,7 +179,7 @@ internal class DryLayer(
         }
         // The render was never shown, so it can be painted into here.
         if (!patch.isEmpty) {
-            pagePainter.paint(Canvas(done.bitmap), cache, style, view, RenderPlan.Region(patch), false)
+            pagePainter.paint(Canvas(done.bitmap), cache, style, view, RenderPlan.Region(patch), false, paper)
         }
         install(done.bitmap)
         rendered = view
@@ -194,6 +212,7 @@ internal class DryLayer(
                 target.height,
                 cache?.paintOrder ?: emptyList(),
                 cache?.snapshotItems() ?: emptyMap(),
+                paper,
             ),
         )
     }

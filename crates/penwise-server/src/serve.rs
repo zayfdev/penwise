@@ -12,6 +12,7 @@ use tokio::task::JoinHandle;
 
 use crate::api::{self, AppState};
 use crate::assets::Assets;
+use crate::inspect::Inspect;
 use crate::pairing::Pairing;
 use crate::storage::{FaultPlan, NowMs, Storage, StorageConfig, StorageError, system_now_ms};
 use crate::sync::{Hub, SyncConfig};
@@ -75,19 +76,32 @@ pub struct ServerHandle {
     pub hub: Arc<Hub<Storage>>,
     pub pairing: Arc<Pairing>,
     task: JoinHandle<()>,
+    inspect: Arc<Inspect>,
 }
 
 impl ServerHandle {
-    /// Closes every session (`Error{ShuttingDown}`), stops accepting and waits for the listener to finish.
-    pub async fn shutdown(self) {
+    /// Closes every session (`Error{ShuttingDown}`), stops accepting, closes Chromium and waits for the listener
+    /// to finish.
+    pub async fn shutdown(mut self) {
+        self.inspect.shutdown().await;
         self.hub.shutdown();
         self.task.abort();
-        let _ = self.task.await;
+        let _ = (&mut self.task).await;
     }
 
     /// Resolves when the listener task ends (it only does on an accept error or a panic).
-    pub async fn wait(self) {
-        let _ = self.task.await;
+    pub async fn wait(mut self) {
+        let _ = (&mut self.task).await;
+    }
+}
+
+impl Drop for ServerHandle {
+    /// Safety net for a handle dropped without [`ServerHandle::shutdown`] (ctrl-c in `main`): the listener stops
+    /// and Chromium is killed synchronously, so it cannot outlive the server.
+    fn drop(&mut self) {
+        self.hub.shutdown();
+        self.task.abort();
+        self.inspect.kill_now();
     }
 }
 
@@ -121,6 +135,7 @@ pub async fn serve(
     sync_config.now_ms = config.clock;
     let hub = Hub::new(storage.clone(), sync_config);
     let pairing = Arc::new(Pairing::new());
+    let inspect = Arc::new(Inspect::new());
     let app = AppState {
         storage: storage.clone(),
         token: Arc::new(sync_config_token),
@@ -134,6 +149,7 @@ pub async fn serve(
             Urls::fixed(config.urls)
         }),
         ocr_url: Arc::new(config.ocr_url),
+        inspect: Arc::clone(&inspect),
     };
     let router = Router::new()
         .merge(api::router(app))
@@ -150,6 +166,7 @@ pub async fn serve(
         hub,
         pairing,
         task,
+        inspect,
     })
 }
 

@@ -15,7 +15,10 @@ path = "src/main.rs"
 penwise-core = { path = "../penwise-core", features = ["raster"] }
 penwise-proto = { path = "../penwise-proto" }
 axum.workspace = true
+flate2.workspace = true
 futures-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
 reqwest.workspace = true
 qrcode.workspace = true
 serde.workspace = true
@@ -23,14 +26,18 @@ sha2.workspace = true
 rusqlite.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+tokio-tungstenite.workspace = true
 tiny-skia.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
 [dev-dependencies]
-tokio-tungstenite.workspace = true
+http-body-util.workspace = true
 penwise-testkit = { path = "../penwise-testkit" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+inotify.workspace = true
 
 [lints]
 workspace = true

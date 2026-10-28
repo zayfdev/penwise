@@ -35,6 +35,7 @@ use crate::storage::Storage;
 
 pub(crate) use author::Author;
 pub(crate) use error::ApiError;
+pub(crate) use pair::same_machine;
 pub(crate) use resolve::{page_of, parse_page};
 
 /// Everything a handler needs. Cheap to clone.
@@ -55,6 +56,8 @@ pub struct AppState {
     pub assets: Arc<Assets>,
     /// Base URL of the handwriting model (`ServerConfig::ocr_url`).
     pub ocr_url: Arc<String>,
+    /// The headless browser behind `/inspect/*` and source mapping.
+    pub(crate) inspect: Arc<crate::inspect::Inspect>,
 }
 
 /// The HTTP router (without `/sync`, which `serve` merges).
@@ -70,6 +73,7 @@ pub fn router(app: AppState) -> Router {
         .merge(crate::search::routes())
         .merge(crate::render::routes())
         .merge(crate::anchors::routes())
+        .merge(crate::inspect::routes())
         .merge(pair::protected())
         .layer(middleware::from_fn_with_state(
             Arc::clone(&app.token),

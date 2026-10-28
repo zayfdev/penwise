@@ -1,0 +1,13 @@
+:root {
+  color-scheme: light;
+}
+
+body {
+  margin: 0;
+}
+
+.title {
+  width: 600px;
+  color: rgb(17, 17, 17);
+  font-size: 48px;
+}

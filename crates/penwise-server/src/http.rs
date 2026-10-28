@@ -41,15 +41,31 @@ fn resolve(root: &Path, relative: &str) -> Option<PathBuf> {
     Some(candidate)
 }
 
-fn content_type(path: &Path) -> &'static str {
+/// Media type for a served file (project ports share this table).
+pub(crate) fn content_type(path: &Path) -> &'static str {
     match path.extension().and_then(|e| e.to_str()) {
-        Some("html") => "text/html; charset=utf-8",
+        Some("html" | "htm") => "text/html; charset=utf-8",
         Some("js" | "mjs") => "text/javascript; charset=utf-8",
         Some("css") => "text/css; charset=utf-8",
-        Some("json") => "application/json",
+        Some("json" | "map") => "application/json",
         Some("wasm") => "application/wasm",
         Some("svg") => "image/svg+xml",
         Some("png") => "image/png",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        Some("avif") => "image/avif",
+        Some("ico") => "image/x-icon",
+        Some("woff") => "font/woff",
+        Some("woff2") => "font/woff2",
+        Some("ttf") => "font/ttf",
+        Some("otf") => "font/otf",
+        Some("txt") => "text/plain; charset=utf-8",
+        Some("xml") => "text/xml; charset=utf-8",
+        Some("webmanifest") => "application/manifest+json",
+        Some("pdf") => "application/pdf",
+        Some("mp4") => "video/mp4",
+        Some("webm") => "video/webm",
         _ => "application/octet-stream",
     }
 }

@@ -107,7 +107,7 @@ class ViewportLimitsTest {
     fun the_gesturing_flag_notifies_only_when_it_changes() {
         val state = viewport(fixed)
         var calls = 0
-        state.onChanged = { calls++ }
+        state.observers.add { calls++ }
         state.setGesturing(true)
         state.setGesturing(true)
         assertTrue(state.gesturing)

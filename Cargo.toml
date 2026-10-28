@@ -39,8 +39,15 @@ flate2 = "1.1"
 jni = "0.22.4"
 # M3 server + viewer (see docs/research/server-stack.md for versions and licenses).
 axum = { version = "0.8.9", features = ["ws"] }
-tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "process", "signal", "fs"] }
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "process", "signal", "fs", "io-util"] }
 futures-util = { version = "0.3.34", default-features = false, features = ["std", "sink"] }
+# Per-project ports (design-harness spec §6.1): the reverse proxy to a dev origin, including WebSocket upgrades,
+# needs a client in the same body world as axum. MIT.
+hyper = { version = "1.12.0", features = ["client", "http1", "server"] }
+hyper-util = { version = "0.1.21", features = ["client-legacy", "http1", "tokio"] }
+http-body-util = "0.1.5"
+# Static projects: watch the folder for live reload. notify is CC0 (not on the allow list); inotify is ISC.
+inotify = "0.11.1"
 # Server-only OCR client for a local Ollama (MIT OR Apache-2.0). No TLS features: the model is on localhost, and
 # the alternative pulls a certificate-root bundle under a data license this project does not ship.
 reqwest = { version = "0.12", default-features = false, features = ["json"] }

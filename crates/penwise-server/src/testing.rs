@@ -68,6 +68,7 @@ impl Rig {
             urls: Arc::new(crate::urls::Urls::fixed(Vec::new())),
             assets: Arc::clone(&self.assets),
             ocr_url: Arc::new(self.ocr_url.clone()),
+            inspect: Arc::new(crate::inspect::Inspect::new()),
         }
     }
 

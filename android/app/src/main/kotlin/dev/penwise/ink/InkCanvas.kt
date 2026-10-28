@@ -6,7 +6,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 
 /**
  * Hosts [InkSurfaceView] in Compose, showing [scene] (switch pages by passing another scene) through [viewport].
- * [onPenDown] runs when the stylus touches the canvas.
+ * [frames], when given, are live pages under the ink: the surface then goes translucent above the window and one
+ * finger on a page belongs to it. [onPenDown] runs when the stylus touches the canvas.
  */
 @Composable
 fun InkCanvas(
@@ -18,6 +19,7 @@ fun InkCanvas(
     images: PageImages? = null,
     liveOut: LiveOut? = null,
     pen: PenActivity = PenActivity(),
+    frames: FrameHost? = null,
     onPenDown: () -> Unit = {},
 ) {
     AndroidView(
@@ -31,6 +33,7 @@ fun InkCanvas(
             view.onPenDown = onPenDown
             view.showScene(scene)
             view.setPageStyle(style)
+            view.setFrames(frames)
         },
         modifier = modifier,
     )

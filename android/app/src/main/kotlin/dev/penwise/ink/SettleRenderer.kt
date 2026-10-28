@@ -1,7 +1,9 @@
 package dev.penwise.ink
 
 import android.graphics.Bitmap
+import android.graphics.BlendMode
 import android.graphics.Canvas
+import android.graphics.Color
 import android.util.Log
 import androidx.core.graphics.createBitmap
 import java.util.concurrent.Executors
@@ -15,6 +17,8 @@ internal class SettleRequest(
     val height: Int,
     val order: List<ItemKey>,
     val items: Map<ItemKey, ItemRender>,
+    /** Draw the paper, or the ink alone on a transparent bitmap. */
+    val paper: Boolean,
 )
 
 /** A finished render: [bitmap] shows the page under [view] as of the snapshot it was requested with. */
@@ -72,7 +76,11 @@ internal class SettleRenderer(
         val surface = Canvas(bitmap)
         val view = request.view
         painter.view = view
-        PaperPainter.draw(surface, request.style, view)
+        if (request.paper) {
+            PaperPainter.draw(surface, request.style, view)
+        } else {
+            surface.drawColor(Color.TRANSPARENT, BlendMode.CLEAR)
+        }
         val visible =
             Bounds(
                 view.toPageX(0f),

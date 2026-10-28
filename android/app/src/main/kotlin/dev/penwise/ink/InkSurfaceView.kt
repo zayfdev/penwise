@@ -1,6 +1,7 @@
 package dev.penwise.ink
 
 import android.content.Context
+import android.graphics.PixelFormat
 import android.util.AttributeSet
 import android.view.InputDevice
 import android.view.MotionEvent
@@ -15,8 +16,10 @@ import androidx.input.motionprediction.MotionEventPredictor
  * Full-screen drawing surface: stylus gestures go through [StylusStrokeController] into the core scene; the page is
  * drawn from the scene's render data by [InkRenderCallback], and the pen's in-progress frame goes through a
  * [CanvasFrontBufferedRenderer]. Fingers never draw: two fingers pan and pinch-zoom the [ViewportState], a two-finger
- * tap undoes, one finger does nothing (it is usually the palm). Stylus samples are mapped screen → page before they
- * reach the core. Call [bind] before attaching.
+ * tap undoes, one finger does nothing (it is usually the palm) — unless live pages sit under the canvas ([frames]):
+ * then one finger on a page is the page's, and the surface composites above the window with a translucent, ink-only
+ * layer so the pages show through. Stylus samples are mapped screen → page before they reach the core. Call [bind]
+ * before attaching.
  */
 class InkSurfaceView
     @JvmOverloads
@@ -41,6 +44,11 @@ class InkSurfaceView
 
         private var viewport = ViewportState()
         private var pen = PenActivity()
+        private var frames: FrameHost? = null
+
+        /** The surface is above the window and carries ink only: live pages are drawn by the window below it. */
+        private var overFrames = false
+        private val viewListener: (ViewTransform) -> Unit = { onViewChanged() }
 
         /** Runs on the UI thread whenever the stylus touches down (the canvas is about to be written on). */
         var onPenDown: () -> Unit = {}
@@ -85,6 +93,19 @@ class InkSurfaceView
             redrawPage()
         }
 
+        /**
+         * Puts live pages under the ink, or takes them away. With frames the surface goes above the window
+         * (`setZOrderOnTop`) and becomes translucent with the ink alone drawn on it, so the pages show through; without
+         * them the canvas keeps today's opaque surface behind the window (the fast path). [FrameHost] is usually the
+         * frames' own layer.
+         */
+        internal fun setFrames(host: FrameHost?) {
+            if (host === frames) return
+            frames?.cancel()
+            frames = host
+            setOverlay(host != null)
+        }
+
         /** Sets the paper drawn under the ink; repaints when it changes. */
         fun setPageStyle(style: PageStyle) {
             if (pageStyle == style) return
@@ -99,7 +120,8 @@ class InkSurfaceView
             val current = scene ?: return
             requestUnbufferedDispatch(InputDevice.SOURCE_CLASS_POINTER)
             predictor = MotionEventPredictor.newInstance(this)
-            val draw = InkRenderCallback(live, viewport, { pageStyle }, { images }, { post(::redrawPage) })
+            val draw =
+                InkRenderCallback(live, viewport, { pageStyle }, { images }, { post(::redrawPage) }, { !overFrames })
             callback = draw
             draw.attach(current)
             renderer = CanvasFrontBufferedRenderer(this, draw)
@@ -108,7 +130,7 @@ class InkSurfaceView
             holder.addCallback(this)
             viewport.setViewSize(width.toFloat(), height.toFloat())
             viewport.setPage(pageStyle)
-            viewport.onChanged = ::onViewChanged
+            viewport.observers.add(viewListener)
             current.onChanged = ::redrawPage
             images?.onChanged = {
                 callback?.invalidate()
@@ -119,7 +141,7 @@ class InkSurfaceView
         override fun onDetachedFromWindow() {
             scene?.onChanged = null
             images?.onChanged = null
-            viewport.onChanged = null
+            viewport.observers.remove(viewListener)
             fingers.cancel()
             viewport.setGesturing(false)
             holder.removeCallback(this)
@@ -159,7 +181,12 @@ class InkSurfaceView
                 if (isPenDown(event)) onPenDown()
             }
             pen.drawing = controller?.isDrawing == true
-            fingers.onTouchEvent(event, stylus || pen.drawing || penNear(event.eventTime))
+            val busy = stylus || pen.drawing || penNear(event.eventTime)
+            val host = frames
+            // The pen wins over a page: a gesture on it is abandoned so no stray click survives the stroke.
+            if (busy) host?.cancel()
+            val onPage = !busy && host != null && host.route(event) { fingers.adopt(it) }
+            if (!onPage) fingers.onTouchEvent(event, busy)
             if (event.actionMasked == MotionEvent.ACTION_UP && !stylus) performClick()
             return true
         }
@@ -189,6 +216,17 @@ class InkSurfaceView
                 return PointerIcon.getSystemIcon(context, PointerIcon.TYPE_NULL)
             }
             return super.onResolvePointerIcon(event, pointerIndex)
+        }
+
+        /** Switches the surface between the opaque page (no frames) and an ink-only overlay above the window. */
+        private fun setOverlay(over: Boolean) {
+            if (over == overFrames) return
+            overFrames = over
+            // Above the window is the only place the ink can be while WebViews live in the window; TRANSLUCENT keeps
+            // the punch-out from being an opaque black sheet between the ink and the pages.
+            setZOrderOnTop(over)
+            holder.setFormat(if (over) PixelFormat.TRANSLUCENT else PixelFormat.OPAQUE)
+            redrawPage()
         }
 
         private fun penNear(now: Long): Boolean = now < pen.nearUntil

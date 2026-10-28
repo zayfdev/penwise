@@ -11,4 +11,8 @@
     <!-- arm64-v8a only: the target device is a Galaxy Tab S9 (EMR pen tablet). x86_64 is added if an emulator or
          ChromeOS target is ever needed. -->
     <issue id="ChromeOsAbiSupport" severity="ignore" />
+    <!-- Frames load linked dev projects over plain HTTP: loopback through `adb reverse`, or the Penwise server on the
+         LAN. A LAN address is an IP, which a network security config can only cover in its base config, so cleartext is
+         permitted there — the same deliberate trade-off as the manifest's usesCleartextTraffic for the sync link. -->
+    <issue id="InsecureBaseConfiguration" severity="ignore" />
 </lint>

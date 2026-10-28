@@ -58,6 +58,20 @@ internal class FingerRouter(
 
     fun cancel() = navigation.cancel()
 
+    /**
+     * Starts the canvas session from every finger already down. A gesture that began on a page (frames) became a
+     * two-finger canvas gesture, and the canvas has seen none of those fingers yet; nothing that happened before is a
+     * pan, so the slop starts from here.
+     */
+    fun adopt(event: MotionEvent) {
+        navigation.cancel()
+        for (i in 0 until event.pointerCount) {
+            if (usable(event, i)) {
+                navigation.down(event.getPointerId(i), event.getX(i), event.getY(i), event.eventTime)
+            }
+        }
+    }
+
     private fun usable(
         event: MotionEvent,
         index: Int,

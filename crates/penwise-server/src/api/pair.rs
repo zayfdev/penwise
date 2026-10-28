@@ -94,7 +94,7 @@ pub(super) async fn local(
 }
 
 /// Loopback peer and a loopback `Host` (`127.0.0.1`, `[::1]` or `localhost`, any port).
-fn same_machine(peer: Option<IpAddr>, host: Option<&str>) -> bool {
+pub(crate) fn same_machine(peer: Option<IpAddr>, host: Option<&str>) -> bool {
     let Some(host) = host else { return false };
     let name = match host.strip_prefix('[') {
         Some(rest) => rest.split(']').next().unwrap_or_default(),
