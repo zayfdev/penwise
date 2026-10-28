@@ -4,7 +4,8 @@ import android.view.MotionEvent
 import androidx.input.motionprediction.MotionEventPredictor
 
 /**
- * Routes stylus pointers to the gesture of the selected tool: ink, shape, erase or lasso. Only
+ * Routes stylus pointers to the gesture of the selected tool: ink, shape, erase or lasso. Each gesture maps the
+ * stylus from screen to page space with the view it began under. Only
  * `TOOL_TYPE_STYLUS`/`TOOL_TYPE_ERASER` pointers draw; the pen is tracked by pointer id because a palm may own
  * pointer 0. Every gesture ends through [PenGesture.end] or [PenGesture.cancel], never silently: a system
  * `ACTION_CANCEL`, a cancelled pointer-up and [release] all abandon the gesture in flight.
@@ -14,10 +15,11 @@ internal class StylusStrokeController(
     private val brushes: BrushSource,
     live: LiveStroke,
     sink: StrokeSink,
+    viewport: ViewportState,
     liveOut: LiveOut? = null,
     predictor: MotionEventPredictor? = null,
 ) {
-    private val env = GestureEnv(scene, brushes, live, sink, liveOut, predictor)
+    private val env = GestureEnv(scene, brushes, live, sink, liveOut, predictor, viewport)
     private var gesture: PenGesture? = null
     private var penId = NO_POINTER
 

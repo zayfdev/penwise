@@ -13,7 +13,9 @@ import androidx.input.motionprediction.MotionEventPredictor
 /**
  * Full-screen drawing surface: stylus gestures go through [StylusStrokeController] into the core scene; the page is
  * drawn from the scene's render data by [InkRenderCallback], and the pen's in-progress frame goes through a
- * [CanvasFrontBufferedRenderer]. Fingers never draw; a two-finger tap undoes. Call [bind] before attaching.
+ * [CanvasFrontBufferedRenderer]. Fingers never draw: two fingers pan and pinch-zoom the [ViewportState], a two-finger
+ * tap undoes, one finger does nothing (it is usually the palm). Stylus samples are mapped screen → page before they
+ * reach the core. Call [bind] before attaching.
  */
 class InkSurfaceView
     @JvmOverloads
@@ -36,15 +38,30 @@ class InkSurfaceView
         @Volatile
         private var pageStyle: PageStyle = PageStyle.BLANK
 
-        private val twoFingerTap =
-            TwoFingerTap(ViewConfiguration.get(context).scaledTouchSlop * TAP_SLOP_FACTOR) { undo() }
+        private var viewport = ViewportState()
+        private var penHoverUntil = 0L
+
+        /** Runs on the UI thread whenever the stylus touches down (the canvas is about to be written on). */
+        var onPenDown: () -> Unit = {}
+
+        private val fingers =
+            FingerRouter(
+                FingerNavigation(
+                    ViewConfiguration.get(context).scaledTouchSlop * TAP_SLOP_FACTOR,
+                    onTap = ::undo,
+                    onStep = { viewport.transformBy(it.factor, it.fromX, it.fromY, it.toX, it.toY) },
+                    onActive = { viewport.setGesturing(it) },
+                ),
+            )
 
         fun bind(
             scene: PageScene,
             brushes: BrushSource,
+            viewport: ViewportState,
             images: PageImages? = null,
             liveOut: LiveOut? = null,
         ) {
+            this.viewport = viewport
             this.brushes = brushes
             this.images = images
             this.liveOut = liveOut
@@ -68,6 +85,7 @@ class InkSurfaceView
         fun setPageStyle(style: PageStyle) {
             if (pageStyle == style) return
             pageStyle = style
+            viewport.setPage(style)
             callback?.invalidate()
             redrawPage()
         }
@@ -77,12 +95,15 @@ class InkSurfaceView
             val current = scene ?: return
             requestUnbufferedDispatch(InputDevice.SOURCE_CLASS_POINTER)
             predictor = MotionEventPredictor.newInstance(this)
-            val draw = InkRenderCallback(live, { pageStyle }, { images })
+            val draw = InkRenderCallback(live, viewport, { pageStyle }, { images })
             callback = draw
             draw.attach(current)
             renderer = CanvasFrontBufferedRenderer(this, draw)
             controller = newController(current)
             holder.addCallback(this)
+            viewport.setViewSize(width.toFloat(), height.toFloat())
+            viewport.setPage(pageStyle)
+            viewport.onChanged = ::onViewChanged
             current.onChanged = ::redrawPage
             images?.onChanged = {
                 callback?.invalidate()
@@ -93,6 +114,9 @@ class InkSurfaceView
         override fun onDetachedFromWindow() {
             scene?.onChanged = null
             images?.onChanged = null
+            viewport.onChanged = null
+            fingers.cancel()
+            viewport.setGesturing(false)
             holder.removeCallback(this)
             controller?.release()
             controller = null
@@ -103,12 +127,45 @@ class InkSurfaceView
             super.onDetachedFromWindow()
         }
 
+        override fun onSizeChanged(
+            w: Int,
+            h: Int,
+            oldw: Int,
+            oldh: Int,
+        ) {
+            super.onSizeChanged(w, h, oldw, oldh)
+            viewport.setViewSize(w.toFloat(), h.toFloat())
+        }
+
         override fun onTouchEvent(event: MotionEvent): Boolean {
             predictor?.record(event)
             val stylus = controller?.onTouchEvent(event) ?: false
-            if (!stylus && controller?.isDrawing != true) twoFingerTap.onTouchEvent(event)
+            if (stylus) {
+                penHoverUntil = event.eventTime + HOVER_HOLD_MS
+                if (isPenDown(event)) onPenDown()
+            }
+            fingers.onTouchEvent(event, stylus || controller?.isDrawing == true || penNear(event.eventTime))
             if (event.actionMasked == MotionEvent.ACTION_UP && !stylus) performClick()
             return true
+        }
+
+        /** A hovering stylus means a hand is about to write: fingers (a resting palm) must not pan, zoom or undo. */
+        override fun onHoverEvent(event: MotionEvent): Boolean {
+            val tool = event.getToolType(0)
+            if (tool == MotionEvent.TOOL_TYPE_STYLUS || tool == MotionEvent.TOOL_TYPE_ERASER) {
+                val exit = event.actionMasked == MotionEvent.ACTION_HOVER_EXIT
+                penHoverUntil = if (exit) 0L else event.eventTime + HOVER_HOLD_MS
+            }
+            return super.onHoverEvent(event)
+        }
+
+        private fun penNear(now: Long): Boolean = now < penHoverUntil
+
+        private fun isPenDown(event: MotionEvent): Boolean {
+            val action = event.actionMasked
+            if (action != MotionEvent.ACTION_DOWN && action != MotionEvent.ACTION_POINTER_DOWN) return false
+            val tool = event.getToolType(event.actionIndex)
+            return tool == MotionEvent.TOOL_TYPE_STYLUS || tool == MotionEvent.TOOL_TYPE_ERASER
         }
 
         override fun performClick(): Boolean = super.performClick()
@@ -141,7 +198,7 @@ class InkSurfaceView
         override fun surfaceDestroyed(holder: SurfaceHolder) = Unit
 
         private fun newController(page: PageScene): StylusStrokeController? =
-            brushes?.let { StylusStrokeController(page, it, live, this, liveOut, predictor) }
+            brushes?.let { StylusStrokeController(page, it, live, this, viewport, liveOut, predictor) }
 
         private fun undo() {
             brushes?.selection?.clear()
@@ -153,8 +210,17 @@ class InkSurfaceView
             renderer?.renderMultiBufferedLayer(REDRAW)
         }
 
+        /** The view moved: repaint the page, and the selection frame (it lives on the front layer in page space). */
+        private fun onViewChanged() {
+            redrawPage()
+            if ((brushes?.selection?.count ?: 0) > 0) requestFrontFrame()
+        }
+
         private companion object {
-            const val TAP_SLOP_FACTOR = 2f
+            const val TAP_SLOP_FACTOR = 1.5f
+
+            /** How long a stylus that stopped reporting hover still counts as near (the exit event can be lost). */
+            const val HOVER_HOLD_MS = 1_200L
             val REDRAW = listOf(Unit)
         }
     }

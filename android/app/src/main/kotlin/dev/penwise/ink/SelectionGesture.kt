@@ -14,8 +14,9 @@ internal class SelectionGesture(
     event: MotionEvent,
     index: Int,
 ) : PenGesture {
-    private val startX = event.getX(index)
-    private val startY = event.getY(index)
+    private val view = env.viewport.transform
+    private val startX = view.toPageX(event.getX(index))
+    private val startY = view.toPageY(event.getY(index))
     private val frameId = env.nextFrameId()
     private val dragging = selection.count > 0 && selection.box.contains(startX, startY)
     private var loop = FloatArray(INITIAL_POINTS * 2)
@@ -37,8 +38,8 @@ internal class SelectionGesture(
         index: Int,
     ) {
         if (dragging) {
-            dx = event.getX(index) - startX
-            dy = event.getY(index) - startY
+            dx = view.toPageX(event.getX(index)) - startX
+            dy = view.toPageY(event.getY(index)) - startY
         } else {
             addPoints(event, index)
         }
@@ -50,8 +51,8 @@ internal class SelectionGesture(
         index: Int,
     ) {
         if (dragging) {
-            dx = event.getX(index) - startX
-            dy = event.getY(index) - startY
+            dx = view.toPageX(event.getX(index)) - startX
+            dy = view.toPageY(event.getY(index)) - startY
             drop()
         } else {
             addPoints(event, index)
@@ -83,7 +84,7 @@ internal class SelectionGesture(
 
     private fun drop() {
         val scene = env.scene
-        if (kotlin.math.abs(dx) >= MIN_MOVE_PX || kotlin.math.abs(dy) >= MIN_MOVE_PX) {
+        if (kotlin.math.abs(dx) * view.scale >= MIN_MOVE_PX || kotlin.math.abs(dy) * view.scale >= MIN_MOVE_PX) {
             scene.beginGesture()
             try {
                 scene.commit(scene.moveItems(selection.ids, dx, dy))
@@ -118,8 +119,10 @@ internal class SelectionGesture(
     ) {
         val needed = (loopCount + event.historySize + 1) * 2
         if (loop.size < needed) loop = loop.copyOf(needed)
-        for (h in 0 until event.historySize) put(event.getHistoricalX(index, h), event.getHistoricalY(index, h))
-        put(event.getX(index), event.getY(index))
+        for (h in 0 until event.historySize) {
+            put(view.toPageX(event.getHistoricalX(index, h)), view.toPageY(event.getHistoricalY(index, h)))
+        }
+        put(view.toPageX(event.getX(index)), view.toPageY(event.getY(index)))
     }
 
     private fun put(

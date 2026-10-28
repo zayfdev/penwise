@@ -20,13 +20,13 @@ internal class StampBuffer {
     var top = 0
         private set
 
-    /** Coverage of [dabs] (page px, 1:1 with the canvas) inside [clip] (`l, t, r, b`) as an alpha mask, or null. */
+    /** Coverage of [dabs] (page space, seen through [view]) inside [clip] (screen px) as an alpha mask, or null. */
     fun rasterize(
         dabs: FloatArray,
         grain: GrainStyle?,
         clip: PixelRect,
+        view: RasterView,
     ): Bitmap? {
-        val view = RasterView()
         val pixelDabs = StampRaster.pixelDabs(dabs, view)
         val rect = StampRaster.rect(pixelDabs, clip) ?: return null
         val (w, h) = rect.width to rect.height

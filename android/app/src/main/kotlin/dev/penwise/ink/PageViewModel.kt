@@ -61,6 +61,9 @@ class PageViewModel(
     /** The scene of the page on screen; `null` until the library has loaded. */
     val scene: StateFlow<PageScene?> = _scene.asStateFlow()
 
+    /** Pan and zoom of the page on screen; refitted whenever the page changes. */
+    val viewport = ViewportState()
+
     private val _status = MutableStateFlow(SyncStatus.STOPPED)
 
     /** State of the link to the PC server. */
@@ -217,6 +220,7 @@ class PageViewModel(
             next.onError = { syncUi.editRefused.value = it }
             val old = _scene.value
             _scene.value = next
+            viewport.reset()
             shown = id
             withContext(Dispatchers.Default) { runCatching(next::reload) }
             settings.activePage = id

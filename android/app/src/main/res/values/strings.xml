@@ -2,6 +2,18 @@
 <resources>
     <string name="app_name">Penwise</string>
     <string name="tool_undo">Undo</string>
+    <string name="tool_tools">Tools</string>
+    <string name="tool_tools_open">Open tools</string>
+    <string name="tool_tools_close">Close tools</string>
+    <string name="tool_fit_page">Fit page</string>
+    <string name="drawer_brush">Brush: %1$s</string>
+    <string name="drawer_colour">Colour</string>
+    <string name="drawer_size">Size</string>
+    <string name="drawer_erase">Erase</string>
+    <string name="drawer_shapes">Shapes</string>
+    <string name="drawer_select">Select</string>
+    <string name="drawer_page">Page</string>
+    <string name="drawer_view">View · %1$d%%</string>
     <string name="tool_redo">Redo</string>
     <string name="tool_precise">Precise</string>
     <string name="tool_eraser">Eraser</string>
@@ -12,12 +24,14 @@
     <string name="save">Save</string>
     <string name="cancel">Cancel</string>
     <string name="shape_line">Line</string>
-    <string name="shape_rect">Rect</string>
+    <string name="shape_rect">Rectangle</string>
     <string name="shape_ellipse">Ellipse</string>
     <string name="shape_arrow">Arrow</string>
-    <string name="tool_lasso">Select</string>
+    <string name="tool_lasso">Lasso select</string>
     <string name="tool_delete_selection">Delete selection</string>
-    <string name="tool_clear_page">Clear</string>
+    <string name="tool_clear_page">Clear page</string>
+    <string name="clear_page_title">Clear this page?</string>
+    <string name="clear_page_message">All ink on this page is removed. Undo brings it back; the server also keeps the history.</string>
     <string name="tool_preset_color">Auto</string>
     <string name="tool_size_value">%1$.1f×</string>
     <!-- Penwise PC server, tried in order: home Wi-Fi, then Tailscale from anywhere (port 7420). -->

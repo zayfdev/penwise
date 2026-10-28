@@ -4,16 +4,22 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import dev.penwise.R
 import dev.penwise.core.InkPresets
 import dev.penwise.ink.ShapeMode
@@ -24,13 +30,21 @@ private const val PANEL_PAD_DP = 8
 private const val GAP_DP = 6
 private const val SECTION_GAP_DP = 14
 private const val RGB_MASK = 0xFFFFFF
+private const val CAPTION_GAP_DP = 3
+private const val GROUP_GAP_DP = 4
+private const val CAPTION_SP = 11
+private const val CAPTION_COLOR = 0xFF6A6D75
 
-/** Floating toolbar: brush previews, colours, size, shapes, eraser, undo and page actions — all as icons. */
+/**
+ * The drawer's tool panel: brush previews, colours, size, eraser, shapes, lasso, page actions and the view controls,
+ * each group under a short text caption. Undo/redo live in the always-visible [MiniBar] instead.
+ */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun Toolbar(
     state: ToolState,
-    onUndo: () -> Unit,
-    onRedo: () -> Unit,
+    zoomPercent: Int,
+    onFit: () -> Unit,
     onClear: () -> Unit,
     onSync: () -> Unit,
     onHome: () -> Unit,
@@ -42,66 +56,66 @@ fun Toolbar(
             .padding(PANEL_PAD_DP.dp),
         verticalArrangement = Arrangement.spacedBy(GAP_DP.dp),
     ) {
-        BrushRow(state)
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
+        Section(stringResource(R.string.drawer_brush, InkPresets.names.getOrElse(state.presetIndex) { "" })) {
+            BrushRow(state)
+        }
+        FlowRow(
             horizontalArrangement = Arrangement.spacedBy(SECTION_GAP_DP.dp),
+            verticalArrangement = Arrangement.spacedBy(GAP_DP.dp),
         ) {
-            ColorRow(state)
-            SizeControl(state)
-            ToolGroup {
-                GlyphChip(
-                    glyph = Glyph.Eraser,
+            Section(stringResource(R.string.drawer_colour)) { ColorRow(state) }
+            Section(stringResource(R.string.drawer_size)) { SizeControl(state) }
+            Section(stringResource(R.string.drawer_erase)) {
+                ToolButton(
+                    icon = ToolIcons.Eraser,
                     label = stringResource(R.string.tool_eraser),
                     selected = state.eraserMode,
                     onClick = state::toggleEraser,
+                    caption = true,
                 )
                 if (state.eraserMode) {
-                    GlyphChip(
-                        glyph = Glyph.PreciseEraser,
+                    ToolButton(
+                        icon = ToolIcons.PreciseEraser,
                         label = stringResource(R.string.tool_precise),
                         selected = state.preciseErase,
                         onClick = state::togglePreciseErase,
+                        caption = true,
                     )
                 }
             }
-            ShapeChips(state)
-            LassoChips(state)
-            ToolGroup {
-                GlyphChip(
-                    glyph = Glyph.Undo,
-                    label = stringResource(R.string.tool_undo),
-                    selected = false,
-                    onClick = onUndo,
+            Section(stringResource(R.string.drawer_shapes)) { ShapeChips(state) }
+            Section(stringResource(R.string.drawer_select)) { LassoChips(state) }
+            Section(stringResource(R.string.drawer_page)) {
+                ToolButton(
+                    ToolIcons.ClearPage,
+                    stringResource(R.string.tool_clear_page),
+                    false,
+                    onClear,
+                    caption = true,
                 )
-                GlyphChip(
-                    glyph = Glyph.Redo,
-                    label = stringResource(R.string.tool_redo),
-                    selected = false,
-                    onClick = onRedo,
-                )
-                GlyphChip(
-                    glyph = Glyph.Trash,
-                    label = stringResource(R.string.tool_clear_page),
-                    selected = false,
-                    onClick = onClear,
-                )
+                ToolButton(ToolIcons.Sync, stringResource(R.string.tool_sync), false, onSync, caption = true)
+                ToolButton(ToolIcons.Home, stringResource(R.string.tool_home), false, onHome, caption = true)
             }
-            ToolGroup {
-                GlyphChip(
-                    glyph = Glyph.Sync,
-                    label = stringResource(R.string.tool_sync),
-                    selected = false,
-                    onClick = onSync,
-                )
-                GlyphChip(
-                    glyph = Glyph.Home,
-                    label = stringResource(R.string.tool_home),
-                    selected = false,
-                    onClick = onHome,
-                )
+            Section(stringResource(R.string.drawer_view, zoomPercent)) {
+                ToolButton(ToolIcons.Fit, stringResource(R.string.tool_fit_page), false, onFit, caption = true)
             }
         }
+    }
+}
+
+/** A tool group with its plain-text caption above it. */
+@Composable
+private fun Section(
+    title: String,
+    content: @Composable RowScope.() -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(CAPTION_GAP_DP.dp)) {
+        BasicText(title, style = TextStyle(color = Color(CAPTION_COLOR), fontSize = CAPTION_SP.sp))
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(GROUP_GAP_DP.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            content = content,
+        )
     }
 }
 
@@ -125,53 +139,43 @@ private fun BrushRow(state: ToolState) {
 }
 
 @Composable
-private fun ShapeChips(state: ToolState) {
+private fun RowScope.ShapeChips(state: ToolState) {
     val shapes =
         listOf(
-            Triple(ShapeMode.Line, Glyph.Line, R.string.shape_line),
-            Triple(ShapeMode.Rect, Glyph.Rect, R.string.shape_rect),
-            Triple(ShapeMode.Ellipse, Glyph.Ellipse, R.string.shape_ellipse),
-            Triple(ShapeMode.Arrow, Glyph.Arrow, R.string.shape_arrow),
+            Triple(ShapeMode.Line, ToolIcons.Line, R.string.shape_line),
+            Triple(ShapeMode.Rect, ToolIcons.Rect, R.string.shape_rect),
+            Triple(ShapeMode.Ellipse, ToolIcons.Ellipse, R.string.shape_ellipse),
+            Triple(ShapeMode.Arrow, ToolIcons.Arrow, R.string.shape_arrow),
         )
-    ToolGroup {
-        shapes.forEach { (mode, glyph, label) ->
-            GlyphChip(
-                glyph = glyph,
-                label = stringResource(label),
-                selected = state.shapeMode == mode,
-                onClick = { state.toggleShape(mode) },
-            )
-        }
+    shapes.forEach { (mode, icon, label) ->
+        ToolButton(
+            icon = icon,
+            label = stringResource(label),
+            selected = state.shapeMode == mode,
+            onClick = { state.toggleShape(mode) },
+            caption = true,
+            rotation = if (mode == ShapeMode.Line) LINE_ICON_ROTATION else 0f,
+        )
     }
 }
 
 @Composable
-private fun LassoChips(state: ToolState) {
-    ToolGroup {
-        GlyphChip(
-            glyph = Glyph.Lasso,
-            label = stringResource(R.string.tool_lasso),
-            selected = state.lassoMode,
-            onClick = state::toggleLasso,
+private fun RowScope.LassoChips(state: ToolState) {
+    ToolButton(
+        icon = ToolIcons.Lasso,
+        label = stringResource(R.string.tool_lasso),
+        selected = state.lassoMode,
+        onClick = state::toggleLasso,
+        caption = true,
+    )
+    if (state.selection.count > 0) {
+        ToolButton(
+            icon = ToolIcons.Delete,
+            label = stringResource(R.string.tool_delete_selection),
+            selected = false,
+            onClick = state.selection::requestDelete,
+            caption = true,
         )
-        if (state.selection.count > 0) {
-            GlyphChip(
-                glyph = Glyph.Trash,
-                label = stringResource(R.string.tool_delete_selection),
-                selected = false,
-                onClick = state.selection::requestDelete,
-            )
-        }
-    }
-}
-
-@Composable
-private fun ToolGroup(content: @Composable () -> Unit) {
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        content()
     }
 }
 

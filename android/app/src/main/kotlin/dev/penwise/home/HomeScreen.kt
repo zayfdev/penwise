@@ -36,8 +36,9 @@ import dev.penwise.ink.PageBook
 import dev.penwise.ink.PageList
 import dev.penwise.ink.PageMeta
 import dev.penwise.ink.PageTemplate
-import dev.penwise.tools.Glyph
-import dev.penwise.tools.GlyphChip
+import dev.penwise.tools.PanelButton
+import dev.penwise.tools.ToolButton
+import dev.penwise.tools.ToolIcons
 
 private const val BACKGROUND = 0xFFF4F5F7.toInt()
 private const val CARD = 0xFFFFFFFF.toInt()
@@ -51,7 +52,6 @@ private const val FIELD = 0xFF16181C.toInt()
 private const val RADIUS_DP = 14
 private const val SUBTLE_FILL = 0x0D000000
 private const val ACCENT_FILL = 0x142F4FD0
-private const val PANEL_BUTTON = 0x22FFFFFF
 private const val PAD_DP = 20
 
 /** Everything the home screen can ask the app to do. */
@@ -226,9 +226,9 @@ private fun Header(
                 style = TextStyle(fontSize = 13.sp, color = Color(MUTED)),
             )
         }
-        GlyphChip(Glyph.Plus, label = "New notebook", selected = false, onClick = onNewNotebook)
+        ToolButton(ToolIcons.Add, label = "New notebook", selected = false, onClick = onNewNotebook)
         Spacer(Modifier.width(8.dp))
-        GlyphChip(Glyph.Sync, label = "Sync settings", selected = false, onClick = onSync)
+        ToolButton(ToolIcons.Sync, label = "Sync settings", selected = false, onClick = onSync)
     }
 }
 
@@ -253,9 +253,9 @@ private fun NotebookSection(
                 style = TextStyle(fontSize = 12.sp, color = Color(MUTED)),
             )
             Spacer(Modifier.weight(1f))
-            GlyphChip(Glyph.Pencil, label = "Rename notebook", selected = false, onClick = onEditNotebook)
+            ToolButton(ToolIcons.Rename, label = "Rename notebook", selected = false, onClick = onEditNotebook)
             Spacer(Modifier.width(4.dp))
-            GlyphChip(Glyph.Plus, label = "New page", selected = false, onClick = onNewPage)
+            ToolButton(ToolIcons.Add, label = "New page", selected = false, onClick = onNewPage)
         }
         if (book.pages.isEmpty()) {
             EmptyRow("No pages yet — add one with ＋")
@@ -397,27 +397,6 @@ private fun PromptDialog(
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun PanelButton(
-    label: String,
-    primary: Boolean,
-    onClick: () -> Unit,
-) {
-    Box(
-        Modifier
-            .background(
-                if (primary) Color(ACCENT) else Color(PANEL_BUTTON),
-                RoundedCornerShape(8.dp),
-            ).clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 8.dp),
-    ) {
-        BasicText(
-            label,
-            style = TextStyle(fontSize = 14.sp, color = if (primary) Color.White else Color(PANEL_TEXT)),
-        )
     }
 }
 

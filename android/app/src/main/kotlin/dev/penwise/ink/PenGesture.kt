@@ -22,6 +22,7 @@ internal class GestureEnv(
     val sink: StrokeSink,
     val liveOut: LiveOut?,
     val predictor: MotionEventPredictor?,
+    val viewport: ViewportState,
 ) {
     private var frames = 0L
 

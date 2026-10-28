@@ -1,12 +1,16 @@
 package dev.penwise.ink
 
 import android.graphics.Canvas
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
 import dev.penwise.core.InkGeometry
 
-/** Something drawn on the front buffer while a gesture runs: made on the UI thread, drawn on the render thread. */
+/**
+ * Something drawn on the front buffer while a gesture runs: made on the UI thread, drawn on the render thread. It is
+ * described in page space; the canvas is in screen space and `painter.view` maps one to the other.
+ */
 internal interface FrontPaint {
     /** Writes the page-space area this frame covers into [out] (empty when nothing is drawn). */
     fun boundsInto(out: RectF)
@@ -58,7 +62,6 @@ internal class ShapeGuideFrame(
             strokeJoin = Paint.Join.ROUND
             color = argb
             alpha = GUIDE_ALPHA
-            strokeWidth = widthPx
         }
 
     override fun boundsInto(out: RectF) {
@@ -70,11 +73,19 @@ internal class ShapeGuideFrame(
         canvas: Canvas,
         painter: GeometryPainter,
     ) {
+        val view = painter.view
+        val sx0 = view.toScreenX(x0)
+        val sy0 = view.toScreenY(y0)
+        val sx1 = view.toScreenX(x1)
+        val sy1 = view.toScreenY(y1)
+        val (left, right) = minOf(sx0, sx1) to maxOf(sx0, sx1)
+        val (top, bottom) = minOf(sy0, sy1) to maxOf(sy0, sy1)
+        paint.strokeWidth = widthPx * view.scale
         when (mode) {
-            ShapeMode.Line -> canvas.drawLine(x0, y0, x1, y1, paint)
-            ShapeMode.Arrow -> canvas.drawLine(x0, y0, x1, y1, paint)
-            ShapeMode.Rect -> canvas.drawRect(minOf(x0, x1), minOf(y0, y1), maxOf(x0, x1), maxOf(y0, y1), paint)
-            ShapeMode.Ellipse -> canvas.drawOval(minOf(x0, x1), minOf(y0, y1), maxOf(x0, x1), maxOf(y0, y1), paint)
+            ShapeMode.Line -> canvas.drawLine(sx0, sy0, sx1, sy1, paint)
+            ShapeMode.Arrow -> canvas.drawLine(sx0, sy0, sx1, sy1, paint)
+            ShapeMode.Rect -> canvas.drawRect(left, top, right, bottom, paint)
+            ShapeMode.Ellipse -> canvas.drawOval(left, top, right, bottom, paint)
         }
     }
 
@@ -90,6 +101,8 @@ internal class LassoFrame(
     count: Int,
 ) : FrontPaint {
     private val path = Path()
+    private val screenPath = Path()
+    private val matrix = Matrix()
     private val box = RectF()
     private val paint =
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -116,7 +129,11 @@ internal class LassoFrame(
         canvas: Canvas,
         painter: GeometryPainter,
     ) {
-        canvas.drawPath(path, paint)
+        val view = painter.view
+        matrix.setScale(view.scale, view.scale)
+        matrix.postTranslate(view.tx, view.ty)
+        path.transform(matrix, screenPath)
+        canvas.drawPath(screenPath, paint)
     }
 
     companion object {
@@ -149,7 +166,14 @@ internal class SelectionFrame(
         canvas: Canvas,
         painter: GeometryPainter,
     ) {
-        canvas.drawRect(box.left + dx, box.top + dy, box.right + dx, box.bottom + dy, paint)
+        val view = painter.view
+        canvas.drawRect(
+            view.toScreenX(box.left + dx),
+            view.toScreenY(box.top + dy),
+            view.toScreenX(box.right + dx),
+            view.toScreenY(box.bottom + dy),
+            paint,
+        )
     }
 
     private companion object {

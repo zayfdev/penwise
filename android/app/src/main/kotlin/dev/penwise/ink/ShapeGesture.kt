@@ -14,8 +14,9 @@ internal class ShapeGesture(
     index: Int,
 ) : PenGesture {
     private val brush = env.brushes.current()
-    private val startX = event.getX(index)
-    private val startY = event.getY(index)
+    private val view = env.viewport.transform
+    private val startX = view.toPageX(event.getX(index))
+    private val startY = view.toPageY(event.getY(index))
     private val frameId = env.nextFrameId()
 
     init {
@@ -26,15 +27,15 @@ internal class ShapeGesture(
     override fun move(
         event: MotionEvent,
         index: Int,
-    ) = guide(event.getX(index), event.getY(index))
+    ) = guide(view.toPageX(event.getX(index)), view.toPageY(event.getY(index)))
 
     override fun end(
         event: MotionEvent,
         index: Int,
     ) {
-        val x = event.getX(index)
-        val y = event.getY(index)
-        if (hypot(x - startX, y - startY) < MIN_DRAG_PX) {
+        val x = view.toPageX(event.getX(index))
+        val y = view.toPageY(event.getY(index))
+        if (hypot(x - startX, y - startY) * view.scale < MIN_DRAG_PX) {
             env.sink.cancelStroke()
             return
         }

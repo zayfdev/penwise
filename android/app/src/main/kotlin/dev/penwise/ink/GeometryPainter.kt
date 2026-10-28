@@ -14,7 +14,11 @@ import androidx.core.graphics.withMatrix
 import androidx.core.graphics.withTranslation
 import dev.penwise.core.InkGeometry
 
-/** Draws render data on a Canvas. Not thread-safe: one instance per render layer. */
+/**
+ * Draws render data on a Canvas in *screen* space: geometry arrives in page space and is carried to the screen by
+ * [view] (set it before drawing). Vector parts go through the canvas matrix; stamp strokes are rasterised straight
+ * at screen resolution, so they stay crisp at any zoom. Not thread-safe: one instance per render layer.
+ */
 internal class GeometryPainter(
     private val images: () -> PageImages? = { null },
 ) {
@@ -34,8 +38,18 @@ internal class GeometryPainter(
     private val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG)
     private val imagePaint = Paint(Paint.FILTER_BITMAP_FLAG)
     private val matrix = Matrix()
+    private val viewMatrix = Matrix()
+    private val screenBounds = RectF()
     private val src = FloatArray(POLY)
     private val dst = FloatArray(POLY)
+
+    /** Page → screen mapping for everything drawn next. */
+    var view: ViewTransform = ViewTransform.IDENTITY
+        set(value) {
+            field = value
+            viewMatrix.setScale(value.scale, value.scale)
+            viewMatrix.postTranslate(value.tx, value.ty)
+        }
 
     /** The in-progress stroke straight from the ink engine (front buffer). */
     fun draw(
@@ -62,11 +76,13 @@ internal class GeometryPainter(
             return
         }
         bounds.set(item.bounds.left, item.bounds.top, item.bounds.right, item.bounds.bottom)
+        viewMatrix.mapRect(screenBounds, bounds)
+        screenBounds.inset(-LAYER_PAD_PX, -LAYER_PAD_PX)
         layerPaint.alpha = FULL_ALPHA
         layerPaint.blendMode = if (item.multiply) BlendMode.MULTIPLY else null
-        val save = canvas.saveLayer(bounds, layerPaint)
+        val save = canvas.saveLayer(screenBounds, layerPaint)
         item.parts.forEach { if (it !is RenderPart.Mask) part(canvas, it, false) }
-        masks.forEach { mask(canvas, it) }
+        canvas.withMatrix(viewMatrix) { masks.forEach { mask(this, it) } }
         canvas.restoreToCount(save)
     }
 
@@ -89,11 +105,11 @@ internal class GeometryPainter(
             is RenderPart.Mask -> {}
 
             is RenderPart.Text -> {
-                text(canvas, part)
+                canvas.withMatrix(viewMatrix) { text(this, part) }
             }
 
             is RenderPart.Image -> {
-                image(canvas, part)
+                canvas.withMatrix(viewMatrix) { image(this, part) }
             }
         }
     }
@@ -120,13 +136,13 @@ internal class GeometryPainter(
         fillPaint.color = argb
         fillPaint.alpha = alpha255(Color.alpha(argb) / MAX_ALPHA * opacity)
         fillPaint.blendMode = if (multiply) BlendMode.MULTIPLY else null
-        canvas.drawPath(target, fillPaint)
+        canvas.withMatrix(viewMatrix) { drawPath(target, fillPaint) }
     }
 
     /**
      * One stamp stroke: coverage computed per pixel by [StampRaster] (core's per-dab falloff, grain and minimum
-     * fade, union rule), drawn as an alpha mask tinted with the stroke color at the stroke opacity. Only the part
-     * of the stroke under the canvas clip is rasterized.
+     * fade, union rule) at screen resolution, drawn as an alpha mask tinted with the stroke color at the stroke
+     * opacity. Only the part of the stroke under the canvas clip is rasterized.
      */
     private fun stamps(
         canvas: Canvas,
@@ -139,7 +155,8 @@ internal class GeometryPainter(
         val alpha = alpha255(Color.alpha(argb) / MAX_ALPHA * opacity)
         if (alpha == 0) return
         val clip = canvas.clipBounds.let { PixelRect(it.left, it.top, it.right, it.bottom) }
-        val bitmap = stampBuffer.rasterize(d, if (grain.scale > 0f) grain else null, clip) ?: return
+        val raster = RasterView(view.scale, -view.tx / view.scale, -view.ty / view.scale)
+        val bitmap = stampBuffer.rasterize(d, if (grain.scale > 0f) grain else null, clip, raster) ?: return
         stampPaint.color = (argb and RGB_MASK) or (alpha shl ALPHA_SHIFT)
         stampPaint.blendMode = if (multiply) BlendMode.MULTIPLY else null
         canvas.drawBitmap(bitmap, stampBuffer.left.toFloat(), stampBuffer.top.toFloat(), stampPaint)
@@ -223,6 +240,7 @@ internal class GeometryPainter(
         const val ALPHA_SHIFT = 24
         const val FULL_ALPHA = 255
         const val MAX_ALPHA = 255f
+        const val LAYER_PAD_PX = 2f
         const val POLY = 6
         const val TRIPLE = 3
     }

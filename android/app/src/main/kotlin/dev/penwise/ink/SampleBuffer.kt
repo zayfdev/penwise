@@ -11,19 +11,23 @@ internal class SampleBuffer {
     var count = 0
         private set
 
-    /** Fills the buffer with all historical samples of [pointerIndex] (oldest first) plus the current one. */
+    /**
+     * Fills the buffer with all historical samples of [pointerIndex] (oldest first) plus the current one, mapped from
+     * screen to page space by [view].
+     */
     fun fill(
         event: MotionEvent,
         pointerIndex: Int,
         startNanos: Long,
+        view: ViewTransform,
     ) {
         val history = event.historySize
         ensureCapacity(history + 1)
         count = 0
         for (h in 0 until history) {
             put(
-                event.getHistoricalX(pointerIndex, h),
-                event.getHistoricalY(pointerIndex, h),
+                view.toPageX(event.getHistoricalX(pointerIndex, h)),
+                view.toPageY(event.getHistoricalY(pointerIndex, h)),
                 event.getHistoricalPressure(pointerIndex, h),
                 event.getHistoricalAxisValue(MotionEvent.AXIS_TILT, pointerIndex, h),
                 event.getHistoricalAxisValue(MotionEvent.AXIS_ORIENTATION, pointerIndex, h),
@@ -31,8 +35,8 @@ internal class SampleBuffer {
             )
         }
         put(
-            event.getX(pointerIndex),
-            event.getY(pointerIndex),
+            view.toPageX(event.getX(pointerIndex)),
+            view.toPageY(event.getY(pointerIndex)),
             event.getPressure(pointerIndex),
             event.getAxisValue(MotionEvent.AXIS_TILT, pointerIndex),
             event.getAxisValue(MotionEvent.AXIS_ORIENTATION, pointerIndex),

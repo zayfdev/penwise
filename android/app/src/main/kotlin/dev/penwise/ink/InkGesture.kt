@@ -23,7 +23,8 @@ internal class InkGesture(
     private val buffer = SampleBuffer()
     private val predicted = SampleBuffer()
     private val accumulated = StrokeAccumulator()
-    private val preview = PreviewStroke(PREVIEW_SPACING_PX)
+    private val view = env.viewport.transform
+    private val preview = PreviewStroke(PREVIEW_SPACING_PX / view.scale)
     private var lastPreviewAtMs = 0L
 
     init {
@@ -75,7 +76,7 @@ internal class InkGesture(
         event: MotionEvent,
         index: Int,
     ) {
-        buffer.fill(event, index, startNanos)
+        buffer.fill(event, index, startNanos, view)
         accumulated.add(buffer.samples, buffer.times, buffer.count)
         preview.push(buffer.samples, buffer.times, buffer.count)
         env.liveOut?.samples(buffer.samples, buffer.times, buffer.count)
@@ -94,7 +95,7 @@ internal class InkGesture(
         try {
             val index = event.findPointerIndex(penId)
             if (index < 0 || buffer.count == 0) return null
-            predicted.fill(event, index, startNanos)
+            predicted.fill(event, index, startNanos, view)
             val last = (buffer.count - 1) * SAMPLE_STRIDE
             return preview.tail(
                 buffer.samples.copyOfRange(last, last + SAMPLE_STRIDE),
@@ -117,7 +118,7 @@ internal class InkGesture(
     }
 
     private companion object {
-        /** Distance between preview points while the pen is down; the committed stroke keeps them all. */
+        /** Distance (screen px) between preview points while the pen is down; the committed stroke keeps them all. */
         const val PREVIEW_SPACING_PX = 3.5f
 
         /** Longest gap between preview geometry rebuilds, so a fast pen still shows motion. */

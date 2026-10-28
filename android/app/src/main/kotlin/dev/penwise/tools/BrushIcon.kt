@@ -5,18 +5,22 @@ import android.graphics.Canvas
 import android.util.LruCache
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Density
@@ -43,6 +47,7 @@ fun BrushIcon(
 ) {
     val density = LocalDensity.current
     val bitmap = remember(preset, argb, size, density) { brushBitmap(preset, argb, size, density) }
+    var tip by remember { mutableStateOf(false) }
     Box(
         modifier =
             modifier
@@ -50,9 +55,10 @@ fun BrushIcon(
                 .background(
                     if (selected) Color(SELECTED_FILL) else Color(IDLE_FILL),
                     RoundedCornerShape(10.dp),
-                ).clickable(onClick = onClick)
+                ).combinedClickable(role = Role.Button, onLongClick = { tip = true }, onClick = onClick)
                 .semantics { contentDescription = label },
     ) {
+        if (tip) Tooltip(label) { tip = false }
         if (bitmap != null) {
             Image(
                 bitmap = bitmap,
