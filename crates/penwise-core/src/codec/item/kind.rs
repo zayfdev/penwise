@@ -16,6 +16,7 @@ use crate::item::{
     EraseItem, FillItem, FrameItem, FramePreset, ImageItem, ItemKind, ItemKindTag, SampleParam,
     SampleRange, ShapeItem, StrokeItem, TextItem, Trim,
 };
+use crate::marks::{Binding, BindingMode, MarkItem, MarkStatus};
 use crate::sample::{GridSample, Sample};
 use crate::smoothing::{HISTORY_LEN, HistoryPoint, PositionState, PressureState, SmootherState};
 
@@ -23,10 +24,10 @@ use crate::smoothing::{HISTORY_LEN, HistoryPoint, PositionState, PressureState, 
 const START_CUT: u8 = 1;
 const END_CUT: u8 = 2;
 
-/// Appends the kind data of `kind`.
-pub(super) fn encode_kind(kind: &ItemKind, out: &mut Vec<u8>) {
+/// Appends the kind data of `kind`, written at item layout `version` (`v1` omits the stroke binding flag).
+pub(super) fn encode_kind(kind: &ItemKind, version: u16, out: &mut Vec<u8>) {
     match kind {
-        ItemKind::Stroke(stroke) => encode_stroke(stroke, out),
+        ItemKind::Stroke(stroke) => encode_stroke(stroke, version, out),
         ItemKind::Erase(erase) => {
             write_id(out, erase.target);
             write_f32s(out, &[erase.radius]);
@@ -63,13 +64,27 @@ pub(super) fn encode_kind(kind: &ItemKind, out: &mut Vec<u8>) {
             write_str(out, &frame.project);
             write_str(out, &frame.route);
         }
+        ItemKind::Mark(mark) => {
+            write_id(out, mark.frame);
+            out.push(mark.preset.code());
+            out.push(mark.status.code());
+            write_str(out, &mark.state);
+            let n = write_len(out, mark.strokes.len());
+            for id in mark.strokes.iter().take(n) {
+                write_id(out, *id);
+            }
+        }
     }
 }
 
-/// Reads the kind data for `tag`.
-pub(super) fn decode_kind(r: &mut Reader<'_>, tag: ItemKindTag) -> Result<ItemKind, CodecError> {
+/// Reads the kind data for `tag` (written at item layout `version`).
+pub(super) fn decode_kind(
+    r: &mut Reader<'_>,
+    tag: ItemKindTag,
+    version: u16,
+) -> Result<ItemKind, CodecError> {
     Ok(match tag {
-        ItemKindTag::Stroke => ItemKind::Stroke(decode_stroke(r)?),
+        ItemKindTag::Stroke => ItemKind::Stroke(decode_stroke(r, version)?),
         ItemKindTag::Erase => {
             let target = read_id(r)?;
             let radius = r.f32_le("erase.radius")?;
@@ -115,10 +130,28 @@ pub(super) fn decode_kind(r: &mut Reader<'_>, tag: ItemKindTag) -> Result<ItemKi
                 css_h,
             })
         }
+        ItemKindTag::Mark => {
+            let frame = read_id(r)?;
+            let preset = FramePreset::from_code(r.u8()?).ok_or(invalid("mark.preset"))?;
+            let status = MarkStatus::from_code(r.u8()?).ok_or(invalid("mark.status"))?;
+            let state = read_str(r)?;
+            let (count, cap) = read_count(r, 16)?;
+            let mut strokes = Vec::with_capacity(cap);
+            for _ in 0..count {
+                strokes.push(read_id(r)?);
+            }
+            ItemKind::Mark(MarkItem {
+                frame,
+                preset,
+                status,
+                state,
+                strokes,
+            })
+        }
     })
 }
 
-fn encode_stroke(stroke: &StrokeItem, out: &mut Vec<u8>) {
+fn encode_stroke(stroke: &StrokeItem, version: u16, out: &mut Vec<u8>) {
     encode_params(&stroke.params, out);
     out.extend_from_slice(&stroke.seed.to_le_bytes());
     let grid: Vec<GridSample> = stroke
@@ -146,6 +179,52 @@ fn encode_stroke(stroke: &StrokeItem, out: &mut Vec<u8>) {
             encode_warm(warm, out);
         }
     }
+    // v1 bodies predate bindings, so only v2 writes the flag (a bound stroke cannot be a v1 `Add`).
+    if version >= 2 {
+        write_flag(out, stroke.binding.is_some());
+        if let Some(binding) = &stroke.binding {
+            encode_binding(binding, out);
+        }
+    }
+}
+
+/// `frame id; mode u8; preset u8; key flag [+ len uv + UTF-8]; state (len uv + UTF-8); anchor f32×2`.
+fn encode_binding(binding: &Binding, out: &mut Vec<u8>) {
+    write_id(out, binding.frame);
+    out.push(binding.mode.code());
+    out.push(binding.preset.code());
+    match &binding.key {
+        Some(key) => {
+            write_flag(out, true);
+            write_str(out, key);
+        }
+        None => write_flag(out, false),
+    }
+    write_str(out, &binding.state);
+    write_f32s(out, &binding.anchor);
+}
+
+fn decode_binding(r: &mut Reader<'_>) -> Result<Binding, CodecError> {
+    let frame = read_id(r)?;
+    let mode = BindingMode::from_code(r.u8()?).ok_or(invalid("binding.mode"))?;
+    let preset = FramePreset::from_code(r.u8()?).ok_or(invalid("binding.preset"))?;
+    let key = if read_flag(r, "binding.key flag")? {
+        Some(read_str(r)?)
+    } else {
+        None
+    };
+    let state = read_str(r)?;
+    let [x, y] = read_f32s(r, "binding.anchor")?;
+    let binding = Binding {
+        frame,
+        mode,
+        preset,
+        key,
+        state,
+        anchor: [x, y],
+    };
+    binding.check().map_err(|_| invalid("binding"))?;
+    Ok(binding)
 }
 
 fn encode_warm(warm: &SmootherState, out: &mut Vec<u8>) {
@@ -211,7 +290,7 @@ fn read_f32s<const N: usize>(
     Ok(out)
 }
 
-fn decode_stroke(r: &mut Reader<'_>) -> Result<StrokeItem, CodecError> {
+fn decode_stroke(r: &mut Reader<'_>, version: u16) -> Result<StrokeItem, CodecError> {
     let params = decode_params(r)?;
     let seed = r.u64_le()?;
     let mut samples: Vec<Sample> = Vec::new();
@@ -221,11 +300,17 @@ fn decode_stroke(r: &mut Reader<'_>) -> Result<StrokeItem, CodecError> {
     } else {
         None
     };
+    let binding = if version >= 2 && read_flag(r, "binding flag")? {
+        Some(decode_binding(r)?)
+    } else {
+        None
+    };
     Ok(StrokeItem {
         params,
         seed,
         samples,
         trim,
+        binding,
     })
 }
 

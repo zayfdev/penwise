@@ -184,6 +184,7 @@ impl Viewer {
                 seed: pen.seed,
                 samples: pen.samples,
                 trim: None,
+                binding: None,
             }),
         };
         let result = self.record_local(pen.page, &[Edit::Add(item)], now_ms);

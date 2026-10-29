@@ -74,6 +74,7 @@ fn stroke_item(n: u128, params: BrushParams, samples: Vec<Sample>, transform: Af
             seed: 7,
             samples,
             trim: None,
+            binding: None,
         }),
     }
 }

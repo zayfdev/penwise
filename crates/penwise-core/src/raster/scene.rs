@@ -265,7 +265,8 @@ impl ItemPainter<'_> {
                 self.draw_frame(target, corners);
                 Ok(())
             }
-            ItemGeometry::Erase { .. } | ItemGeometry::Text { .. } => Ok(()),
+            // Erase items are mask parts, text draws elsewhere and marks group strokes without ink.
+            ItemGeometry::Erase { .. } | ItemGeometry::Text { .. } | ItemGeometry::Mark => Ok(()),
         }
     }
 

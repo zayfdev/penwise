@@ -58,6 +58,8 @@ pub enum ItemGeometry {
     Frame {
         corners: [[f32; 2]; 4],
     },
+    /// A mark groups strokes and carries no ink: empty geometry, never indexed or painted.
+    Mark,
 }
 
 impl ItemGeometry {
@@ -98,6 +100,7 @@ impl ItemGeometry {
                     acc
                 })
             }
+            Self::Mark => Bounds::EMPTY,
         }
     }
 }
@@ -131,7 +134,11 @@ impl Item {
             ItemKind::Stroke(s) => s.params.blend,
             ItemKind::Shape(s) => s.brush.blend,
             ItemKind::Fill(_) => return RenderBand::Fill,
-            ItemKind::Erase(_) | ItemKind::Text(_) | ItemKind::Image(_) | ItemKind::Frame(_) => {
+            ItemKind::Erase(_)
+            | ItemKind::Text(_)
+            | ItemKind::Image(_)
+            | ItemKind::Frame(_)
+            | ItemKind::Mark(_) => {
                 return RenderBand::Normal;
             }
         };
@@ -144,7 +151,7 @@ impl Item {
 
     /// Paint key `(band, z, id)`; `None` for erase items (they are painted with their target).
     pub(crate) fn paint_key(&self) -> Option<RenderKey> {
-        if matches!(self.kind, ItemKind::Erase(_)) {
+        if matches!(self.kind, ItemKind::Erase(_) | ItemKind::Mark(_)) {
             return None;
         }
         Some(RenderKey {
@@ -203,6 +210,7 @@ impl Item {
                     corners: [[0.0, 0.0], [w, 0.0], [w, h], [0.0, h]].map(|c| t.apply(c)),
                 }
             }
+            ItemKind::Mark(_) => ItemGeometry::Mark,
         }
     }
 }

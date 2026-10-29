@@ -82,6 +82,7 @@ pub(crate) fn to_items(
                 seed,
                 samples,
                 trim: None,
+                binding: None,
             }),
         };
         if item.validate().is_ok() {

@@ -59,6 +59,7 @@ fn stroke_item(n: u128, transform: Affine) -> Item {
             seed: 5,
             samples: arc(880),
             trim: None,
+            binding: None,
         }),
     }
 }

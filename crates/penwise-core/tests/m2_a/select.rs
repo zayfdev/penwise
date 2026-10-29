@@ -122,7 +122,8 @@ fn delete_recolor_and_layer() {
         | ItemKind::Fill(_)
         | ItemKind::Text(_)
         | ItemKind::Image(_)
-        | ItemKind::Frame(_) => panic!("not a stroke"),
+        | ItemKind::Frame(_)
+        | ItemKind::Mark(_) => panic!("not a stroke"),
     }
     assert!(recolor_items(&recolored, &[id(1), id(3), id(4)], RED).is_empty());
 

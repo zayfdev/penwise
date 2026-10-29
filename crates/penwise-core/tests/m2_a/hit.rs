@@ -91,6 +91,7 @@ fn tapered_capsule_hits_a_recorded_stroke() {
             seed: 3,
             samples,
             trim: None,
+            binding: None,
         }),
     );
     let mut scene = Scene::new(PageKind::Infinite);

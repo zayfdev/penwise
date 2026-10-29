@@ -67,6 +67,7 @@ pub fn stroke(id: ItemId, z: i64, x0: f32) -> Item {
             seed: 0x0123_4567_89AB_CDEF,
             samples: samples(16, x0, 40.0),
             trim: None,
+            binding: None,
         }),
     )
 }
@@ -81,6 +82,7 @@ pub fn stamp_stroke(id: ItemId, z: i64, x0: f32) -> Item {
             seed: 77,
             samples: samples(12, x0, 90.0),
             trim: None,
+            binding: None,
         }),
     )
 }
@@ -142,6 +144,7 @@ pub fn piece(id: ItemId, origin: ItemId, z: i64, x0: f32) -> Item {
                     ],
                 }),
             }),
+            binding: None,
         }),
     )
 }

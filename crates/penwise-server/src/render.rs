@@ -23,6 +23,8 @@ use tiny_skia::Pixmap;
 
 use crate::api::{ApiError, AppState, page_of};
 use crate::assets::{self, Assets};
+use penwise_core::marks::{FrameLayouts, MarkView};
+
 use crate::storage::PageView;
 
 /// Smallest infinite-page render, in page px.
@@ -60,7 +62,13 @@ pub(crate) fn page_png(
     assets: &Assets,
     scale: f32,
 ) -> Result<Vec<u8>, RenderError> {
-    let scene = view.replica.scene();
+    let raw = view.replica.scene();
+    // The server has no live layout: bound/area strokes render at their binding anchor (the page position they
+    // were drawn at) and done marks stay hidden, exactly as `penwise_core::marks` specifies.
+    let layouts = FrameLayouts::new();
+    let marks = MarkView::new(raw, &layouts, false);
+    let presentation = marks.has_marks().then(|| marks.presentation());
+    let scene = presentation.as_ref().map_or(raw, |p| &p.scene);
     let frame = page_frame(view, scale);
     // The paper goes down first and the ink is drawn onto it, so highlighter (multiply) strokes darken the
     // paper like they do on the tablet and in the browser.

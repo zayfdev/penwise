@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>harness</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header id="app">
+    <h1 id="title" data-pw-src="index.html:10:5">Harness</h1>
+    <nav id="nav">
+      <button id="menu-button" type="button" aria-expanded="false" aria-controls="menu">Menu</button>
+      <ul id="menu" hidden>
+        <li><a href="#one">One</a></li>
+        <li><a href="#two">Two</a></li>
+      </ul>
+    </nav>
+    <details id="more">
+      <summary>More</summary>
+      <p>Details body</p>
+    </details>
+    <button id="rerender" type="button">Re-render</button>
+    <ul id="list">
+      <li class="row" data-row="a">A</li>
+      <li class="row" data-row="b">B</li>
+    </ul>
+    <div id="mover" class="box">mover</div>
+    <a id="two" href="/two.html">two</a>
+    <div id="tall">tall</div>
+  </header>
+  <script src="app.js"></script>
+</body>
+</html>

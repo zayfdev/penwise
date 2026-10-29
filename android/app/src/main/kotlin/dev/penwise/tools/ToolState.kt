@@ -73,6 +73,17 @@ class ToolState : BrushSource {
         }
     }
 
+    /**
+     * Strokes started on a frame follow the element under the pen (true, the default) or are pinned to the page
+     * position (false). Strokes off every frame are unaffected.
+     */
+    override var bindToElement by mutableStateOf(true)
+        private set
+
+    fun toggleBindTarget() {
+        bindToElement = !bindToElement
+    }
+
     /** Lasso tool: the pen selects items and drags the selection instead of drawing. */
     override var lassoMode by mutableStateOf(false)
         private set

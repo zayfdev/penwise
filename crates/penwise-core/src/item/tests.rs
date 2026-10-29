@@ -36,6 +36,7 @@ fn stroke(preset: Preset, trim: Option<Trim>) -> Item {
         seed: 1,
         samples,
         trim,
+        binding: None,
     }))
 }
 
@@ -75,7 +76,8 @@ fn tags_round_trip() {
     assert_eq!(ItemKindTag::from_code(4), Some(ItemKindTag::Text));
     assert_eq!(ItemKindTag::from_code(5), Some(ItemKindTag::Image));
     assert_eq!(ItemKindTag::from_code(6), Some(ItemKindTag::Frame));
-    assert_eq!(ItemKindTag::from_code(7), None);
+    assert_eq!(ItemKindTag::from_code(7), Some(ItemKindTag::Mark));
+    assert_eq!(ItemKindTag::from_code(8), None);
     assert_eq!(Layer::from_code(3), None);
     assert_eq!(
         stroke(Preset::Ballpoint, None).kind.tag(),

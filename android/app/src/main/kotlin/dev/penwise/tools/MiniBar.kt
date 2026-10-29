@@ -74,6 +74,14 @@ fun MiniBar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         CurrentColor(state, onClick = onToggle)
+        ToolChip(
+            label =
+                stringResource(
+                    if (state.bindToElement) R.string.frame_bind_element else R.string.frame_bind_area,
+                ),
+            selected = state.bindToElement,
+            onClick = state::toggleBindTarget,
+        )
         ToolButton(ToolIcons.Undo, stringResource(R.string.tool_undo), false, onUndo)
         ToolButton(ToolIcons.Redo, stringResource(R.string.tool_redo), false, onRedo)
         SyncDot(syncStatus, pending, onSync)

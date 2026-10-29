@@ -43,7 +43,7 @@ impl Item {
     /// [`EditError::InvalidValue`] naming the first offending field (fields checked in the order above;
     /// `"extent"` last).
     pub fn validate(&self) -> Result<(), EditError> {
-        let transform_ok = if matches!(self.kind, ItemKind::Erase(_)) {
+        let transform_ok = if matches!(self.kind, ItemKind::Erase(_) | ItemKind::Mark(_)) {
             self.transform == Affine::IDENTITY
         } else {
             transform_ok(&self.transform)
@@ -75,6 +75,7 @@ impl Item {
                 "image_size",
             ),
             ItemKind::Frame(f) => f.check(),
+            ItemKind::Mark(m) => m.check(),
             ItemKind::Text(t) => {
                 let font_ok = t.font_size.is_finite() && t.font_size > 0.0;
                 check(font_ok && t.font_size <= POSITION_LIMIT_PX, "font_size")?;
@@ -135,6 +136,8 @@ fn local_box(kind: &ItemKind) -> Bounds {
             b.include_point(0.0, 0.0);
             b.include_point(w, h);
         }
+        // Marks carry no ink of their own.
+        ItemKind::Mark(_) => {}
     }
     b
 }
@@ -177,6 +180,9 @@ fn paint_ok(paint: Paint) -> bool {
 
 fn validate_stroke(s: &StrokeItem) -> Result<(), EditError> {
     check(s.params.is_valid(), "brush")?;
+    if let Some(binding) = &s.binding {
+        binding.check()?;
+    }
     let on_grid = |x: &crate::sample::Sample| {
         let q = x.quantize();
         q.x.to_bits() == x.x.to_bits()

@@ -192,6 +192,17 @@ pub(crate) fn live_item_ids(
         .collect())
 }
 
+/// The page holding `id` (live or deleted). Item ids are page-local but globally unique, so one row answers an
+/// item-addressed route.
+pub(crate) fn page_of_item(conn: &Connection, id: ItemId) -> Result<Option<PageId>, StorageError> {
+    let row: Option<[u8; 16]> = conn
+        .query_row("SELECT page FROM items WHERE id = ?1", [&id.0[..]], |r| {
+            r.get(0)
+        })
+        .optional()?;
+    Ok(row.and_then(|bytes| PageId::from_slice(&bytes)))
+}
+
 pub(crate) fn resolve_alias(
     conn: &Connection,
     legacy: &str,

@@ -334,6 +334,7 @@ mod scene_fixture {
             seed: 11,
             samples,
             trim: None,
+            binding: None,
         });
         item(n, i64::try_from(n).unwrap() << 16, kind, Affine::IDENTITY)
     }

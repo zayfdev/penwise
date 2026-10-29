@@ -82,6 +82,7 @@ pub fn stroke(id: ItemId, z: i64, preset: usize, points: &[[f32; 2]]) -> Item {
             seed: 7,
             samples,
             trim: None,
+            binding: None,
         }),
     )
 }

@@ -5,11 +5,12 @@ use penwise_core::item::{
     Affine, FrameItem, FramePreset, FrameSize, Item, ItemId, ItemKind, Layer, LayerSet, PageKind,
     Polygon, SampleParam, SampleRange, Scene, ShapeItem, ShapeKind, StrokeItem, Trim, Z_STEP,
 };
+use penwise_core::marks::{MarkItem, MarkStatus};
 use penwise_core::{Bounds, Preset};
 
 use crate::fixtures::{
-    RED, add_all, brute_query, erase, fill, id, line, permutation, rect_ring, stroke, stroke_with,
-    text,
+    RED, add_all, brute_query, erase, fill, id, item, line, permutation, rect_ring, stroke,
+    stroke_with, text,
 };
 
 fn shape(id: ItemId, z: i64) -> Item {
@@ -43,6 +44,20 @@ fn frame(id: ItemId, z: i64) -> Item {
     it
 }
 
+fn mark(mark_id: ItemId, z: i64) -> Item {
+    item(
+        mark_id,
+        z,
+        ItemKind::Mark(MarkItem {
+            frame: id(7),
+            preset: FramePreset::Phone,
+            status: MarkStatus::New,
+            state: String::new(),
+            strokes: vec![id(1)],
+        }),
+    )
+}
+
 /// One item of every kind plus a mask, all live.
 fn sample_scene() -> (Scene, Vec<Item>) {
     let s = stroke(id(1), Z_STEP, [10.0, 10.0], [90.0, 30.0]);
@@ -66,6 +81,7 @@ fn sample_scene() -> (Scene, Vec<Item>) {
         ),
         text(id(6), 5 * Z_STEP, [0.0, 200.0], [80.0, 20.0]),
         frame(id(7), 6 * Z_STEP),
+        mark(id(8), 7 * Z_STEP),
     ];
     let mut scene = Scene::new(PageKind::Infinite);
     add_all(&mut scene, &items);
@@ -143,6 +159,15 @@ fn patch_for(field: Field) -> (ItemId, ItemPatch) {
             p.font_size = Some(9.5);
             id(6)
         }
+        field => return (frame_or_mark_patch(field, &mut p), p),
+    };
+    (target, p)
+}
+
+/// Patch for the frame and mark fields (added after the pre-frame set), on the frame (`id(7)`) or the mark
+/// (`id(8)`).
+fn frame_or_mark_patch(field: Field, p: &mut ItemPatch) -> ItemId {
+    match field {
         Field::FramePreset => {
             p.frame_preset = Some(FrameSize {
                 preset: FramePreset::Desktop,
@@ -155,8 +180,15 @@ fn patch_for(field: Field) -> (ItemId, ItemPatch) {
             p.frame_route = Some("/next".into());
             id(7)
         }
-    };
-    (target, p)
+        Field::MarkStatus => {
+            p.mark_status = Some(MarkStatus::Seen);
+            id(8)
+        }
+        _ => {
+            p.mark_strokes = Some(vec![id(1), id(2)]);
+            id(8)
+        }
+    }
 }
 
 #[test]
@@ -505,8 +537,8 @@ fn index_stays_consistent_through_add_update_delete() {
 #[test]
 fn next_z_and_render_bands() {
     let (scene, _) = sample_scene();
-    assert_eq!(scene.top_z(), 6 * Z_STEP);
-    assert_eq!(scene.next_z(), Some(7 * Z_STEP));
+    assert_eq!(scene.top_z(), 7 * Z_STEP);
+    assert_eq!(scene.next_z(), Some(8 * Z_STEP));
     assert_eq!(Scene::new(PageKind::Infinite).top_z(), 0);
     // The fill sits in the lowest band although its z is high.
     let order = scene.render_order(LayerSet::ALL);
@@ -516,7 +548,11 @@ fn next_z_and_render_bands() {
         "erase items are not painted on their own"
     );
     assert_eq!(scene.masks(id(2)), vec![id(3)]);
-    assert_eq!(scene.len(), 7);
+    assert_eq!(scene.len(), 8);
+    assert!(
+        !order.contains(&id(8)),
+        "marks group strokes and are not painted"
+    );
 }
 
 #[test]
@@ -552,7 +588,7 @@ fn hostile_transforms_are_rejected_before_indexing() {
         };
         for item in items
             .iter()
-            .filter(|i| !matches!(i.kind, ItemKind::Erase(_)))
+            .filter(|i| !matches!(i.kind, ItemKind::Erase(_) | ItemKind::Mark(_)))
         {
             let update = Edit::Update {
                 id: item.id,

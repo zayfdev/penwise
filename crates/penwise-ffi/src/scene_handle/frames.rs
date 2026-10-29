@@ -136,7 +136,14 @@ impl SceneHandle {
         self.local(vec![edit])
     }
 
-    fn frame(&self, id: ItemId) -> Option<&FrameItem> {
+    /// The frame's preset, or `custom` when `id` is not a live frame.
+    #[must_use]
+    pub(super) fn frame_preset(&self, id: ItemId) -> FramePreset {
+        self.frame(id)
+            .map_or(FramePreset::Custom, |frame| frame.preset)
+    }
+
+    pub(super) fn frame(&self, id: ItemId) -> Option<&FrameItem> {
         match &self.scene.get(id)?.kind {
             ItemKind::Frame(frame) => Some(frame),
             _ => None,

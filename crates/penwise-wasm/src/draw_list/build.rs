@@ -2,6 +2,8 @@
 
 use penwise_core::brush::{BlendMode, Color, GrainParams};
 use penwise_core::geometry::{Dab, GeometryView, Outline, StrokeGeometry, StrokeStyle};
+use std::collections::BTreeSet;
+
 use penwise_core::item::{Item, ItemGeometry, ItemId, ItemKind, LayerSet, Paint, Polygon, Scene};
 
 use super::{DAB_STRIDE, DrawKind, DrawList};
@@ -48,23 +50,35 @@ impl DrawList {
     /// Committed items of `scene` on `layers` in `render_order`, each followed by its masks (module rules).
     #[must_use]
     pub fn from_scene(scene: &Scene, layers: LayerSet) -> Self {
+        Self::from_scene_dim(scene, layers, &BTreeSet::new())
+    }
+
+    /// [`DrawList::from_scene`] with `dim` rendered at [`DIM_OPACITY`] (their page state is not the frame's).
+    #[must_use]
+    pub fn from_scene_dim(scene: &Scene, layers: LayerSet, dim: &BTreeSet<ItemId>) -> Self {
         let mut list = Self::default();
         for id in scene.render_order(layers) {
             let (Some(item), Some(geometry)) = (scene.get(id), scene.geometry(id)) else {
                 continue;
             };
+            let styles = list.styles.len();
             let masks = masks_of(scene, id);
             if masks.is_empty() {
                 list.push_item(item, geometry);
-                continue;
+            } else {
+                let group = list.push_style(&Style::neutral(item_blend(item)));
+                list.command(DrawKind::GroupBegin, 0, 0, group, 0);
+                list.push_item(item, geometry);
+                for (path, radius) in masks {
+                    list.push_mask(path, radius, group);
+                }
+                list.command(DrawKind::GroupEnd, 0, 0, group, 0);
             }
-            let group = list.push_style(&Style::neutral(item_blend(item)));
-            list.command(DrawKind::GroupBegin, 0, 0, group, 0);
-            list.push_item(item, geometry);
-            for (path, radius) in masks {
-                list.push_mask(path, radius, group);
+            if dim.contains(&id) {
+                for style in list.styles[styles..].chunks_mut(super::STYLE_STRIDE) {
+                    style[4] *= penwise_core::marks::DIM_OPACITY;
+                }
             }
-            list.command(DrawKind::GroupEnd, 0, 0, group, 0);
         }
         list
     }
@@ -126,8 +140,9 @@ impl DrawList {
                     self.push_box(DrawKind::Image, corners, style, aux);
                 }
             }
-            // Frames are live views (HTML overlays the host draws itself), not ink; erase items are mask parts.
-            ItemGeometry::Frame { .. } | ItemGeometry::Erase { .. } => {}
+            // Frames are live views (HTML overlays the host draws itself), not ink; erase items are mask
+            // parts and marks group strokes without ink of their own.
+            ItemGeometry::Frame { .. } | ItemGeometry::Erase { .. } | ItemGeometry::Mark => {}
         }
     }
 

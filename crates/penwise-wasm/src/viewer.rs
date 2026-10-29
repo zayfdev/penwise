@@ -6,6 +6,7 @@
 use std::str::FromStr;
 
 use penwise_core::item::LayerSet;
+use penwise_core::marks::{FrameLayouts, MarkView};
 use penwise_proto::{LiveStrokes, NotebookId, PageId, Replica, Scope};
 use wasm_bindgen::prelude::{JsError, wasm_bindgen};
 
@@ -17,6 +18,7 @@ mod author;
 mod dispatch;
 mod edits;
 mod frames;
+mod marks;
 mod pen;
 mod persist;
 mod session;
@@ -33,6 +35,10 @@ pub struct Viewer {
     snapshot_scope: Option<Scope>,
     /// Device identity, clock and outbox (`None` until [`Viewer::identify`]); a pure viewer never needs it.
     author: Option<Author>,
+    /// Client-local frame layouts from the bridge (never synced).
+    layouts: FrameLayouts,
+    /// The local show-done view flag.
+    show_done: bool,
 }
 
 #[wasm_bindgen]
@@ -130,12 +136,20 @@ impl Viewer {
 }
 
 impl Viewer {
-    /// Committed geometry of `page` on `layers`; unknown page → empty list.
+    /// Committed geometry of `page` on `layers` in the effective presentation (marks placed, hidden strokes
+    /// gone, dimmed strokes at 30% opacity); unknown page → empty list.
     #[must_use]
     pub fn draw_page(&self, page: PageId, layers: LayerSet) -> DrawList {
-        self.replica.page(page).map_or_else(DrawList::default, |p| {
-            DrawList::from_scene(p.scene(), layers)
-        })
+        let Some(replica) = self.replica.page(page) else {
+            return DrawList::default();
+        };
+        let view = MarkView::new(replica.scene(), &self.layouts, self.show_done);
+        if view.has_marks() {
+            let presentation = view.presentation();
+            DrawList::from_scene_dim(&presentation.scene, layers, &presentation.dim)
+        } else {
+            DrawList::from_scene(replica.scene(), layers)
+        }
     }
 
     /// Live strokes of `page`, ascending stroke id.
@@ -151,7 +165,10 @@ impl Viewer {
     /// `[min_x, min_y, max_x, max_y]` of the rendered items of `page` on `layers`.
     #[must_use]
     pub fn bounds_of(&self, page: PageId, layers: LayerSet) -> Option<Vec<f32>> {
-        let scene = self.replica.page(page)?.scene();
+        let replica = self.replica.page(page)?;
+        let view = MarkView::new(replica.scene(), &self.layouts, self.show_done);
+        let presentation = view.presentation();
+        let scene = &presentation.scene;
         let bounds = scene
             .render_order(layers)
             .into_iter()

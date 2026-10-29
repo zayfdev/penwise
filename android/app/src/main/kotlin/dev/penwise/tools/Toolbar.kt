@@ -44,6 +44,8 @@ private const val CAPTION_COLOR = 0xFF6A6D75
 fun Toolbar(
     state: ToolState,
     zoomPercent: Int,
+    showDone: Boolean,
+    onShowDone: () -> Unit,
     onFit: () -> Unit,
     onClear: () -> Unit,
     onSync: () -> Unit,
@@ -97,6 +99,13 @@ fun Toolbar(
                 ToolButton(ToolIcons.Sync, stringResource(R.string.tool_sync), false, onSync, caption = true)
                 ToolButton(ToolIcons.Home, stringResource(R.string.tool_home), false, onHome, caption = true)
                 ToolButton(ToolIcons.Frame, stringResource(R.string.tool_add_frame), false, onAddFrame, caption = true)
+            }
+            Section(stringResource(R.string.drawer_marks)) {
+                ToolChip(
+                    label = stringResource(R.string.marks_show_done),
+                    selected = showDone,
+                    onClick = onShowDone,
+                )
             }
             Section(stringResource(R.string.drawer_view, zoomPercent)) {
                 ToolButton(ToolIcons.Fit, stringResource(R.string.tool_fit_page), false, onFit, caption = true)

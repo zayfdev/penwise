@@ -27,4 +27,7 @@ interface BrushSource {
 
     /** What the lasso selected; null when the source has no lasso tool. */
     val selection: Selection? get() = null
+
+    /** Strokes started on a frame follow the element under the pen (true) or stay pinned to the area (false). */
+    val bindToElement: Boolean get() = true
 }

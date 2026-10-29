@@ -6,6 +6,7 @@
  * returned frames and asks the connection to flush the outbox. `pointercancel` abandons the stroke.
  */
 
+import { bindingJson, type StrokeBinding } from "../frames/bridge-messages";
 import type { ViewTransform } from "../view";
 import type { Viewer, Wasm } from "../wasm";
 import {
@@ -32,8 +33,15 @@ export interface BrushChoice {
 
 /** Everything the pen needs from the app. */
 export interface PenDeps {
-  readonly viewer: Pick<Viewer, "stroke_begin" | "stroke_push" | "stroke_end" | "stroke_cancel">;
+  readonly viewer: Pick<Viewer, "stroke_begin" | "stroke_push" | "stroke_cancel">;
   readonly wasm: Pick<Wasm, "pointer_samples">;
+  /**
+   * The frame binding of a stroke starting at a client point, `null` off frames. In bound mode this also
+   * sends the pen-down hit request; the answer arrives while the stroke is drawn.
+   */
+  bindingAt(clientX: number, clientY: number): StrokeBinding | null;
+  /** Commits the open stroke; `binding` is the core's binding JSON (`null` = an ordinary canvas stroke). */
+  commit(now: number, binding: string | null): void;
   /** Sends a client frame (false: offline; previews are droppable, the committed op is queued regardless). */
   send(frame: Uint8Array): boolean;
   /** Flushes the outbox after a commit. */
@@ -58,6 +66,7 @@ interface Active {
   readonly pointerId: number;
   readonly t0: number;
   readonly page: string;
+  readonly binding: StrokeBinding | null;
   pending: PointerLike[];
   lastUs: number;
   flushScheduled: boolean;
@@ -89,6 +98,7 @@ export class PenInput {
       pointerId: event.pointerId,
       t0: event.timeStamp,
       page,
+      binding: this.deps.bindingAt(event.clientX, event.clientY),
       pending: [...expand(event)],
       lastUs: 0,
       flushScheduled: false,
@@ -115,10 +125,18 @@ export class PenInput {
     active.pending.push(...expand(event));
     this.flush();
     this.active = null;
+    const binding = active.binding;
+    const json = binding === null ? null : bindingJson(binding.frame, binding.mode, binding.key());
     try {
-      this.deps.viewer.stroke_end(this.deps.now());
+      this.deps.commit(this.deps.now(), json);
     } catch (error) {
       this.deps.problem(`stroke not saved: ${String(error)}`);
+      // Never leave the viewer holding an open stroke it refused to commit.
+      try {
+        this.deps.send(this.deps.viewer.stroke_cancel());
+      } catch {
+        /* the stroke was already dropped */
+      }
     }
     this.deps.flush();
     this.deps.committedChanged();

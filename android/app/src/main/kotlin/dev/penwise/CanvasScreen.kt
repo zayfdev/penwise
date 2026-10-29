@@ -32,6 +32,8 @@ import dev.penwise.frames.AddFrameDialog
 import dev.penwise.frames.DesignProject
 import dev.penwise.frames.FramePreset
 import dev.penwise.frames.FrameStage
+import dev.penwise.frames.FrameStageActions
+import dev.penwise.frames.FrameStageModel
 import dev.penwise.ink.InkCanvas
 import dev.penwise.ink.PageList
 import dev.penwise.ink.PageScene
@@ -75,13 +77,14 @@ fun CanvasScreen(
     syncStatus: SyncStatus,
     pending: Int,
 ) {
-    val tools = page.tools
     val scene by page.scene.collectAsState()
     val open = scene ?: return
-    val zoom by page.viewport.zoom.collectAsState()
     val style = PageStyle.of(pages.page(pages.active))
     val frameSpecs by page.frames.collectAsState()
     val projects by page.projects.collectAsState()
+    val marks by page.marks.collectAsState()
+    val watchKeys by page.watchKeys.collectAsState()
+    val showDone by page.showDone.collectAsState()
     var canvasSize by remember { mutableStateOf(IntSize.Zero) }
     var showAddFrame by rememberSaveable { mutableStateOf(false) }
     ImmersiveWhileOpen()
@@ -99,18 +102,23 @@ fun CanvasScreen(
                 onHome = onHome,
             )
         }
-    Box(modifier = Modifier.fillMaxSize().onSizeChanged { canvasSize = it }) {
-        FrameStage(
-            specs = frameSpecs,
-            viewport = page.viewport,
-            style = style,
+    val stageActions =
+        FrameStageActions(
             onPreset = page::setFramePreset,
             onRoute = page::setFrameRoute,
+            onLayout = page::setFrameLayout,
+            onMarkStatus = page::setMarkStatus,
+        )
+    Box(modifier = Modifier.fillMaxSize().onSizeChanged { canvasSize = it }) {
+        FrameStage(
+            model = FrameStageModel(frameSpecs, marks, watchKeys, stageActions),
+            viewport = page.viewport,
+            style = style,
             modifier = Modifier.fillMaxSize(),
         ) { frames ->
             InkCanvas(
                 scene = open,
-                brushes = tools,
+                brushes = page.tools,
                 viewport = page.viewport,
                 style = style,
                 images = page.images,
@@ -132,7 +140,7 @@ fun CanvasScreen(
             verticalArrangement = Arrangement.spacedBy(CHROME_MARGIN_DP.dp),
         ) {
             MiniBar(
-                state = tools,
+                state = page.tools,
                 expanded = drawerOpen,
                 onToggle = { onDrawerOpenChange(!drawerOpen) },
                 onUndo = page::undo,
@@ -141,7 +149,7 @@ fun CanvasScreen(
                 pending = pending,
                 onSync = onSync,
             )
-            CanvasDrawer(pages, page, drawerOpen, zoom, actions)
+            CanvasDrawer(pages, page, drawerOpen, showDone, actions)
         }
     }
     confirmClear?.let { forPage -> ClearPageDialog(forPage, open, page) { confirmClear = null } }
@@ -164,9 +172,10 @@ private fun CanvasDrawer(
     pages: PageList,
     page: PageViewModel,
     drawerOpen: Boolean,
-    zoom: Float,
+    showDone: Boolean,
     actions: CanvasActions,
 ) {
+    val zoom by page.viewport.zoom.collectAsState()
     AnimatedVisibility(
         visible = drawerOpen,
         enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
@@ -179,6 +188,8 @@ private fun CanvasDrawer(
             Toolbar(
                 state = page.tools,
                 zoomPercent = (zoom * PERCENT).roundToInt(),
+                showDone = showDone,
+                onShowDone = { page.setShowDone(!showDone) },
                 onFit = page.viewport::reset,
                 onClear = actions.onClear,
                 onSync = actions.onSync,

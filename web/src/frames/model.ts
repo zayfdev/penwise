@@ -144,6 +144,23 @@ export function diffFrames(previous: readonly Frame[], next: readonly Frame[]): 
   };
 }
 
+/** The frame under a page point (the last in paint order wins), or `null` on bare canvas. */
+export function frameAt(frames: readonly Frame[], x: number, y: number): Frame | null {
+  for (let i = frames.length - 1; i >= 0; i -= 1) {
+    const frame = frames[i];
+    if (
+      frame !== undefined &&
+      x >= frame.x &&
+      x < frame.x + frame.cssW &&
+      y >= frame.y &&
+      y < frame.y + frame.cssH
+    ) {
+      return frame;
+    }
+  }
+  return null;
+}
+
 /** A frame's box on the stage, CSS px. */
 export interface Placement {
   readonly left: number;

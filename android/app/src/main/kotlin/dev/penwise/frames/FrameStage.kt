@@ -28,6 +28,22 @@ private const val READOUT_SP = 11
 private const val READOUT_COLOR = 0xFF37474F
 private const val READOUT_MARGIN_DP = 12
 
+/** What the frame stage shows and the calls that change it; one value so [FrameStage]'s signature stays short. */
+internal class FrameStageModel(
+    val specs: List<FrameSpec>,
+    val marks: List<SceneMark>,
+    val watchKeys: Map<String, List<String>>,
+    val actions: FrameStageActions,
+)
+
+/** The stage's callbacks: frame item edits and the core's layout feed and mark status. */
+internal class FrameStageActions(
+    val onPreset: (id: String, preset: String) -> Unit,
+    val onRoute: (id: String, route: String) -> Unit,
+    val onLayout: (id: String, json: String) -> Unit,
+    val onMarkStatus: (id: String, status: String) -> Unit,
+)
+
 /**
  * The stage of the harness (§6.4): the paper and the live pages are window views below the ink, [content] puts the
  * canvas above them, and the frames' own controls sit on top of the canvas but outside the pages. With no frames it
@@ -36,20 +52,18 @@ private const val READOUT_MARGIN_DP = 12
  * The WebViews are window views, so this must be composed before the chrome; the ink surface is above the whole window
  * and translucent while frames exist, which is what lets the pages and the controls show through it.
  *
- * [onPreset] and [onRoute] edit the frame item (one synced op each); the reload chip is local to the layer. [onRoute]
- * also receives the page's own link navigations, debounced by the layer.
+ * Every `pw:layout` goes to the core (M2Core owns placement); the frames' watched keys are re-sent after the core
+ * reports them, and the mark chips follow the core's mark list.
  */
 @Composable
 internal fun FrameStage(
-    specs: List<FrameSpec>,
+    model: FrameStageModel,
     viewport: ViewportState,
     style: PageStyle,
-    onPreset: (id: String, preset: String) -> Unit,
-    onRoute: (id: String, route: String) -> Unit,
     modifier: Modifier = Modifier,
     content: @Composable (FrameHost?) -> Unit,
 ) {
-    if (specs.isEmpty()) {
+    if (model.specs.isEmpty()) {
         content(null)
         return
     }
@@ -58,6 +72,8 @@ internal fun FrameStage(
     // Leaving the page destroys the WebViews: a frame that comes back loads its route again.
     DisposableEffect(layer) { onDispose { layer.release() } }
     var scroll by remember { mutableStateOf<FrameScroll?>(null) }
+    // Each frame's current state recipe: a mark drawn in another one is dimmed and offers a replay.
+    val states = remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     Box(modifier = modifier) {
         AndroidView(
             factory = { PaperView(it) },
@@ -68,14 +84,33 @@ internal fun FrameStage(
             factory = { layer },
             update = {
                 it.bind(viewport)
-                it.setFrames(specs)
+                it.setFrames(model.specs)
+                it.setWatch(model.watchKeys)
                 it.onScroll = { _, reported -> scroll = reported }
-                it.onRoute = onRoute
+                it.onRoute = model.actions.onRoute
+                it.onLayout = { id, json, state ->
+                    model.actions.onLayout(id, json)
+                    if (states.value[id] != state) states.value = states.value + (id to state)
+                }
             },
             modifier = Modifier.fillMaxSize(),
         )
         content(layer)
-        FrameChips(specs = specs, viewport = viewport, layer = layer, onPreset = onPreset, onRoute = onRoute)
+        FrameChips(
+            specs = model.specs,
+            viewport = viewport,
+            layer = layer,
+            onPreset = model.actions.onPreset,
+            onRoute = model.actions.onRoute,
+        )
+        FrameMarkChips(
+            marks = model.marks,
+            specs = model.specs,
+            viewport = viewport,
+            layer = layer,
+            states = states.value,
+            onStatus = model.actions.onMarkStatus,
+        )
         FrameReadout(
             scroll = scroll,
             modifier =

@@ -53,6 +53,7 @@ fn stroke_with(params: BrushParams) -> Item {
         seed: 1,
         samples: samples(),
         trim: None,
+        binding: None,
     }))
 }
 

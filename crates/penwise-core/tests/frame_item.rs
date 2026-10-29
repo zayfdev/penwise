@@ -125,7 +125,7 @@ fn a_lasso_around_the_frame_picks_it() {
 }
 
 #[test]
-fn precise_erase_never_cuts_a_frame_while_the_item_eraser_removes_it() {
+fn no_eraser_touches_a_frame_now_that_it_hosts_ink() {
     let scene = scene_with_frame();
     let mut ids = Counter(100);
     let scribble = [[60.0, 100.0], [200.0, 300.0], [350.0, 700.0]];
@@ -133,13 +133,12 @@ fn precise_erase_never_cuts_a_frame_while_the_item_eraser_removes_it() {
         erase_precise(&scene, &scribble, 24.0, LayerSet::ALL, &mut ids).is_empty(),
         "a frame is not ink"
     );
+    // Erasing over a frame's area means erasing the ink drawn on it, never deleting the live page.
+    assert!(
+        erase_strokes(&scene, &scribble, 24.0, LayerSet::ALL).is_empty(),
+        "the item eraser leaves frames alone too"
+    );
     assert!(scene.get(id(1)).is_some());
-
-    let mut scene = scene;
-    let deletes = erase_strokes(&scene, &scribble, 24.0, LayerSet::ALL);
-    assert_eq!(deletes, vec![Edit::Delete(id(1))]);
-    scene.apply_all(&deletes).unwrap();
-    assert!(scene.get(id(1)).is_none());
 }
 
 #[test]
@@ -184,6 +183,7 @@ fn pen_line() -> penwise_core::item::StrokeItem {
         seed: 3,
         samples,
         trim: None,
+        binding: None,
     }
 }
 

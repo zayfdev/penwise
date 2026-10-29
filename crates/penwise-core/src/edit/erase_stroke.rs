@@ -78,11 +78,12 @@ pub(crate) fn path_touches_in(
                 .any(|ring| line_touches(ring, true, index, radius, &[]))
         }),
         (ItemKind::Text(_), ItemGeometry::Text { corners, .. })
-        | (ItemKind::Image(_), ItemGeometry::Image { corners })
-        | (ItemKind::Frame(_), ItemGeometry::Frame { corners }) => {
+        | (ItemKind::Image(_), ItemGeometry::Image { corners }) => {
             line_touches(corners, true, index, radius, &[])
                 || path.iter().any(|&p| ring_contains(corners, p))
         }
+        // Frames are live pages under the ink (erasing over one erases the ink on it, never the page) and
+        // marks are groups of strokes.
         _ => false,
     }
 }

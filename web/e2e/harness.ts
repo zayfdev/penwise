@@ -11,6 +11,17 @@ export interface Probe {
     connection: string;
     pending: number;
     view: { scale: number; originX: number; originY: number };
+    layouts: number;
+    states: string[];
+    marks: {
+      id: string;
+      frame: string;
+      preset: string;
+      status: string;
+      state: string;
+      strokes: string[];
+      rect: [number, number, number, number] | null;
+    }[];
   };
 }
 declare global {

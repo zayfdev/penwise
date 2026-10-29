@@ -51,6 +51,7 @@ fn line(n: u32, y: f32, len: u32) -> Item {
             seed: 7,
             samples,
             trim: None,
+            binding: None,
         }),
     }
 }

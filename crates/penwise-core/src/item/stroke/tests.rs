@@ -87,6 +87,7 @@ fn untrimmed_ranges_span_all_samples() {
         seed: 1,
         samples: samples(5),
         trim: None,
+        binding: None,
     };
     let id = ItemId([3; 16]);
     assert_eq!(stroke.origin(id), id);
@@ -101,6 +102,7 @@ fn centreline_interpolates_range_ends() {
         seed: 1,
         samples: samples(10),
         trim: None,
+        binding: None,
     };
     let mut line = Centreline::default();
     let visible = [
@@ -133,6 +135,7 @@ fn empty_visible_gives_empty_geometry_with_style() {
         seed: 1,
         samples: samples(10),
         trim: None,
+        binding: None,
     };
     match stroke.build_geometry(&Affine::IDENTITY, &[]) {
         StrokeGeometry::Outline { outline, style } => {

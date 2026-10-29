@@ -6,6 +6,7 @@ use penwise_core::edit::{self, Edit, LassoParams};
 use penwise_core::item::{
     Affine, ArrowHead, Item, ItemId, ItemKind, Layer, LayerSet, ShapeItem, ShapeKind, StrokeItem,
 };
+use penwise_core::marks::prune_marks;
 use penwise_core::sample::Sample;
 use penwise_core::shape::resize::{create_frame, drag_endpoint, resize_edits, resize_frame};
 use penwise_core::shape::{Handle, HandleFrame, regular_polygon};
@@ -121,6 +122,22 @@ pub fn handle_from_code(code: i32) -> Result<Handle, SyncError> {
         .ok_or(SyncError::BadArgument("handle"))
 }
 
+/// One eraser chunk on `scene` (precise or whole-item).
+fn erase_on(
+    scene: &penwise_core::item::Scene,
+    path: &[[f32; 2]],
+    radius: f32,
+    precise: bool,
+    layers: LayerSet,
+    ids: &mut penwise_proto::IdMint,
+) -> Vec<Edit> {
+    if precise {
+        edit::erase_precise(scene, path, radius, layers, ids)
+    } else {
+        edit::erase_strokes(scene, path, radius, layers)
+    }
+}
+
 impl SceneHandle {
     /// Commits a finished stroke: `Add(Item::Stroke)` on the ink layer at the next z, samples quantized to the
     /// codec grid first (so the committed geometry equals the live one).
@@ -157,6 +174,7 @@ impl SceneHandle {
                 seed: spec.seed,
                 samples,
                 trim: None,
+                binding: None,
             }),
         };
         self.local(vec![Edit::Add(item)])
@@ -221,42 +239,61 @@ impl SceneHandle {
         precise: bool,
         layers: LayerSet,
     ) -> Result<Vec<Edit>, SyncError> {
-        let edits = if precise {
-            edit::erase_precise(&self.scene, path, radius, layers, &mut self.ids)
-        } else {
-            edit::erase_strokes(&self.scene, path, radius, layers)
+        let Some(presentation) = self.interaction() else {
+            let edits = erase_on(&self.scene, path, radius, precise, layers, &mut self.ids);
+            return self.local(edits);
         };
-        self.local(edits)
+        // Dimmed strokes (their page state is not the frame's) are not erasable.
+        let working = presentation.interactive();
+        let edits = erase_on(&working, path, radius, precise, layers, &mut self.ids);
+        self.commit_presented(Some(&presentation), edits)
     }
 
-    /// Items selected by a lasso polygon, bottom → top.
+    /// Items selected by a lasso polygon, bottom → top (effective positions; dimmed marks excluded).
     #[must_use]
     pub fn lasso(&self, polygon: &[[f32; 2]], layers: LayerSet) -> Vec<ItemId> {
-        edit::lasso(&self.scene, polygon, layers, &LassoParams::DEFAULT)
+        match self.interaction() {
+            Some(presentation) => {
+                let working = presentation.interactive();
+                edit::lasso(&working, polygon, layers, &LassoParams::DEFAULT)
+            }
+            None => edit::lasso(&self.scene, polygon, layers, &LassoParams::DEFAULT),
+        }
     }
 
-    /// Topmost-last hits at a tap.
+    /// Topmost-last hits at a tap (effective positions; dimmed marks are not hittable).
     #[must_use]
     pub fn hit_test(&self, point: [f32; 2], tolerance: f32, layers: LayerSet) -> Vec<ItemId> {
-        edit::hit_test(&self.scene, point, tolerance, layers)
+        match self.interaction() {
+            Some(presentation) => {
+                let working = presentation.interactive();
+                edit::hit_test(&working, point, tolerance, layers)
+            }
+            None => edit::hit_test(&self.scene, point, tolerance, layers),
+        }
     }
 
-    /// Deletes `ids` (lasso delete).
+    /// Deletes `ids` (lasso delete); a mark whose strokes are all gone is deleted in the same edit.
     ///
     /// # Errors
     /// The scene refused an edit.
     pub fn delete_items(&mut self, ids: &[ItemId]) -> Result<Vec<Edit>, SyncError> {
-        let edits = edit::select::delete_items(&self.scene, ids);
+        let mut edits = edit::select::delete_items(&self.scene, ids);
+        edits.extend(prune_marks(&self.scene, &edits));
         self.local(edits)
     }
 
-    /// Moves `ids` by `(dx, dy)` (absolute new transforms).
+    /// Moves `ids` by `(dx, dy)`; a moved bound stroke keeps its binding and only its local offset changes.
     ///
     /// # Errors
     /// The scene refused an edit.
     pub fn move_items(&mut self, ids: &[ItemId], dx: f32, dy: f32) -> Result<Vec<Edit>, SyncError> {
-        let edits = edit::transform::move_items(&self.scene, ids, dx, dy);
-        self.local(edits)
+        let Some(presentation) = self.interaction() else {
+            let edits = edit::transform::move_items(&self.scene, ids, dx, dy);
+            return self.local(edits);
+        };
+        let edits = edit::transform::move_items(&presentation.scene, ids, dx, dy);
+        self.commit_presented(Some(&presentation), edits)
     }
 
     /// Moves `ids` to `layer` (e.g. promote agent marks to ink).

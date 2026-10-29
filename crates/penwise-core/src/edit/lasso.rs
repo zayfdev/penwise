@@ -110,7 +110,7 @@ fn item_samples(
             let mid = |i: usize| f32::midpoint(corners[0][i], corners[2][i]);
             out.push([mid(0), mid(1)]);
         }
-        Some(ItemGeometry::Erase { .. }) | None => {}
+        Some(ItemGeometry::Erase { .. } | ItemGeometry::Mark) | None => {}
     }
     length
 }

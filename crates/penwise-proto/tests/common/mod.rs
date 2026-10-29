@@ -144,6 +144,7 @@ pub fn stroke_item(id: ItemId, z: i64, seed: u64) -> Item {
             seed,
             samples,
             trim: None,
+            binding: None,
         }),
     }
 }

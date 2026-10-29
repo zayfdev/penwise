@@ -1,0 +1,46 @@
+body {
+  margin: 0;
+  font: 16px system-ui, sans-serif;
+}
+
+#app {
+  padding: 12px;
+}
+
+#menu {
+  margin: 8px 0;
+  padding: 8px;
+  border: 1px solid #ccc;
+}
+
+#menu[hidden] {
+  display: none;
+}
+
+#menu-button.open {
+  background: #ddd;
+}
+
+details {
+  margin: 8px 0;
+}
+
+.row {
+  height: 24px;
+}
+
+.box {
+  width: 80px;
+  height: 40px;
+  margin-top: 12px;
+  background: #eee;
+}
+
+.box.moved {
+  margin-left: 60px;
+  margin-top: 52px;
+}
+
+#tall {
+  height: 4000px;
+}

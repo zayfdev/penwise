@@ -35,6 +35,17 @@ data class FramePlacement(
     fun toLocalX(windowX: Float): Float = (windowX - left) / scale
 
     fun toLocalY(windowY: Float): Float = (windowY - top) / scale
+
+    /** The page's own CSS viewport coordinates of a window point (the bridge's hit and rect space). */
+    fun toCssX(
+        windowX: Float,
+        density: Float,
+    ): Float = (windowX - left) / (scale * density)
+
+    fun toCssY(
+        windowY: Float,
+        density: Float,
+    ): Float = (windowY - top) / (scale * density)
 }
 
 /**

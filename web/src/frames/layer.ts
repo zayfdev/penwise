@@ -12,6 +12,8 @@
 
 import { el } from "../dom";
 import type { ViewTransform } from "../view";
+import { BridgeChannel } from "./bridge-link";
+import { decodeBridge, type Hit, isFromFrame, type Layout, type Rect } from "./bridge-messages";
 import {
   diffFrames,
   type Frame,
@@ -35,6 +37,8 @@ export interface FrameLayerEnv {
 export interface FrameLayerEvents {
   preset(frame: Frame, preset: string): void;
   route(frame: Frame, route: string): void;
+  /** The framed page reported its layout (contract K2 `pw:layout`); the app feeds it to the core. */
+  layout(frame: Frame, layout: Layout): void;
 }
 
 /** Height of a chip in CSS px: it sits just above its frame. */
@@ -50,6 +54,8 @@ interface Placed {
   frame: Frame;
   project: Project;
   src: string;
+  /** Messages to and from the injected bridge (layout, watch, hit, replay). */
+  channel: BridgeChannel;
 }
 
 /** The iframe/chip layer of the shown page. */
@@ -78,6 +84,55 @@ export class FrameLayer {
       true,
     );
     window.addEventListener("blur", () => this.setModifier(false));
+    window.addEventListener("message", (event) => this.onMessage(event));
+  }
+
+  /**
+   * Asks the frame's bridge for the element under a frame-local viewport point (contract K2 `pw:hit?`). The
+   * answer arrives while the stroke is still being drawn; `answer` gets no key if the frame is gone.
+   */
+  hit(frameId: string, x: number, y: number, answer: (hit: Hit) => void): void {
+    const node = this.nodes.get(frameId);
+    if (!node) {
+      answer({ key: null, rect: null });
+      return;
+    }
+    node.channel.hit(x, y, answer);
+  }
+
+  /** The last layout the bridge reported for the frame, or `null` before its first message. */
+  layoutOf(frameId: string): Layout | null {
+    return this.nodes.get(frameId)?.channel.layout() ?? null;
+  }
+
+  /**
+   * Records rects the bridge sent outside a `pw:layout` (the hit answer) in the frame's layout, so the
+   * merged rect survives the client's next layout send and is what the core binds against.
+   */
+  mergeRects(frameId: string, rects: Readonly<Record<string, Rect | null>>): Layout | null {
+    return this.nodes.get(frameId)?.channel.mergeRects(rects) ?? null;
+  }
+
+  /** Tells the bridge which element keys the core needs rects for (`pw:watch`). */
+  watch(frameId: string, keys: readonly string[]): void {
+    this.nodes.get(frameId)?.channel.watch(keys);
+  }
+
+  /** Rebuilds a recorded page state in the frame (`pw:replay`). */
+  replay(frameId: string, state: string): void {
+    this.nodes.get(frameId)?.channel.replay(state);
+  }
+
+  /** The page state the frame is in now (`""` before the first layout or on the initial state). */
+  stateOf(frameId: string): string {
+    return this.nodes.get(frameId)?.channel.state() ?? "";
+  }
+
+  /** Frames whose bridge has reported a layout since their last load. */
+  layoutCount(): number {
+    let count = 0;
+    for (const node of this.nodes.values()) if (node.channel.layout() !== null) count += 1;
+    return count;
   }
 
   /** Moves and scales the frames with the canvas view. */
@@ -145,10 +200,23 @@ export class FrameLayer {
       route,
       reload,
     ]);
-    const node: Placed = { root, iframe, chip, label, preset, route, frame, project, src: "" };
+    const node: Placed = {
+      root,
+      iframe,
+      chip,
+      label,
+      preset,
+      route,
+      frame,
+      project,
+      src: "",
+      channel: new BridgeChannel(() => iframe.contentWindow),
+    };
     preset.addEventListener("change", () => this.events.preset(node.frame, preset.value));
     route.addEventListener("change", () => this.events.route(node.frame, route.value));
     reload.addEventListener("click", () => this.reload(node));
+    // A bridge starts with an empty watch list: it needs ours again after every navigation.
+    iframe.addEventListener("load", () => node.channel.loaded());
     this.root.append(root);
     this.chips.append(chip);
     this.nodes.set(frame.id, node);
@@ -180,6 +248,29 @@ export class FrameLayer {
     node.root.remove();
     node.chip.remove();
     this.nodes.delete(id);
+    // A stroke being drawn over it must still commit: it falls back to an area binding.
+    node.channel.close();
+  }
+
+  /** The node whose window sent `message`; anything else (another frame, the app itself) is ignored. */
+  private nodeFrom(source: unknown): Placed | null {
+    for (const node of this.nodes.values()) {
+      if (isFromFrame(source, node.iframe.contentWindow)) return node;
+    }
+    return null;
+  }
+
+  private onMessage(event: MessageEvent): void {
+    const node = this.nodeFrom(event.source);
+    if (!node) return;
+    const message = decodeBridge(event.data);
+    if (message === null) return;
+    if (message.t === "hit") {
+      node.channel.answer(message);
+    } else if (message.t === "layout") {
+      node.channel.store(message.layout);
+      this.events.layout(node.frame, message.layout);
+    }
   }
 
   /** Chip position/size follow the frame; chips of frames outside the stage are hidden. */

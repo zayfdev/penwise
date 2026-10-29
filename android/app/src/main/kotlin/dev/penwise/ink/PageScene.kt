@@ -231,6 +231,62 @@ class PageScene(
         route: String,
     ): ByteArray = tool { Native.sceneSetFrameRoute(it, id, route, syncHandle, clock()) }
 
+    /** A finished pen stroke on a frame, bound (or pinned) by [bindingJson] (K1); samples are in page px. */
+    @Suppress("LongParameterList")
+    fun addBoundStroke(
+        id: ByteArray,
+        preset: Int,
+        argb: Int,
+        scale: Float,
+        seed: Long,
+        samples: FloatArray,
+        times: IntArray,
+        bindingJson: String,
+    ): ByteArray =
+        tool {
+            Native.sceneAddBoundStroke(
+                it,
+                id,
+                intArrayOf(preset, argb),
+                scale,
+                seed,
+                samples,
+                times,
+                bindingJson,
+                syncHandle,
+                clock(),
+            )
+        }
+
+    /** Merges a frame's bridge layout (K1); true when the page's visible output changed and the canvas must redraw. */
+    fun setFrameLayout(
+        id: ByteArray,
+        json: String,
+    ): Boolean {
+        val visible = locked { Native.sceneSetFrameLayout(it, id, json) }
+        if (visible) changed()
+        return visible
+    }
+
+    /** The element keys the frame's bound strokes need watched: a JSON array. */
+    fun frameKeys(id: ByteArray): String = locked { Native.sceneFrameKeys(it, id) }
+
+    /** Every mark of the page as JSON (K1). */
+    fun marks(): String = locked { Native.sceneMarks(it) }
+
+    /** Sets a mark's status as one undoable LWW edit; true when the mark changed. */
+    fun setMarkStatus(
+        id: ByteArray,
+        status: String,
+    ): Boolean = commitChange(tool { Native.sceneSetMarkStatus(it, id, status, syncHandle, clock()) })
+
+    /** Shows or hides done marks (a local view flag); true when the page's visible output changed. */
+    fun setShowDone(on: Boolean): Boolean {
+        val visible = locked { Native.sceneSetShowDone(it, on) }
+        if (visible) changed()
+        return visible
+    }
+
     // ---- commit ------------------------------------------------------------------------------------------------
 
     /**

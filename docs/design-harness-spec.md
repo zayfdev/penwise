@@ -153,17 +153,26 @@ flowchart LR
 - Resolves element keys: the `data-pw-src` attribute (from an adapter) first, then a fingerprint match.
 
 ### 6.3 Canvas model (core + proto)
+- Core is the single source of truth for placement, visibility, hit/erase/lasso and grouping (`penwise-core`
+  `marks`); clients only feed bridge data in and draw what core says.
 - New item kinds in `penwise-core`:
   - `Frame { project, route, preset, w, h, patch? }`;
-  - a `binding` field on strokes: `Bound { frame, preset, key, dx, dy, state? }` or `Area { frame, preset, x, y, state? }`.
-- These are ops like any other, so they sync, undo and restore unchanged.
-- Strokes on a frame are stored in **frame coordinates**. Each client places them using the bridge's
-  scroll/rects and clips them to the frame. Hidden when:
+  - a `binding` on stroke items (item codec v2): `{ frame, mode: Bound|Area, preset, key?, state, anchor }`,
+    with the samples stored in **binding-local CSS px** (relative to the element, or document coords for
+    `Area`); `anchor` is the page position the binding origin had when drawn (the offline/server fallback).
+  - a `Mark` item kind: `{ frame, preset, status: new|seen|done|reopened, state, strokes }`.
+- These are ops like any other, so they sync, undo and restore unchanged (edit codec v3 for the binding/mark
+  fields; `MarkStatus` is an LWW field).
+- Each client feeds the bridge's layout (preset, scroll, doc/viewport size, state, element rects; local only,
+  never synced) into core, which computes the effective page position and clips to the frame. Hidden when:
   - the size preset differs;
-  - the bound element is gone;
-  - the state is not active (shown greyed with a "replay state" affordance).
-- `Mark` = a server-side grouping of stroke ids plus `status`, `kind` hint, `colour meaning` and OCR text.
-  Status changes are ops (sync and undo).
+  - the bound element is gone (`null`/absent rect);
+  - the mark is done and show-done is off.
+  A non-empty state that is not the frame's current state renders the stroke greyed ("replay state"), not
+  hittable.
+- `Mark` grouping happens in core on add-with-binding: newest mark with the same frame and preset, not done,
+  last stroke ≤ 1500 ms ago and within 40 px → join; otherwise a new `new` mark. Status changes are ops
+  (sync and undo).
 
 ### 6.4 Tablet
 - An Android **WebView** per visible frame, beneath the transparent low-latency ink surface.

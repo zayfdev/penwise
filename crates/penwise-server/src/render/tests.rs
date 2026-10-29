@@ -342,3 +342,110 @@ async fn ruling_phase_follows_page_coordinates_on_infinite_pages() {
         );
     }
 }
+
+/// One bound stroke on a frame, as a mark: `(stroke id, mark id)`.
+async fn bound_mark(rig: &mut Rig, page: penwise_proto::PageId) -> (ItemId, ItemId) {
+    use penwise_core::item::StrokeItem;
+    use penwise_core::marks::{Binding, BindingMode, MarkItem, MarkStatus};
+
+    let frame_id = rig.item_id();
+    let spec = FrameSpec::new(
+        "site".into(),
+        "/".into(),
+        FramePreset::Phone,
+        None,
+        None,
+        100.0,
+        50.0,
+    )
+    .unwrap();
+    rig.edit(page, spec.edit(frame_id, Layer::Ink, 0)).await;
+    let samples: Vec<penwise_core::Sample> = [[10.0, 5.0], [40.0, 5.0]]
+        .into_iter()
+        .enumerate()
+        .map(|(i, p)| penwise_core::Sample {
+            x: p[0],
+            y: p[1],
+            pressure: 0.5,
+            tilt: 0.0,
+            azimuth: 0.0,
+            t_us: u32::try_from(i).unwrap() * 2000,
+        })
+        .collect();
+    let stroke_id = rig.item_id();
+    let binding = Binding::new(
+        frame_id,
+        BindingMode::Bound,
+        FramePreset::Phone,
+        Some("k".to_owned()),
+        String::new(),
+        [120.0, 320.0],
+    )
+    .unwrap();
+    rig.edit(
+        page,
+        Edit::Add(Item {
+            id: stroke_id,
+            layer: Layer::Ink,
+            z: 1,
+            transform: Affine::IDENTITY,
+            kind: ItemKind::Stroke(StrokeItem {
+                params: BrushParams::for_preset(0, 0xFF00_0000, 3.0),
+                seed: 5,
+                samples,
+                trim: None,
+                binding: Some(binding),
+            }),
+        }),
+    )
+    .await;
+    let mark_id = rig.item_id();
+    rig.edit(
+        page,
+        Edit::Add(
+            MarkItem {
+                frame: frame_id,
+                preset: FramePreset::Phone,
+                status: MarkStatus::New,
+                state: String::new(),
+                strokes: vec![stroke_id],
+            }
+            .item(mark_id, 2),
+        ),
+    )
+    .await;
+    (stroke_id, mark_id)
+}
+
+/// The server has no bridge layout, so it renders a bound stroke at its anchor; a done mark stays hidden.
+#[tokio::test]
+async fn bound_marks_render_at_their_anchor_and_done_marks_are_hidden() {
+    use penwise_core::edit::ItemPatch;
+    use penwise_core::marks::MarkStatus;
+
+    let mut rig = Rig::new();
+    let page = rig.fixed_page().await;
+    let (_, mark_id) = bound_mark(&mut rig, page).await;
+    let view = rig.view(page).await;
+    let png = decode(&page_png(&view, &rig.assets, 1.0).expect("render"));
+    let dark = |x: u32, y: u32| png.pixel(x, y).is_some_and(|p| p.red() < 200);
+    assert!(dark(130, 325), "anchor (120,320) + local (10,5)");
+    assert!(!dark(20, 5), "not at the binding-local position");
+
+    // Done (the server's show-done is off): the stroke disappears.
+    rig.edit(
+        page,
+        Edit::Update {
+            id: mark_id,
+            patch: ItemPatch {
+                mark_status: Some(MarkStatus::Done),
+                ..ItemPatch::default()
+            },
+        },
+    )
+    .await;
+    let view = rig.view(page).await;
+    let png = decode(&page_png(&view, &rig.assets, 1.0).expect("render"));
+    let dark = |x: u32, y: u32| png.pixel(x, y).is_some_and(|p| p.red() < 200);
+    assert!(!dark(130, 325), "done marks stay hidden on the server");
+}

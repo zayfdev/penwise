@@ -369,3 +369,76 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneSetFrameRoute<'local>(
         bytes_out(env, &encode_edits(&edits))
     })
 }
+
+/// Commits a stroke drawn on a frame (`bindingJson` = `{"frame":"<32hex>","mode":"bound"|"area","key":"…"?}`);
+/// samples are page coords. Returns the edit blob (the stroke plus its mark add/update).
+#[unsafe(no_mangle)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the JNI signature is fixed by `Native.sceneAddBoundStroke`"
+)]
+pub extern "system" fn Java_dev_penwise_core_Native_sceneAddBoundStroke<'local>(
+    mut env: EnvUnowned<'local>,
+    _this: JObject<'local>,
+    handle: jlong,
+    id: JByteArray<'local>,
+    brush: JIntArray<'local>,
+    scale: jfloat,
+    seed: jlong,
+    samples: JFloatArray<'local>,
+    times: JIntArray<'local>,
+    binding_json: JString<'local>,
+    core: jlong,
+    now_ms: jlong,
+) -> JByteArray<'local> {
+    guarded(&mut env, |env| {
+        let (preset, argb) = match ints_in(env, &brush)?.as_slice() {
+            [preset, argb] => (*preset, *argb),
+            _ => return Err(SyncError::BadArgument("brush must be [preset, argb]").into()),
+        };
+        let (samples, times) = (floats_in(env, &samples)?, ints_in(env, &times)?);
+        let binding_json = string_in(env, &binding_json)?;
+        let spec = StrokeSpec {
+            id: item_in(env, &id)?,
+            preset: usize::try_from(preset).map_err(|_| SyncError::BadArgument("preset"))?,
+            argb: argb.cast_unsigned(),
+            scale,
+            seed: Seed::from_i64_wire(seed).get(),
+            samples: &samples,
+            times: &times,
+        };
+        let scene = handle_mut::<SceneHandle>(handle)?;
+        let edits = scene.add_bound_stroke(&spec, &binding_json, now_ms.cast_unsigned())?;
+        scene.commit_into(
+            handle_mut::<SyncCore>(core)?,
+            &edits,
+            now_ms.cast_unsigned(),
+        )?;
+        bytes_out(env, &encode_edits(&edits))
+    })
+}
+
+/// Sets a mark's status (`new`/`seen`/`done`/`reopened`); returns the edit blob.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_penwise_core_Native_sceneSetMarkStatus<'local>(
+    mut env: EnvUnowned<'local>,
+    _this: JObject<'local>,
+    handle: jlong,
+    mark_id: JByteArray<'local>,
+    status: JString<'local>,
+    core: jlong,
+    now_ms: jlong,
+) -> JByteArray<'local> {
+    guarded(&mut env, |env| {
+        let id = item_in(env, &mark_id)?;
+        let status = string_in(env, &status)?;
+        let scene = handle_mut::<SceneHandle>(handle)?;
+        let edits = scene.set_mark_status(id, &status)?;
+        scene.commit_into(
+            handle_mut::<SyncCore>(core)?,
+            &edits,
+            now_ms.cast_unsigned(),
+        )?;
+        bytes_out(env, &encode_edits(&edits))
+    })
+}

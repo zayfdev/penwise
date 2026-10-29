@@ -18,6 +18,7 @@ pub mod float;
 pub mod geometry;
 pub mod hash;
 pub mod item;
+pub mod marks;
 pub mod outline;
 #[cfg(feature = "raster")]
 pub mod raster;

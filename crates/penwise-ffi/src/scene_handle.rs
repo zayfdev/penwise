@@ -11,6 +11,7 @@
 mod dirty;
 mod edits_blob;
 mod frames;
+mod marks;
 mod mirror;
 mod tools;
 
@@ -19,8 +20,10 @@ pub use tools::{
     SAMPLE_FLOATS, ShapeSpec, StrokeSpec, handle_from_code, pairs, shape_brush, shape_kind,
 };
 
+use std::cell::RefCell;
+
 use penwise_core::edit::{Edit, UndoStack, undo::DEFAULT_DEPTH};
-use penwise_core::item::{ItemId, LayerSet, Scene};
+use penwise_core::item::{ItemId, Scene};
 use penwise_proto::outbox::check_edit_size;
 use penwise_proto::{IdMint, PageId};
 
@@ -36,6 +39,8 @@ pub struct SceneHandle {
     undo: UndoStack,
     ids: IdMint,
     dirty: Dirty,
+    /// Client-local mark state (frame layouts, show-done, cached presentation).
+    marks: RefCell<marks::MarksState>,
 }
 
 impl SceneHandle {
@@ -51,6 +56,7 @@ impl SceneHandle {
             undo: UndoStack::new(DEFAULT_DEPTH),
             ids: IdMint::new(core.device(), entropy),
             dirty: Dirty::everything(),
+            marks: RefCell::new(marks::MarksState::default()),
         })
     }
 
@@ -103,6 +109,7 @@ impl SceneHandle {
         let edits = self.undo.undo(&self.scene);
         self.dirty.mark_edits(&self.scene, &edits);
         self.scene.apply_all(&edits)?;
+        self.marks.get_mut().invalidate();
         Ok(edits)
     }
 
@@ -114,6 +121,7 @@ impl SceneHandle {
         let edits = self.undo.redo(&self.scene);
         self.dirty.mark_edits(&self.scene, &edits);
         self.scene.apply_all(&edits)?;
+        self.marks.get_mut().invalidate();
         Ok(edits)
     }
 
@@ -144,12 +152,6 @@ impl SceneHandle {
         self.dirty.take()
     }
 
-    /// Live item ids on `layers` in paint order (bottom → top).
-    #[must_use]
-    pub fn render_order(&self, layers: LayerSet) -> Vec<ItemId> {
-        self.scene.render_order(layers)
-    }
-
     /// Applies `edits` as local recorded edits; Adds go first and Deletes last so a mid-gesture disconnect can
     /// only duplicate ink, never lose it (design §1.3).
     fn local(&mut self, mut edits: Vec<Edit>) -> Result<Vec<Edit>, SyncError> {
@@ -159,6 +161,7 @@ impl SceneHandle {
         edits.sort_by_key(|e| matches!(e, Edit::Delete(_)));
         self.dirty.mark_edits(&self.scene, &edits);
         self.undo.apply_local(&mut self.scene, &edits)?;
+        self.marks.get_mut().invalidate();
         Ok(edits)
     }
 }

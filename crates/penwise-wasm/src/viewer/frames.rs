@@ -219,6 +219,6 @@ impl Viewer {
 }
 
 /// Parses an item id from its 26-char ULID text.
-fn parse_item(text: &str) -> Result<ItemId, WasmError> {
+pub(super) fn parse_item(text: &str) -> Result<ItemId, WasmError> {
     Ok(ItemId::from(parse_id::<ItemRef>(text)?))
 }

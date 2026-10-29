@@ -14,6 +14,7 @@ mod marks;
 mod notebooks;
 mod pages;
 mod pair;
+mod project_marks;
 mod projects;
 mod resolve;
 mod restore;

@@ -191,6 +191,7 @@ fn piece(
         seed: stroke.seed,
         samples,
         trim: Some(trim),
+        binding: stroke.binding.clone(),
     })
 }
 

@@ -39,6 +39,24 @@ sealed interface FrameMessage {
         val selector: String,
         val rect: List<Float>,
     ) : FrameMessage
+
+    /**
+     * `pw:layout`, the page's scroll, sizes, state recipe and the rects of the watched keys. After the first message
+     * `rects` holds only the changed keys; a `null` rect means the element is gone.
+     */
+    data class Layout(
+        val scroll: List<Float>,
+        val doc: List<Float>,
+        val viewport: List<Float>,
+        val state: String,
+        val rects: Map<String, FrameRect?>,
+    ) : FrameMessage
+
+    /** `pw:replayed`, the answer to a `pw:replay`: whether the page reached the requested state recipe. */
+    data class Replayed(
+        val state: String,
+        val ok: Boolean,
+    ) : FrameMessage
 }
 
 /**
@@ -63,6 +81,8 @@ internal object FrameMessages {
             "pw:scroll" -> scroll(message)
             "pw:route" -> route(message)
             "pw:hit" -> hit(message)
+            "pw:layout" -> layout(message)
+            "pw:replayed" -> FrameMessage.Replayed(message.optString("state"), message.optBoolean("ok"))
             else -> null
         }
 
@@ -93,11 +113,41 @@ internal object FrameMessages {
             rect = rect(message.optJSONArray("rect")),
         )
 
+    private fun layout(message: JSONObject) =
+        FrameMessage.Layout(
+            scroll = rect(message.optJSONArray("scroll")),
+            doc = rect(message.optJSONArray("doc")),
+            viewport = rect(message.optJSONArray("viewport")),
+            state = message.optString("state"),
+            rects = rects(message.optJSONObject("rects")),
+        )
+
+    /** Only the keys the message carries; a key present with JSON `null` is an element that is gone. */
+    private fun rects(objects: JSONObject?): Map<String, FrameRect?> {
+        if (objects == null) return emptyMap()
+        val out = LinkedHashMap<String, FrameRect?>()
+        for (key in objects.keys()) {
+            val rect = rect(objects.optJSONArray(key))
+            out[key] =
+                if (rect.size < RECT_VALUES) {
+                    null
+                } else {
+                    FrameRect(rect[X], rect[Y], rect[WIDTH], rect[HEIGHT])
+                }
+        }
+        return out
+    }
+
     private fun rect(array: JSONArray?): List<Float> {
         if (array == null) return emptyList()
         return (0 until array.length()).map { array.optDouble(it).toFloat() }
     }
 
+    private const val RECT_VALUES = 4
+    private const val X = 0
+    private const val Y = 1
+    private const val WIDTH = 2
+    private const val HEIGHT = 3
     private const val TYPE = "t"
 }
 

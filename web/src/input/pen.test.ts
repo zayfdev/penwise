@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, it } from "vitest";
+import type { StrokeBinding } from "../frames/bridge-messages";
 import { realWasm } from "../test/support";
 import type { Wasm } from "../wasm";
 import { type BrushChoice, type PenDeps, PenInput } from "./pen";
@@ -28,7 +29,8 @@ function pointer(partial: Partial<PointerLike> = {}): PointerLike {
 interface Calls {
   begin: unknown[][];
   pushes: { samples: number[]; times: number[] }[];
-  ends: number;
+  commits: (string | null)[];
+  bindingPoints: [number, number][];
   cancels: number;
   sent: Uint8Array[];
   flushes: number;
@@ -38,11 +40,15 @@ interface Calls {
   problems: string[];
 }
 
-function rig(page: string | null = "page"): { pen: PenInput; calls: Calls; deps: PenDeps } {
+function rig(
+  page: string | null = "page",
+  binding: StrokeBinding | null = null,
+): { pen: PenInput; calls: Calls; deps: PenDeps } {
   const calls: Calls = {
     begin: [],
     pushes: [],
-    ends: 0,
+    commits: [],
+    bindingPoints: [],
     cancels: 0,
     sent: [],
     flushes: 0,
@@ -62,15 +68,19 @@ function rig(page: string | null = "page"): { pen: PenInput; calls: Calls; deps:
         calls.pushes.push({ samples: [...samples], times: [...times] });
         return new Uint8Array([calls.pushes.length]);
       },
-      stroke_end: () => {
-        calls.ends++;
-      },
       stroke_cancel: () => {
         calls.cancels++;
         return new Uint8Array([99]);
       },
     },
     wasm,
+    bindingAt: (x, y) => {
+      calls.bindingPoints.push([x, y]);
+      return binding;
+    },
+    commit: (_now, frame) => {
+      calls.commits.push(frame);
+    },
     send: (frame) => {
       calls.sent.push(frame);
       return true;
@@ -110,7 +120,8 @@ describe("PenInput", () => {
     expect(calls.pushes[1]?.times).toEqual([8000, 16000]);
 
     pen.up(pointer({ clientX: 50, buttons: 0, timeStamp: 120 }));
-    expect(calls.ends).toBe(1);
+    expect(calls.commits).toEqual([null]);
+    expect(calls.bindingPoints).toEqual([[10, 20]]);
     expect(calls.flushes).toBe(1);
     expect(calls.committed).toBe(1);
     expect(pen.drawing).toBe(false);
@@ -146,10 +157,10 @@ describe("PenInput", () => {
     pen.down(pointer());
     pen.cancel(pointer());
     expect(calls.cancels).toBe(1);
-    expect(calls.ends).toBe(0);
+    expect(calls.commits).toHaveLength(0);
     expect(calls.sent.at(-1)).toEqual(new Uint8Array([99]));
     pen.up(pointer());
-    expect(calls.ends).toBe(0);
+    expect(calls.commits).toHaveLength(0);
   });
 
   it("ignores touch, hover, other pointers and a missing page", () => {
@@ -169,6 +180,41 @@ describe("PenInput", () => {
     pen.abort();
     expect(calls.cancels).toBe(1);
     expect(pen.drawing).toBe(false);
+  });
+
+  it("commits a stroke over a frame with the key the bridge answered while drawing", () => {
+    let key: string | null = null;
+    const binding: StrokeBinding = { frame: "fr1", mode: "bound", key: () => key };
+    const { pen, calls } = rig("page", binding);
+    pen.down(pointer());
+    // The hit answer lands between pointer events.
+    key = "v1|src|h1";
+    pen.up(pointer({ buttons: 0 }));
+    expect(JSON.parse(calls.commits[0] ?? "null")).toEqual({
+      frame: "fr1",
+      mode: "bound",
+      key: "v1|src|h1",
+    });
+  });
+
+  it("pins a bound stroke to the area when no key arrived, and keeps a chosen area mode", () => {
+    const bound: StrokeBinding = { frame: "fr1", mode: "bound", key: () => null };
+    const first = rig("page", bound);
+    first.pen.down(pointer());
+    first.pen.up(pointer({ buttons: 0 }));
+    expect(JSON.parse(first.calls.commits[0] ?? "null")).toEqual({
+      frame: "fr1",
+      mode: "area",
+    });
+
+    const area: StrokeBinding = { frame: "fr2", mode: "area", key: () => "v1|src|h1" };
+    const second = rig("page", area);
+    second.pen.down(pointer());
+    second.pen.up(pointer({ buttons: 0 }));
+    expect(JSON.parse(second.calls.commits[0] ?? "null")).toEqual({
+      frame: "fr2",
+      mode: "area",
+    });
   });
 
   it("reports and drops a stroke the viewer refuses", () => {

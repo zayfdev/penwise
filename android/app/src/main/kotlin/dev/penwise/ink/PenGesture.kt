@@ -16,6 +16,7 @@ internal interface StrokeSink {
 }
 
 /** What every gesture shares: the page it edits, the tool settings, and the way to the front buffer. */
+@Suppress("LongParameterList") // one value per collaborator, handed to every gesture
 internal class GestureEnv(
     val scene: PageScene,
     val brushes: BrushSource,
@@ -24,9 +25,10 @@ internal class GestureEnv(
     val liveOut: LiveOut?,
     val predictor: MotionEventPredictor?,
     val viewport: ViewportState,
+    val frames: FrameBinder? = null,
 ) {
     /** A fresh id for the next front-buffer frame sequence (the render thread clears when it changes). */
-    fun nextFrameId(): Long = frames.incrementAndGet()
+    fun nextFrameId(): Long = frameIds.incrementAndGet()
 
     /** Shows [paint] on the front buffer now. */
     fun show(
@@ -42,7 +44,7 @@ internal class GestureEnv(
          * Process-wide: the render callback outlives the controller (rebuilt on every page switch) and remembers the
          * last id it drew, so ids from two controllers must never collide.
          */
-        val frames = AtomicLong()
+        val frameIds = AtomicLong()
     }
 }
 

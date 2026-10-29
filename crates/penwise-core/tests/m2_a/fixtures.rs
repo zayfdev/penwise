@@ -84,6 +84,7 @@ pub fn stroke_with(id: ItemId, z: i64, preset: Preset, points: &[[f32; 2]]) -> I
             seed: 0x5EED,
             samples: samples(points),
             trim: None,
+            binding: None,
         }),
     )
 }

@@ -2,6 +2,7 @@
 
 import type { FollowMode } from "../app/follow";
 import { el } from "../dom";
+import type { BindingMode } from "../frames/bridge-messages";
 import type { BrushChoice } from "../input/pen";
 
 /** User actions from the toolbar. */
@@ -12,6 +13,10 @@ export interface ToolbarEvents {
   mode(mode: FollowMode): void;
   /** "Draw with mouse": the mouse inks over frames instead of clicking through them. */
   mouseDraw(on: boolean): void;
+  /** How a stroke started over a frame follows it (contract K3). */
+  binding(mode: BindingMode): void;
+  /** "Show done": done marks stay on screen while on. */
+  showDone(on: boolean): void;
 }
 
 /** Hex `#rrggbb` → opaque `0xAARRGGBB`; black for anything else. */
@@ -62,6 +67,15 @@ export class Toolbar {
     });
     const mouseDraw = el("input", { attrs: { type: "checkbox", id: "tool-draw-mouse" } });
     mouseDraw.addEventListener("change", () => events.mouseDraw(mouseDraw.checked));
+    const binding = el("select", { attrs: { "aria-label": "Binding", id: "tool-bind" } }, [
+      el("option", { text: "Bind to element", attrs: { value: "bound" } }),
+      el("option", { text: "Pin to area", attrs: { value: "area" } }),
+    ]);
+    binding.addEventListener("change", () => {
+      if (binding.value === "bound" || binding.value === "area") events.binding(binding.value);
+    });
+    const showDone = el("input", { attrs: { type: "checkbox", id: "tool-show-done" } });
+    showDone.addEventListener("change", () => events.showDone(showDone.checked));
     root.prepend(
       this.preset,
       this.color,
@@ -70,7 +84,9 @@ export class Toolbar {
       this.redoButton,
       this.button("Fit", "tool-fit", events.fit),
       mode,
+      binding,
       el("label", { class: "toggle" }, [mouseDraw, "Draw with mouse"]),
+      el("label", { class: "toggle" }, [showDone, "Show done"]),
     );
   }
 

@@ -46,6 +46,9 @@ class InkSurfaceView
         private var pen = PenActivity()
         private var frames: FrameHost? = null
 
+        /** The pen reads this at pen-down; [setFrames] swaps what it delegates to. */
+        private val frameBindings = FrameBinderHolder()
+
         /** The surface is above the window and carries ink only: live pages are drawn by the window below it. */
         private var overFrames = false
         private val viewListener: (ViewTransform) -> Unit = { onViewChanged() }
@@ -103,6 +106,7 @@ class InkSurfaceView
             if (host === frames) return
             frames?.cancel()
             frames = host
+            frameBindings.delegate = host as? FrameBinder
             setOverlay(host != null)
         }
 
@@ -268,7 +272,7 @@ class InkSurfaceView
         override fun surfaceDestroyed(holder: SurfaceHolder) = Unit
 
         private fun newController(page: PageScene): StylusStrokeController? =
-            brushes?.let { StylusStrokeController(page, it, live, this, viewport, liveOut, predictor) }
+            brushes?.let { StylusStrokeController(page, it, live, this, viewport, liveOut, predictor, frameBindings) }
 
         private fun undo() {
             brushes?.selection?.clear()

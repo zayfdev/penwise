@@ -226,6 +226,7 @@ pub fn stroke_to_item_as(
             seed: legacy_seed(&stroke.seed),
             samples,
             trim: None,
+            binding: None,
         }),
     };
     item.validate()?;

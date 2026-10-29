@@ -423,4 +423,62 @@ internal object Native {
         core: Long,
         nowMs: Long,
     ): ByteArray
+
+    /**
+     * Merges one `pw:layout` message for [frameId]: `{preset, scroll, doc, viewport, state,
+     * rects: {key: [x, y, w, h] | null}}` (viewport CSS px; rects merge per key). True when the visible
+     * output changed (repaint).
+     */
+    external fun sceneSetFrameLayout(
+        handle: Long,
+        frameId: ByteArray,
+        json: String,
+    ): Boolean
+
+    /** Element keys of [frameId]'s bound strokes as a JSON array (send them with `pw:watch`). */
+    external fun sceneFrameKeys(
+        handle: Long,
+        frameId: ByteArray,
+    ): String
+
+    /**
+     * Commits a stroke drawn on a frame: [samples] are page coords (same layout as [sceneAddStroke]),
+     * [bindingJson] = `{"frame":"<32hex>","mode":"bound"|"area","key":"…"?}`. Core fills the preset, state and
+     * anchor from the frame's layout and groups the stroke into a mark.
+     */
+    @Suppress("LongParameterList")
+    external fun sceneAddBoundStroke(
+        handle: Long,
+        id: ByteArray,
+        brush: IntArray,
+        scale: Float,
+        seed: Long,
+        samples: FloatArray,
+        times: IntArray,
+        bindingJson: String,
+        core: Long,
+        nowMs: Long,
+    ): ByteArray
+
+    /**
+     * Live marks as JSON:
+     * `[{id, frame, preset, status, state, strokes, rect: [x, y, w, h] | null}]`, ids as 32 hex, rect in page
+     * units (`null` = hidden).
+     */
+    external fun sceneMarks(handle: Long): String
+
+    /** [status]: new, seen, done or reopened (LWW, undoable, synced). */
+    external fun sceneSetMarkStatus(
+        handle: Long,
+        markId: ByteArray,
+        status: String,
+        core: Long,
+        nowMs: Long,
+    ): ByteArray
+
+    /** The local show-done flag; true when the visible output changed. */
+    external fun sceneSetShowDone(
+        handle: Long,
+        on: Boolean,
+    ): Boolean
 }

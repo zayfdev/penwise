@@ -30,8 +30,12 @@ export function attachStage(stage: HTMLElement, deps: StageDeps): void {
   window.addEventListener("pointermove", notePointer, true);
 
   stage.addEventListener("pointerdown", (event) => {
-    // Frame chips are controls, not canvas: their clicks must not start a stroke.
-    if (event.target instanceof Element && event.target.closest("#frame-chips") !== null) return;
+    // Frame and mark chips are controls, not canvas: their clicks must not start a stroke.
+    if (
+      event.target instanceof Element &&
+      event.target.closest("#frame-chips, #mark-chips") !== null
+    )
+      return;
     if (event.pointerType === "touch") {
       panning = { id: event.pointerId, x: event.clientX, y: event.clientY };
       stage.setPointerCapture(event.pointerId);

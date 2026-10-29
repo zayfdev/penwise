@@ -40,6 +40,17 @@
     <string name="frame_route_title">Open route</string>
     <string name="frame_open">Open</string>
     <string name="frame_reload">Reload</string>
+    <string name="frame_bind_element">Element</string>
+    <string name="frame_bind_area">Area</string>
+    <string name="drawer_marks">Marks</string>
+    <string name="marks_show_done">Show done</string>
+    <string name="mark_action_done">Done</string>
+    <string name="mark_action_reopen">Reopen</string>
+    <string name="mark_action_replay">Replay state</string>
+    <string name="mark_status_new">New mark</string>
+    <string name="mark_status_seen">Seen mark</string>
+    <string name="mark_status_done">Done mark</string>
+    <string name="mark_status_reopened">Reopened mark</string>
     <string name="clear_page_title">Clear this page?</string>
     <string name="clear_page_message">All ink on this page is removed. Undo brings it back; the server also keeps the history.</string>
     <string name="tool_preset_color">Auto</string>

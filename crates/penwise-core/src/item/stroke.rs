@@ -66,6 +66,8 @@ pub struct StrokeItem {
     pub samples: Vec<Sample>,
     /// `None` = whole stroke (its own origin). Immutable.
     pub trim: Option<Trim>,
+    /// Design-harness binding (frame + element/area); `None` for a free canvas stroke.
+    pub binding: Option<crate::marks::Binding>,
 }
 
 impl StrokeItem {

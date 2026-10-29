@@ -109,6 +109,16 @@ impl Scene {
         self.slots.get(&id).map(|s| (&s.item, s.deleted))
     }
 
+    /// Live item ids, ascending (deterministic: ULID order).
+    #[must_use]
+    pub fn live_ids(&self) -> Vec<ItemId> {
+        self.slots
+            .iter()
+            .filter(|(_, slot)| !slot.deleted)
+            .map(|(id, _)| *id)
+            .collect()
+    }
+
     /// Number of live items (erase items included).
     #[must_use]
     pub fn len(&self) -> usize {

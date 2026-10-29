@@ -208,6 +208,18 @@ impl Storage {
             .await
     }
 
+    /// The page holding `item`, for routes that address an item without a page (`POST /marks/<id>/status`).
+    /// Deleted items and pages are included; the handler decides what a missing page means.
+    ///
+    /// # Errors
+    /// `Sqlite`.
+    pub async fn page_of_item(
+        &self,
+        item: penwise_core::item::ItemId,
+    ) -> Result<Option<PageId>, StorageError> {
+        self.read(move |conn| read::page_of_item(conn, item)).await
+    }
+
     /// The server's "current page" (`server_meta.current_page`).
     ///
     /// # Errors

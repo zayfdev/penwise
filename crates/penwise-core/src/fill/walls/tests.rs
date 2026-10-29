@@ -43,6 +43,7 @@ fn stroke(k: u8, a: [f32; 2], b: [f32; 2]) -> Item {
             seed: u64::from(k),
             samples,
             trim: None,
+            binding: None,
         }),
     }
 }

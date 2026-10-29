@@ -90,7 +90,7 @@ impl Scene {
                 .as_ref()
                 .map_or(Bounds::EMPTY, ItemGeometry::bounds);
             slot.geometry = geometry;
-            if !matches!(slot.item.kind, ItemKind::Erase(_)) {
+            if !matches!(slot.item.kind, ItemKind::Erase(_) | ItemKind::Mark(_)) {
                 entries.push((id, slot.bounds));
             }
         }
@@ -151,7 +151,8 @@ impl Scene {
             | ItemKind::Fill(_)
             | ItemKind::Text(_)
             | ItemKind::Image(_)
-            | ItemKind::Frame(_) => {}
+            | ItemKind::Frame(_)
+            | ItemKind::Mark(_) => {}
         }
         if let Some(key) = slot.item.paint_key() {
             self.order.insert(key);
@@ -170,7 +171,8 @@ impl Scene {
             | ItemKind::Fill(_)
             | ItemKind::Text(_)
             | ItemKind::Image(_)
-            | ItemKind::Frame(_) => {}
+            | ItemKind::Frame(_)
+            | ItemKind::Mark(_) => {}
         }
         if let Some(key) = slot.item.paint_key() {
             self.order.remove(&key);
@@ -180,6 +182,9 @@ impl Scene {
     /// Geometry of a live slot from its current item and scene context.
     pub(super) fn derive(&self, id: ItemId) -> Option<ItemGeometry> {
         let slot = self.live(id)?;
+        if matches!(slot.item.kind, ItemKind::Mark(_)) {
+            return None;
+        }
         let visible = self.visible_ranges(id);
         let target_transform = if let ItemKind::Erase(e) = &slot.item.kind {
             self.get(e.target).map(|t| t.transform)
@@ -206,7 +211,7 @@ impl Scene {
         let bounds = geometry
             .as_ref()
             .map_or(Bounds::EMPTY, ItemGeometry::bounds);
-        if !matches!(slot.item.kind, ItemKind::Erase(_)) {
+        if !matches!(slot.item.kind, ItemKind::Erase(_) | ItemKind::Mark(_)) {
             self.index.remove(id, &slot.bounds);
             self.index.insert(id, &bounds);
         }

@@ -7,14 +7,14 @@
 
 use jni::EnvUnowned;
 use jni::objects::{JByteArray, JFloatArray, JObject, JString};
-use jni::sys::{jint, jlong};
+use jni::sys::{jboolean, jint, jlong};
 use penwise_core::item::LayerSet;
 
 use crate::jni_util::{
     bytes_in, bytes_out, floats_out, free_handle, guarded, handle_mut, handle_ref, into_handle,
-    item_in, page_in,
+    item_in, page_in, string_in,
 };
-use crate::render_floats::{item_floats, item_text};
+use crate::render_floats::item_text;
 use crate::scene_handle::{SceneHandle, encode_edits};
 use crate::sync_core::{SyncCore, decode_changes};
 
@@ -194,8 +194,9 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneItemFloats<'local>(
 ) -> JFloatArray<'local> {
     guarded(&mut env, |env| {
         let id = item_in(env, &id)?;
-        let floats =
-            item_floats(handle_ref::<SceneHandle>(handle)?.scene(), id).unwrap_or_default();
+        let floats = handle_ref::<SceneHandle>(handle)?
+            .item_floats(id)
+            .unwrap_or_default();
         floats_out(env, &floats)
     })
 }
@@ -238,5 +239,64 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneFrames<'local>(
     guarded(&mut env, |env| {
         let json = handle_ref::<SceneHandle>(handle)?.frames_json();
         Ok(env.new_string(json)?)
+    })
+}
+
+/// Merges one `pw:layout` message into frame `frame_id`'s layout; true when the visible output changed.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_penwise_core_Native_sceneSetFrameLayout<'local>(
+    mut env: EnvUnowned<'local>,
+    _this: JObject<'local>,
+    handle: jlong,
+    frame_id: JByteArray<'local>,
+    json: JString<'local>,
+) -> jboolean {
+    guarded(&mut env, |env| {
+        let frame = item_in(env, &frame_id)?;
+        let json = string_in(env, &json)?;
+        let changed = handle_mut::<SceneHandle>(handle)?.set_frame_layout(frame, &json)?;
+        Ok(jboolean::from(changed))
+    })
+}
+
+/// JSON array of the element keys frame `frame_id`'s bound strokes need the bridge to watch.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_penwise_core_Native_sceneFrameKeys<'local>(
+    mut env: EnvUnowned<'local>,
+    _this: JObject<'local>,
+    handle: jlong,
+    frame_id: JByteArray<'local>,
+) -> JString<'local> {
+    guarded(&mut env, |env| {
+        let frame = item_in(env, &frame_id)?;
+        let keys = handle_ref::<SceneHandle>(handle)?.frame_keys(frame);
+        Ok(env.new_string(keys)?)
+    })
+}
+
+/// Every live mark as JSON (`scene_handle/marks.rs`).
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_penwise_core_Native_sceneMarks<'local>(
+    mut env: EnvUnowned<'local>,
+    _this: JObject<'local>,
+    handle: jlong,
+) -> JString<'local> {
+    guarded(&mut env, |env| {
+        let json = handle_ref::<SceneHandle>(handle)?.marks_json();
+        Ok(env.new_string(json)?)
+    })
+}
+
+/// Sets the show-done view flag; true when the visible output changed.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_penwise_core_Native_sceneSetShowDone<'local>(
+    mut env: EnvUnowned<'local>,
+    _this: JObject<'local>,
+    handle: jlong,
+    on: jboolean,
+) -> jboolean {
+    guarded(&mut env, |_env| {
+        let changed = handle_mut::<SceneHandle>(handle)?.set_show_done(on);
+        Ok(jboolean::from(changed))
     })
 }

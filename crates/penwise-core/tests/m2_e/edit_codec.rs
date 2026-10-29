@@ -3,13 +3,14 @@
 use super::fixtures::{BLUE, RED, every_kind, id, shape_kinds, square};
 use super::item_codec::reseal;
 use penwise_core::codec::edit::{
-    EDIT_MAGIC, EDIT_VERSION, EDIT_VERSION_V1, decode_edit, decode_edit_body, encode_edit,
-    encode_edit_body,
+    EDIT_MAGIC, EDIT_VERSION, EDIT_VERSION_V1, EDIT_VERSION_V2, decode_edit, decode_edit_body,
+    encode_edit, encode_edit_body,
 };
 use penwise_core::codec::item::{ITEM_MAGIC, encode_item};
 use penwise_core::codec::varint::{Reader, write_uv32};
 use penwise_core::edit::{Edit, Field, ItemPatch};
 use penwise_core::item::{Affine, FramePreset, FrameSize, Layer, Paint, Polygon, ShapeKind};
+use penwise_core::marks::MarkStatus;
 use penwise_core::{CodecError, Preset};
 
 fn blob(edit: &Edit) -> Vec<u8> {
@@ -19,12 +20,34 @@ fn blob(edit: &Edit) -> Vec<u8> {
 }
 
 /// The version [`encode_edit`] must pick for `edit` (minimal: v2 only for a frame field).
+/// True when `item` needs item layout v2 (a bound stroke or a mark).
+fn needs_item_v2(item: &penwise_core::item::Item) -> bool {
+    match &item.kind {
+        penwise_core::item::ItemKind::Mark(_) => true,
+        penwise_core::item::ItemKind::Stroke(stroke) => stroke.binding.is_some(),
+        _ => false,
+    }
+}
+
 fn expected_version(edit: &Edit) -> u16 {
     match edit {
-        Edit::Update { patch, .. } if patch.fields().iter().any(|field| field.code() >= 13) => {
-            EDIT_VERSION
+        Edit::Add(item) if needs_item_v2(item) => EDIT_VERSION,
+        Edit::Add(_) | Edit::Delete(_) => EDIT_VERSION_V1,
+        Edit::Update { patch, .. } => {
+            let highest = patch
+                .fields()
+                .iter()
+                .map(|field| u32::from(field.code()))
+                .max()
+                .unwrap_or(0);
+            if highest >= 15 {
+                EDIT_VERSION
+            } else if highest >= 13 {
+                EDIT_VERSION_V2
+            } else {
+                EDIT_VERSION_V1
+            }
         }
-        _ => EDIT_VERSION_V1,
     }
 }
 
@@ -34,12 +57,15 @@ fn assert_round_trip(edit: &Edit) {
     assert_eq!(bytes[4..6], expected_version(edit).to_le_bytes());
     assert_eq!(decode_edit(&bytes).as_ref(), Ok(edit));
     assert_eq!(blob(&decode_edit(&bytes).unwrap()), bytes, "canonical");
-    let mut body = Vec::new();
-    encode_edit_body(edit, &mut body);
-    assert_eq!(&bytes[6..bytes.len() - 8], body.as_slice());
-    let mut r = Reader::new(&body);
-    assert_eq!(decode_edit_body(&mut r).as_ref(), Ok(edit));
-    assert_eq!(r.remaining(), 0);
+    // `encode_edit_body` writes the current layout; a minimal blob's body only matches when its version does.
+    if expected_version(edit) == EDIT_VERSION {
+        let mut body = Vec::new();
+        encode_edit_body(edit, &mut body);
+        assert_eq!(&bytes[6..bytes.len() - 8], body.as_slice());
+        let mut r = Reader::new(&body);
+        assert_eq!(decode_edit_body(&mut r).as_ref(), Ok(edit));
+        assert_eq!(r.remaining(), 0);
+    }
 }
 
 fn update(patch: ItemPatch) -> Edit {
@@ -92,6 +118,8 @@ fn single(field: Field, variant: usize) -> ItemPatch {
             });
         }
         Field::FrameRoute => p.frame_route = Some(["", "/a?b=c"][variant % 2].to_owned()),
+        Field::MarkStatus => p.mark_status = Some(MarkStatus::ALL[variant % 4]),
+        Field::MarkStrokes => p.mark_strokes = Some(vec![id(1), id(2), id(3)]),
     }
     p
 }
@@ -222,8 +250,21 @@ fn blobs_use_the_minimal_version_and_older_blobs_still_decode() {
 
     let framed = update(single(Field::FrameRoute, 1));
     let bytes = blob(&framed);
-    assert_eq!(bytes[4..6], EDIT_VERSION.to_le_bytes());
+    assert_eq!(
+        bytes[4..6],
+        EDIT_VERSION_V2.to_le_bytes(),
+        "frame fields need v2"
+    );
     assert_eq!(decode_edit(&bytes), Ok(framed));
+
+    let marked = update(single(Field::MarkStatus, 1));
+    let bytes = blob(&marked);
+    assert_eq!(
+        bytes[4..6],
+        EDIT_VERSION.to_le_bytes(),
+        "mark fields need v3"
+    );
+    assert_eq!(decode_edit(&bytes), Ok(marked));
 
     let mut v1_frame = bytes;
     v1_frame[4..6].copy_from_slice(&EDIT_VERSION_V1.to_le_bytes());
@@ -236,10 +277,10 @@ fn blobs_use_the_minimal_version_and_older_blobs_still_decode() {
     );
 
     let mut unknown = blob(&Edit::Delete(id(1)));
-    unknown[4..6].copy_from_slice(&3_u16.to_le_bytes());
+    unknown[4..6].copy_from_slice(&4_u16.to_le_bytes());
     assert_eq!(
         decode_edit(&reseal(unknown)),
-        Err(CodecError::UnsupportedVersion(3))
+        Err(CodecError::UnsupportedVersion(4))
     );
 }
 

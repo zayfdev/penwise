@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   diffFrames,
   type Frame,
+  frameAt,
   framesInteractive,
   frameTransform,
   frameUrl,
@@ -164,6 +165,20 @@ describe("presetSize", () => {
     expect(presetSize("tablet")).toEqual({ cssW: 834, cssH: 1194 });
     expect(presetSize("desktop")).toEqual({ cssW: 1440, cssH: 900 });
     expect(presetSize("custom")).toBeNull();
+  });
+});
+
+describe("frameAt", () => {
+  it("finds the frame under a page point, topmost win, edges exclusive", () => {
+    const first = frame({ id: "a", x: 0, y: 0, cssW: 100, cssH: 100 });
+    const second = frame({ id: "b", x: 50, y: 50, cssW: 100, cssH: 100 });
+    const frames = [first, second];
+    expect(frameAt(frames, 75, 75)?.id).toBe("b");
+    expect(frameAt(frames, 10, 10)?.id).toBe("a");
+    expect(frameAt(frames, 120, 60)?.id).toBe("b");
+    expect(frameAt(frames, 100, 100)?.id).toBe("b");
+    expect(frameAt(frames, 150, 75)).toBeNull();
+    expect(frameAt([], 0, 0)).toBeNull();
   });
 });
 

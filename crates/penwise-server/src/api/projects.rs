@@ -35,6 +35,7 @@ pub(super) fn routes(token: Arc<String>) -> Router<AppState> {
         .route("/projects", get(list).post(link))
         .route("/projects/{id}", delete(remove))
         .route("/pages/{id}/frames", post(frame_create))
+        .merge(super::project_marks::routes())
         .layer(middleware::from_fn_with_state(token, require))
 }
 

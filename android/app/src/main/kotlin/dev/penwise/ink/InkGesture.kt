@@ -20,6 +20,10 @@ internal class InkGesture(
     private val seed = Random.nextLong()
     private val id = env.scene.newItemId()
     private val frameId = env.nextFrameId()
+
+    /** The frame under the pen at pen-down; the element answer arrives while the stroke is drawn. */
+    private val binding =
+        env.frames?.beginBinding(event.getX(index), event.getY(index), env.brushes.bindToElement)
     private val startNanos = event.eventTimeNanos
     private val buffer = SampleBuffer()
     private val predicted = SampleBuffer()
@@ -50,21 +54,32 @@ internal class InkGesture(
         append(event, index)
         preview.close()
         val scene = env.scene
+        val bindingJson = binding?.json()
+        // A bound stroke needs the element's rect in the core first: the hit's rect is merged before the commit.
+        if (bindingJson != null) binding?.prepare(scene)
         scene.beginGesture()
         try {
+            val samples = accumulated.samplesCopy()
+            val times = accumulated.timesCopy()
             val edits =
-                scene.addStroke(
-                    id,
-                    brush.presetIndex,
-                    brush.argb,
-                    brush.sizeScale,
-                    seed,
-                    accumulated.samplesCopy(),
-                    accumulated.timesCopy(),
-                )
+                if (bindingJson != null) {
+                    scene.addBoundStroke(
+                        id,
+                        brush.presetIndex,
+                        brush.argb,
+                        brush.sizeScale,
+                        seed,
+                        samples,
+                        times,
+                        bindingJson,
+                    )
+                } else {
+                    scene.addStroke(id, brush.presetIndex, brush.argb, brush.sizeScale, seed, samples, times)
+                }
             scene.commit(edits)
         } finally {
             scene.endGesture()
+            binding?.release()
         }
         env.liveOut?.end(cancelled = false)
         env.sink.commitStroke()
@@ -72,6 +87,7 @@ internal class InkGesture(
 
     override fun cancel() {
         preview.close()
+        binding?.release()
         env.liveOut?.end(cancelled = true)
         env.sink.cancelStroke()
     }

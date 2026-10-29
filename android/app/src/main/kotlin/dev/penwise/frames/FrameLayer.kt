@@ -12,9 +12,14 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import dev.penwise.BuildConfig
+import dev.penwise.ink.FrameBinder
 import dev.penwise.ink.FrameHost
+import dev.penwise.ink.HitAnswer
+import dev.penwise.ink.PageScene
+import dev.penwise.ink.PendingBinding
 import dev.penwise.ink.ViewTransform
 import dev.penwise.ink.ViewportState
+import dev.penwise.sync.Ids
 
 /**
  * The live pages under the ink layer (§6.4): one WebView per [FrameSpec], laid out at its preset size and moved by the
@@ -31,13 +36,18 @@ import dev.penwise.ink.ViewportState
 internal class FrameLayer(
     context: Context,
 ) : FrameLayout(context),
-    FrameHost {
-    private val entries = LinkedHashMap<String, Entry>()
+    FrameHost,
+    FrameBinder {
+    private val entries = LinkedHashMap<String, FrameEntry>()
     private val follow: (ViewTransform) -> Unit = { sync() }
     private var viewport: ViewportState? = null
 
+    /** The element keys each frame's bound strokes need; a `pw:watch` goes out when this changes. */
+    private var watch: Map<String, List<String>> = emptyMap()
+    private val hits = FrameHits()
+
     private var mode = Mode.IDLE
-    private var active: Entry? = null
+    private var active: FrameEntry? = null
     private var activePointer = MotionEvent.INVALID_POINTER_ID
     private var downTime = 0L
     private var localX = 0f
@@ -51,6 +61,12 @@ internal class FrameLayer(
      * most once per settled navigation: the frame item's `route` follows, without a reload.
      */
     var onRoute: ((String, String) -> Unit)? = null
+
+    /**
+     * Called on the UI thread for every `pw:layout`: the frame id, the layout as the core takes it (its preset is
+     * filled here) and the page's state recipe ("" = the initial UI).
+     */
+    var onLayout: ((frameId: String, json: String, state: String) -> Unit)? = null
 
     /** Places the frames through [viewport]; from the UI thread. */
     fun bind(viewport: ViewportState) {
@@ -72,13 +88,75 @@ internal class FrameLayer(
         for (id in plan.close) entries.remove(id)?.let { release(it) }
         for (spec in plan.open) {
             val view = open(spec)
-            entries[spec.id] = Entry(spec, view)
+            entries[spec.id] = FrameEntry(spec, view)
             addView(view)
         }
         for (spec in plan.load) entries[spec.id]?.let { load(it, spec) }
         for (spec in plan.resize) entries[spec.id]?.let { resize(it, spec) }
         for (spec in plan.move) entries[spec.id]?.let { it.spec = spec }
         sync()
+    }
+
+    /**
+     * The element keys each frame's bound strokes need (`sceneFrameKeys`). Every frame gets the new list; the bridge
+     * replies with a full layout message, so a key that changed its rect is re-read at once.
+     */
+    fun setWatch(keys: Map<String, List<String>>) {
+        if (keys == watch) return
+        watch = keys
+        for (entry in entries.values) sendWatch(entry)
+    }
+
+    /**
+     * A pen-down at ([windowX], [windowY]): the frame under it (null off every frame) and a `pw:hit?` on its way to
+     * the page. The answer is read when the stroke commits; no answer by then means an area binding.
+     */
+    override fun beginBinding(
+        windowX: Float,
+        windowY: Float,
+        bindToElement: Boolean,
+    ): PendingBinding? {
+        val index = FrameGeometry.at(windowX, windowY, placements())
+        if (index < 0) return null
+        val entry = entries.values.elementAt(index)
+        val x = entry.placement.toCssX(windowX, density)
+        val y = entry.placement.toCssY(windowY, density)
+        val id = hits.ask(entry.view, x, y)
+        return PendingBinding(
+            frame = entry.spec.id,
+            bindToElement = bindToElement,
+            answer = { hits.take(id) },
+            prime = { scene, hit -> primeLayout(entry, scene, hit) },
+            onDone = { hits.forget(id) },
+        )
+    }
+
+    /**
+     * The hit's element may be one the page never watched, so the core lacks its rect. Merge the rect the bridge just
+     * measured into the frame's last layout before the stroke commits (M2Core's first-draw flow).
+     */
+    private fun primeLayout(
+        entry: FrameEntry,
+        scene: PageScene,
+        hit: HitAnswer,
+    ) {
+        val layout = entry.layout ?: return
+        val rect = FrameRect(hit.rect[0], hit.rect[1], hit.rect[2], hit.rect[3])
+        val merged = layout.copy(rects = layout.rects + (hit.key to rect))
+        val bytes = Ids.bytes(entry.spec.id) ?: return
+        scene.setFrameLayout(bytes, FrameLayouts.coreJson(merged, entry.spec.preset))
+    }
+
+    /** Replays [state]'s recipe on [frameId]'s page (a mark chip's "Replay state"). */
+    fun replay(
+        frameId: String,
+        state: String,
+    ) {
+        entries[frameId]?.let { FrameCommands.replay(it.view, state) }
+    }
+
+    private fun sendWatch(entry: FrameEntry) {
+        FrameCommands.watch(entry.view, watch[entry.spec.id].orEmpty())
     }
 
     /** Loads one frame's page again (the chip's reload); its scroll position comes back through the bridge. */
@@ -94,13 +172,14 @@ internal class FrameLayer(
         viewport?.observers?.remove(follow)
         viewport = null
         cancelFrame()
+        hits.clear()
         mode = Mode.IDLE
         for (entry in entries.values) release(entry)
         entries.clear()
     }
 
     /** Takes one page's WebView down; its content is gone, so a frame that comes back loads again. */
-    private fun release(entry: Entry) {
+    private fun release(entry: FrameEntry) {
         // A frame deleted under the finger: the page gets a cancel, never a click into a destroyed view.
         if (active === entry) cancelFrame()
         entry.routeRunnable?.let(::removeCallbacks)
@@ -208,7 +287,7 @@ internal class FrameLayer(
     }
 
     private fun dispatch(
-        entry: Entry,
+        entry: FrameEntry,
         action: Int,
         time: Long,
     ) {
@@ -225,30 +304,6 @@ internal class FrameLayer(
         // The coordinates of the last event, at the time the gesture is abandoned.
         dispatch(entry, MotionEvent.ACTION_CANCEL, SystemClock.uptimeMillis())
         active = null
-    }
-
-    /**
-     * One frame's page. A frame's window view: a WebView at the preset's device size, fed by the bridge and by
-     * [dispatch]'s synthesised touches, never by the window's own dispatch (the ink surface is above it).
-     */
-    private class Entry(
-        var spec: FrameSpec,
-        val view: WebView,
-    ) {
-        var placement = FramePlacement(0f, 0f, 0f, 0f, 1f)
-        var scroll = FrameScroll.NONE
-
-        /** The URL this WebView was last told to load; what [FrameUrls.origin] compares before a reload. */
-        var loadedUrl: String = spec.url
-
-        /** The route the page itself last reported (or was sent to): a spec that matches it needs no reload. */
-        var reportedRoute: String = spec.route
-
-        /** Programmatic loads ignore the route messages of the document they replace. */
-        var quietUntil: Long = 0L
-
-        var pendingRoute: String? = null
-        var routeRunnable: Runnable? = null
     }
 
     private enum class Mode {
@@ -300,7 +355,7 @@ internal class FrameLayer(
      * adopts it without a reload, anything else (another project, another host, a route typed by the user) loads.
      */
     private fun load(
-        entry: Entry,
+        entry: FrameEntry,
         spec: FrameSpec,
     ) {
         val adopted =
@@ -318,7 +373,7 @@ internal class FrameLayer(
 
     /** A preset switch: the page keeps its document and reflows at the new width (its breakpoints see the preset). */
     private fun resize(
-        entry: Entry,
+        entry: FrameEntry,
         spec: FrameSpec,
     ) {
         entry.spec = spec
@@ -342,6 +397,8 @@ internal class FrameLayer(
                     entry.scroll = FrameScroll(entry.scroll.x, entry.scroll.y, message.docWidth, message.docHeight)
                     FrameRoutes.ofUrl(message.url)?.let { entry.reportedRoute = it }
                     onScroll?.invoke(frameId, entry.scroll)
+                    // A fresh document starts with no watched keys: ask for the marks' ones before the first layout.
+                    sendWatch(entry)
                     Log.i(
                         TAG,
                         "$frameId hello ${message.url} doc ${message.docWidth}x${message.docHeight} " +
@@ -360,7 +417,17 @@ internal class FrameLayer(
                 }
 
                 is FrameMessage.Hit -> {
-                    Log.i(TAG, "$frameId hit ${message.key} '${message.selector}' ${message.rect}")
+                    hits.answer(message.id, message.key, message.rect)
+                    Log.d(TAG, "$frameId hit ${message.key} '${message.selector}' ${message.rect}")
+                }
+
+                is FrameMessage.Layout -> {
+                    entry.layout = message
+                    onLayout?.invoke(frameId, FrameLayouts.coreJson(message, entry.spec.preset), message.state)
+                }
+
+                is FrameMessage.Replayed -> {
+                    Log.i(TAG, "$frameId replay '${message.state}' ok=${message.ok}")
                 }
             }
         }
@@ -371,7 +438,7 @@ internal class FrameLayer(
      * settles must not queue an op each, and the page is already there, so the item update reloads nothing.
      */
     private fun queueRoute(
-        entry: Entry,
+        entry: FrameEntry,
         route: String,
     ) {
         val normalized = FrameRoutes.normalize(route) ?: return
@@ -385,7 +452,7 @@ internal class FrameLayer(
         postDelayed(runnable, ROUTE_DEBOUNCE_MS)
     }
 
-    private fun commitRoute(entry: Entry) {
+    private fun commitRoute(entry: FrameEntry) {
         val route = entry.pendingRoute ?: return
         entry.pendingRoute = null
         onRoute?.invoke(entry.spec.id, route)

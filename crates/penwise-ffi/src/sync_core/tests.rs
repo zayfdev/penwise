@@ -205,6 +205,7 @@ fn penwise_testkit_free_stroke() -> ItemKind {
         seed: 1,
         samples,
         trim: None,
+        binding: None,
     })
 }
 

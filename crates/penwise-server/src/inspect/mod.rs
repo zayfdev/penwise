@@ -13,6 +13,7 @@ mod routes;
 mod source;
 #[cfg(test)]
 mod tests;
+mod viewport;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -386,19 +387,7 @@ impl Page {
         for domain in ["Page.enable", "DOM.enable", "CSS.enable"] {
             self.command(domain, json!({})).await?;
         }
-        self.command(
-            "Emulation.setDeviceMetricsOverride",
-            json!({
-                "width": width,
-                "height": height,
-                "deviceScaleFactor": 1,
-                "mobile": false,
-                "screenWidth": width,
-                "screenHeight": height,
-            }),
-        )
-        .await?;
-        Ok(())
+        self.set_viewport(width, height).await
     }
 }
 

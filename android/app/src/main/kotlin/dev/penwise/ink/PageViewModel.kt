@@ -7,12 +7,9 @@ import androidx.lifecycle.viewModelScope
 import dev.penwise.BuildConfig
 import dev.penwise.R
 import dev.penwise.frames.DesignProject
-import dev.penwise.frames.FramePreset
-import dev.penwise.frames.FrameProjection
-import dev.penwise.frames.FrameRoutes
 import dev.penwise.frames.FrameSpec
 import dev.penwise.frames.ProjectsClient
-import dev.penwise.frames.SceneFrames
+import dev.penwise.frames.SceneMark
 import dev.penwise.sync.Ids
 import dev.penwise.sync.Kind
 import dev.penwise.sync.Outcome
@@ -21,7 +18,6 @@ import dev.penwise.sync.SyncListener
 import dev.penwise.sync.SyncStatus
 import dev.penwise.tools.ToolState
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,16 +29,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import org.json.JSONObject
 import java.io.IOException
 import java.security.SecureRandom
 import java.util.concurrent.Executors
 
 private const val TAG = "PenwiseSync"
 private const val RETIRE_DELAY_MS = 1_000L
-
-/** A change of the scene can arrive in bursts (a frame dragged, a preset switched); one frame read per burst. */
-private const val FRAMES_DEBOUNCE_MS = 60L
 
 /**
  * Page and tool state that survives configuration changes; the thin shell around [SyncEngine].
@@ -80,15 +72,6 @@ class PageViewModel(
     /** The scene of the page on screen; `null` until the library has loaded. */
     val scene: StateFlow<PageScene?> = _scene.asStateFlow()
 
-    private val frameProjection = FrameProjection()
-    private var framesJob: Job? = null
-
-    /** The open page's frames, ready for the frame layer (each URL on the host sync uses now). */
-    val frames: StateFlow<List<FrameSpec>> = frameProjection.specs
-
-    /** The projects the server has linked, for the new-frame picker; cached, refreshed on reconnect. */
-    val projects: StateFlow<List<DesignProject>> = frameProjection.listed
-
     /** Pan and zoom of the page on screen; refitted whenever the page changes. */
     val viewport = ViewportState()
 
@@ -107,6 +90,25 @@ class PageViewModel(
     private val catalogThread =
         Executors.newSingleThreadExecutor { Thread(it, "penwise-catalog").apply { isDaemon = true } }
     private val catalogDispatcher = catalogThread.asCoroutineDispatcher()
+
+    /** Frames, marks and watched keys of the open page (the design harness); the core owns their truth. */
+    private val frameSession =
+        FrameSession(viewModelScope, catalogDispatcher, { _scene.value }, { action -> edit(action = action) })
+
+    /** The open page's frames, ready for the frame layer (each URL on the host sync uses now). */
+    val frames: StateFlow<List<FrameSpec>> = frameSession.specs
+
+    /** The projects the server has linked, for the new-frame picker; cached, refreshed on reconnect. */
+    val projects: StateFlow<List<DesignProject>> = frameSession.projects
+
+    /** The open page's marks (hidden ones have no rect), for the chip overlay. */
+    val marks: StateFlow<List<SceneMark>> = frameSession.marks
+
+    /** The element keys each frame's bound strokes need watched (`pw:watch`). */
+    val watchKeys: StateFlow<Map<String, List<String>>> = frameSession.watchKeys
+
+    /** Whether done marks are shown (the core hides them by default). */
+    val showDone: StateFlow<Boolean> = frameSession.showDone
 
     /** Notebook and page create/rename/delete; each runs on the catalog thread, never the UI thread. */
     val catalog =
@@ -167,7 +169,7 @@ class PageViewModel(
 
         override fun onStatus(status: SyncStatus) {
             _status.value = status
-            frameProjection.updateEndpoint(syncHttpBase(), settings.token)
+            frameSession.updateEndpoint(syncHttpBase(), settings.token)
             if (status == SyncStatus.ONLINE) refreshProjects()
             val app = getApplication<Application>()
             val online = status == SyncStatus.ONLINE
@@ -195,7 +197,7 @@ class PageViewModel(
         viewModelScope.launch {
             val opened = openEngine() ?: return@launch
             engine = opened
-            frameProjection.updateEndpoint(syncHttpBase(), settings.token)
+            frameSession.updateEndpoint(syncHttpBase(), settings.token)
             syncUi.recovered.value = opened.recovered.map { it.name }
             liveOut = SyncLiveOut(opened.core, opened::send)
             opened.start()
@@ -264,14 +266,18 @@ class PageViewModel(
                 }
             next.onError = { syncUi.editRefused.value = it }
             // A frame of the page being left must not stay under the ink while the new page loads.
-            frameProjection.updateItems(emptyList())
-            next.addListener { scheduleFrames(next) }
+            frameSession.clear()
+            next.addListener { frameSession.schedule(next) }
             val old = _scene.value
             _scene.value = next
             viewport.reset()
             shown = id
-            withContext(Dispatchers.Default) { runCatching(next::reload) }
-            scheduleFrames(next)
+            withContext(Dispatchers.Default) {
+                runCatching(next::reload)
+                // The show-done flag is the owner's view preference, not a scene default.
+                frameSession.reapplyShowDone(next)
+            }
+            frameSession.schedule(next)
             settings.activePage = id
             withContext(Dispatchers.Default) { open.showing(id) }
             old?.let { retire(it) }
@@ -303,14 +309,12 @@ class PageViewModel(
         val token = settings.token
         viewModelScope.launch {
             val list = withContext(Dispatchers.IO) { ProjectsClient(base, token).list() } ?: return@launch
-            frameProjection.updateProjects(list)
+            frameSession.updateProjects(list)
         }
     }
 
-    /**
-     * Adds a frame of [project] at [route], at [preset]'s size, its top-left at ([x], [y]) in page px: one synced op,
-     * undoable and movable like any other item. The frame layer opens it from the scene's next frame read.
-     */
+    /** Adds a frame of [project] at [route]; one synced op, undoable like any other item. */
+    @Suppress("LongParameterList")
     fun addFrame(
         project: String,
         route: String,
@@ -319,36 +323,13 @@ class PageViewModel(
         cssH: Int,
         x: Float,
         y: Float,
-    ) {
-        val path = FrameRoutes.normalize(route) ?: return
-        val size = FramePreset.byKey(preset)
-        val width = size?.cssWidth ?: cssW
-        val height = size?.cssHeight ?: cssH
-        if (project.isEmpty() || width <= 0 || height <= 0) return
-        val json =
-            JSONObject()
-                .put("project", project)
-                .put("route", path)
-                .put("preset", size?.key ?: FramePreset.CUSTOM)
-                .put("cssW", width)
-                .put("cssH", height)
-                .put("x", x.toDouble())
-                .put("y", y.toDouble())
-                .toString()
-        edit { it.addFrame(json) }
-    }
+    ) = frameSession.addFrame(project, route, preset, cssW, cssH, x, y)
 
     /** Switches a frame's preset: its page reflows at the new width (one op, no reload). */
     fun setFramePreset(
         id: String,
         preset: String,
-    ) {
-        val target = FramePreset.byKey(preset) ?: return
-        val item = frameProjection.item(id) ?: return
-        if (item.preset == target.key && item.cssWidth == target.cssWidth && item.cssHeight == target.cssHeight) return
-        val bytes = Ids.bytes(id) ?: return
-        edit { it.setFramePreset(bytes, target.key, target.cssWidth, target.cssHeight) }
-    }
+    ) = frameSession.setFramePreset(id, preset)
 
     /**
      * Points a frame at another route of its project. A link clicked inside the page reports its route through the
@@ -357,31 +338,22 @@ class PageViewModel(
     fun setFrameRoute(
         id: String,
         route: String,
-    ) {
-        val path = FrameRoutes.normalize(route) ?: return
-        if (frameProjection.item(id)?.route == path) return
-        val bytes = Ids.bytes(id) ?: return
-        edit { it.setFrameRoute(bytes, path) }
-    }
+    ) = frameSession.setFrameRoute(id, route)
 
-    /** Re-reads the open page's frames after a scene change; a burst of changes becomes one read. */
-    private fun scheduleFrames(scene: PageScene) {
-        framesJob?.cancel()
-        framesJob =
-            viewModelScope.launch {
-                delay(FRAMES_DEBOUNCE_MS)
-                val json =
-                    withContext(catalogDispatcher) {
-                        try {
-                            scene.frames()
-                        } catch (_: IllegalStateException) {
-                            null // the page was just left
-                        }
-                    } ?: return@launch
-                if (_scene.value !== scene) return@launch
-                frameProjection.updateItems(SceneFrames.parse(json))
-            }
-    }
+    /** Feeds one `pw:layout` message into the core; it repaints through the scene change when the output moved. */
+    fun setFrameLayout(
+        id: String,
+        json: String,
+    ) = frameSession.setLayout(id, json)
+
+    /** Sets a mark's status; the core records one undoable edit and the chips follow. */
+    fun setMarkStatus(
+        markId: String,
+        status: String,
+    ) = frameSession.setMarkStatus(markId, status)
+
+    /** Shows or hides done marks; a local view flag, applied to every page the owner opens. */
+    fun setShowDone(on: Boolean) = frameSession.setShowDone(on)
 
     /** The HTTP base of the server the tablet reaches: the connected endpoint, or the first candidate while offline. */
     private fun syncHttpBase(): String? {

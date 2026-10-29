@@ -40,6 +40,7 @@ pub fn stroke_item(id: ItemId, z: i64, layer: Layer, seed: u64, points: &[[f32; 
             seed,
             samples,
             trim: None,
+            binding: None,
         }),
     }
 }

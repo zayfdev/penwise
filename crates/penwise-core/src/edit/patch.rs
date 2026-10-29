@@ -4,7 +4,7 @@
 
 use super::EditError;
 use crate::brush::{BrushParams, Color};
-use crate::item::{Affine, FrameSize, Item, ItemKindTag, Layer, Paint, Polygon, ShapeKind};
+use crate::item::{Affine, FrameSize, Item, ItemId, ItemKindTag, Layer, Paint, Polygon, ShapeKind};
 
 mod fields;
 
@@ -42,11 +42,15 @@ pub enum Field {
     FramePreset,
     /// Frame `route`. Code 14.
     FrameRoute,
+    /// Mark `status` (LWW). Code 15.
+    MarkStatus,
+    /// Mark `strokes` (its member list). Code 16.
+    MarkStrokes,
 }
 
 impl Field {
     /// Every field in code order.
-    pub const ALL: [Field; 15] = [
+    pub const ALL: [Field; 17] = [
         Field::Deleted,
         Field::Layer,
         Field::Z,
@@ -62,6 +66,8 @@ impl Field {
         Field::FontSize,
         Field::FramePreset,
         Field::FrameRoute,
+        Field::MarkStatus,
+        Field::MarkStrokes,
     ];
 
     /// Frozen code (see variant docs).
@@ -90,6 +96,7 @@ impl Field {
             Self::Polygons => tag == ItemKindTag::Fill,
             Self::Text | Self::TextBox | Self::FontSize => tag == ItemKindTag::Text,
             Self::FramePreset | Self::FrameRoute => tag == ItemKindTag::Frame,
+            Self::MarkStatus | Self::MarkStrokes => tag == ItemKindTag::Mark,
         }
     }
 }
@@ -114,6 +121,10 @@ pub struct ItemPatch {
     /// `Some(size)`: the frame's preset and CSS size (one register).
     pub frame_preset: Option<FrameSize>,
     pub frame_route: Option<String>,
+    /// The mark's status (LWW register).
+    pub mark_status: Option<crate::marks::MarkStatus>,
+    /// The mark's member strokes, in addition order.
+    pub mark_strokes: Option<Vec<ItemId>>,
 }
 
 impl ItemPatch {
@@ -178,6 +189,8 @@ impl ItemPatch {
             Field::FontSize => self.font_size.is_some(),
             Field::FramePreset => self.frame_preset.is_some(),
             Field::FrameRoute => self.frame_route.is_some(),
+            Field::MarkStatus => self.mark_status.is_some(),
+            Field::MarkStrokes => self.mark_strokes.is_some(),
         }
     }
 
@@ -199,6 +212,8 @@ impl ItemPatch {
             Field::FontSize => self.font_size = from.font_size,
             Field::FramePreset => self.frame_preset = from.frame_preset,
             Field::FrameRoute => self.frame_route.clone_from(&from.frame_route),
+            Field::MarkStatus => self.mark_status = from.mark_status,
+            Field::MarkStrokes => self.mark_strokes.clone_from(&from.mark_strokes),
         }
     }
 

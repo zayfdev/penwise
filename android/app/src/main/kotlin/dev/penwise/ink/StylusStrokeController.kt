@@ -10,6 +10,7 @@ import androidx.input.motionprediction.MotionEventPredictor
  * pointer 0. Every gesture ends through [PenGesture.end] or [PenGesture.cancel], never silently: a system
  * `ACTION_CANCEL`, a cancelled pointer-up and [release] all abandon the gesture in flight.
  */
+@Suppress("LongParameterList") // one value per collaborator of a pen gesture
 internal class StylusStrokeController(
     scene: PageScene,
     private val brushes: BrushSource,
@@ -18,8 +19,9 @@ internal class StylusStrokeController(
     viewport: ViewportState,
     liveOut: LiveOut? = null,
     predictor: MotionEventPredictor? = null,
+    frames: FrameBinder? = null,
 ) {
-    private val env = GestureEnv(scene, brushes, live, sink, liveOut, predictor, viewport)
+    private val env = GestureEnv(scene, brushes, live, sink, liveOut, predictor, viewport, frames)
     private var gesture: PenGesture? = null
     private var penId = NO_POINTER
 

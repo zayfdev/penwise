@@ -48,6 +48,8 @@ impl ItemPatch {
             }),
             Field::FramePreset => self.frame_preset == other.frame_preset,
             Field::FrameRoute => self.frame_route == other.frame_route,
+            Field::MarkStatus => self.mark_status == other.mark_status,
+            Field::MarkStrokes => self.mark_strokes == other.mark_strokes,
         }
     }
 
@@ -71,6 +73,8 @@ impl ItemPatch {
             (Field::FontSize, ItemKind::Text(t)) => self.font_size = Some(t.font_size),
             (Field::FramePreset, ItemKind::Frame(f)) => self.frame_preset = Some(f.size()),
             (Field::FrameRoute, ItemKind::Frame(f)) => self.frame_route = Some(f.route.clone()),
+            (Field::MarkStatus, ItemKind::Mark(m)) => self.mark_status = Some(m.status),
+            (Field::MarkStrokes, ItemKind::Mark(m)) => self.mark_strokes = Some(m.strokes.clone()),
             _ => {}
         }
     }
@@ -115,6 +119,10 @@ impl ItemPatch {
                     f.css_h = size.css_h;
                 }
                 set(&mut f.route, self.frame_route.as_ref());
+            }
+            ItemKind::Mark(m) => {
+                set(&mut m.status, self.mark_status.as_ref());
+                set(&mut m.strokes, self.mark_strokes.as_ref());
             }
             ItemKind::Erase(_) | ItemKind::Image(_) => {}
         }

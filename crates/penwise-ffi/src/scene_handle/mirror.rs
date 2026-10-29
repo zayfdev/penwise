@@ -15,6 +15,7 @@ impl SceneHandle {
     /// None today; the `Result` keeps the signature stable for callers that propagate errors.
     pub fn reload(&mut self, core: &SyncCore) -> Result<(), SyncError> {
         self.dirty.mark_all();
+        self.marks.get_mut().invalidate();
         self.scene = match core.replica().page(self.page) {
             Some(replica) => replica.scene().clone(),
             None => Scene::new(self.scene.kind()),
@@ -28,6 +29,9 @@ impl SceneHandle {
     /// # Errors
     /// `UnknownPage` when a reload is needed and the page vanished.
     pub fn refresh(&mut self, core: &SyncCore, changes: &[Change]) -> Result<(), SyncError> {
+        if changes.iter().any(|change| change.page == self.page) {
+            self.marks.get_mut().invalidate();
+        }
         let page = self.page;
         for change in changes.iter().filter(|c| c.page == page) {
             match change.item {

@@ -83,6 +83,8 @@ pub enum ItemKind {
     Image(ImageItem),
     /// Live web page of a linked project at a size preset (design harness).
     Frame(FrameItem),
+    /// A group of strokes drawn on one frame in one go, with an LWW status (design harness M2).
+    Mark(crate::marks::MarkItem),
 }
 
 /// Stable kind tags (frozen: stored in the item codec; append only).
@@ -95,10 +97,11 @@ pub enum ItemKindTag {
     Text,
     Image,
     Frame,
+    Mark,
 }
 
 impl ItemKindTag {
-    /// Byte tag: `Stroke = 0, Erase = 1, Shape = 2, Fill = 3, Text = 4, Image = 5, Frame = 6`.
+    /// Byte tag: `Stroke = 0, Erase = 1, Shape = 2, Fill = 3, Text = 4, Image = 5, Frame = 6, Mark = 7`.
     #[must_use]
     pub fn code(self) -> u8 {
         match self {
@@ -109,6 +112,7 @@ impl ItemKindTag {
             Self::Text => 4,
             Self::Image => 5,
             Self::Frame => 6,
+            Self::Mark => 7,
         }
     }
 
@@ -123,6 +127,7 @@ impl ItemKindTag {
             4 => Some(Self::Text),
             5 => Some(Self::Image),
             6 => Some(Self::Frame),
+            7 => Some(Self::Mark),
             _ => None,
         }
     }
@@ -140,6 +145,7 @@ impl ItemKind {
             Self::Text(_) => ItemKindTag::Text,
             Self::Image(_) => ItemKindTag::Image,
             Self::Frame(_) => ItemKindTag::Frame,
+            Self::Mark(_) => ItemKindTag::Mark,
         }
     }
 }
