@@ -344,3 +344,188 @@ async fn mark_bundles_status_and_frames_work_end_to_end() {
 
     server.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ghost_variants_and_choice_work_end_to_end() {
+    if !chromium_installed() {
+        eprintln!("chromium is not installed; MCP ghost/variants test skipped");
+        return;
+    }
+    let data = TempDir::new("mcp-variants-data").expect("data dir");
+    let site = TempDir::new("mcp-variants-site").expect("site dir");
+    std::fs::write(site.path().join("index.html"), PAGE).expect("index.html");
+    std::fs::write(site.path().join("styles.css"), CSS).expect("styles.css");
+    let mut config = ServerConfig::new(data.path(), TOKEN);
+    config.ocr_url = String::new();
+    config.project_port_base = 25_000 + (std::process::id() % 1_000) as u16;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let server = serve(listener, config).await.expect("server starts");
+    link_site(server.addr, &site).await;
+
+    let mcp = Mcp::start(server.addr.port());
+    mcp.rpc("initialize", json!({})).await;
+    let opened = mcp
+        .json(
+            "penwise_frame_open",
+            json!({ "project": "prj_site", "route": "/", "preset": "phone" }),
+        )
+        .await;
+    let page = opened["page"].as_str().expect("page").to_owned();
+    let frame = opened["frame"].as_str().expect("frame").to_owned();
+    let page_id: PageId = page.parse().expect("page id");
+
+    // A ghost: applied, with no failures; a stale selector comes back as a failure.
+    let ghost = mcp
+        .json(
+            "penwise_ghost",
+            json!({ "frame": frame, "patch": {
+                "css": ".hero { color: rgb(1, 2, 3) }",
+                "dom": [{ "op": "set_text", "selector": ".hero", "value": "Ghost" }]
+            } }),
+        )
+        .await;
+    assert_eq!(ghost["ok"], json!(true), "{ghost}");
+    assert_eq!(ghost["failed"], json!([]));
+    let failed = mcp
+        .json(
+            "penwise_ghost",
+            json!({ "frame": frame, "patch": { "dom": [{ "op": "remove", "selector": ".nope" }] } }),
+        )
+        .await;
+    assert_eq!(failed["ok"], json!(false), "{failed}");
+    assert_eq!(failed["failed"][0]["reason"], "no match");
+    let cleared = mcp
+        .json("penwise_ghost", json!({ "frame": frame, "clear": true }))
+        .await;
+    assert_eq!(cleared["ok"], json!(true));
+
+    // Three variants beside the base frame.
+    let created = mcp
+        .json(
+            "penwise_variants",
+            json!({ "frame": frame, "variants": [
+                { "label": "calm", "patch": { "css": ".hero { color: gray }" } },
+                { "label": "bold", "patch": { "css": ".hero { font-weight: 900 }" } },
+                { "label": "short", "patch": { "dom": [{ "op": "set_text", "selector": ".hero", "value": "Hi" }] } }
+            ] }),
+        )
+        .await;
+    let group = created["group"].as_str().expect("group").to_owned();
+    let frames: Vec<String> = created["frames"]
+        .as_array()
+        .expect("frames")
+        .iter()
+        .map(|id| id.as_str().expect("id").to_owned())
+        .collect();
+    assert_eq!(frames.len(), 3, "{created}");
+
+    // Without a pick, the choice is null and the three labels are there.
+    let before = mcp.json("penwise_choice", json!({ "group": group })).await;
+    assert_eq!(before["chosen"], Value::Null);
+    assert_eq!(
+        before["frames"].as_array().expect("frames")[1]["label"],
+        "bold"
+    );
+
+    // A tablet sees the variants, taps one ("Use this" = a FrameChosen edit) and draws on it.
+    let mut tablet = TestDevice::new(
+        DeviceConfig {
+            url: format!("ws://{}/sync", server.addr),
+            token: TOKEN.to_owned(),
+            kind: ClientKind::Tablet,
+            clock: system_clock(),
+        },
+        10,
+    );
+    tablet.online().await.expect("tablet online");
+    let variant_ids: Vec<ItemId> = frames.iter().map(|text| item_id(text)).collect();
+    let seen = tablet
+        .pump_until(Duration::from_secs(10), |device| {
+            device.replica.page(page_id).is_some_and(|page| {
+                let scene = page.scene();
+                variant_ids.iter().all(|id| {
+                    scene
+                        .get(*id)
+                        .is_some_and(|item| matches!(item.kind, ItemKind::Frame(_)))
+                })
+            })
+        })
+        .await;
+    assert!(seen, "the tablet sees the variant frames");
+
+    let chosen_id = item_id(&frames[1]);
+    let edits = {
+        let scene = tablet.replica.page(page_id).expect("page").scene();
+        penwise_core::item::set_chosen(scene, chosen_id, true).expect("set_chosen")
+    };
+    let mut ids = IdGen::new(77);
+    let stroke = ids.next_id_item();
+    let mark = ids.next_id_item();
+    let (fx, fy, z) = {
+        let scene = tablet.replica.page(page_id).expect("page").scene();
+        let item = scene.get(chosen_id).expect("chosen variant");
+        (
+            item.transform.e,
+            item.transform.f,
+            scene.next_z().unwrap_or(Z_STEP),
+        )
+    };
+    let binding = Binding::new(
+        chosen_id,
+        BindingMode::Area,
+        FramePreset::Phone,
+        None,
+        String::new(),
+        [fx, fy],
+    )
+    .expect("binding");
+    let mut batch = edits;
+    batch.push(Edit::Add(bound_stroke(stroke, z, 3, binding)));
+    batch.push(Edit::Add(
+        MarkItem {
+            frame: chosen_id,
+            preset: FramePreset::Phone,
+            status: MarkStatus::New,
+            state: String::new(),
+            strokes: vec![stroke],
+        }
+        .item(mark, z + 1),
+    ));
+    tablet.push_edits(page_id, batch);
+    tablet
+        .settle(Duration::from_secs(10))
+        .await
+        .expect("settle");
+
+    // The pick and the ink reach the agent: the text block names the chosen frame, an image block follows.
+    let reply = mcp.call("penwise_choice", json!({ "group": group })).await;
+    let content = reply["result"]["content"].as_array().expect("content");
+    let choice: Value =
+        serde_json::from_str(content[0]["text"].as_str().expect("text")).expect("choice json");
+    assert_eq!(choice["chosen"], frames[1], "{choice}");
+    assert_eq!(choice["frames"][1]["chosen"], json!(true));
+    assert_eq!(choice["frames"][0]["chosen"], json!(false));
+    let marks = choice["marks"].as_array().expect("marks");
+    assert_eq!(marks.len(), 1, "{choice}");
+    assert_eq!(marks[0]["frame"], frames[1]);
+    assert!(content.len() > 1, "the crops are inline");
+    assert_image(&content[1]);
+
+    // Clearing removes the frames; the group is gone.
+    let cleared = mcp
+        .json("penwise_variants_clear", json!({ "group": group }))
+        .await;
+    assert_eq!(cleared["removed"], json!(3));
+    assert_eq!(cleared["marks"], json!(1));
+    let gone = mcp
+        .rpc(
+            "tools/call",
+            json!({ "name": "penwise_choice", "arguments": { "group": group } }),
+        )
+        .await;
+    assert!(gone["error"].is_object(), "{gone}");
+
+    server.shutdown().await;
+}

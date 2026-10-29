@@ -58,7 +58,7 @@ sequenceDiagram
 | Concept | Meaning |
 |---|---|
 | **Project** | A linked folder: `id`, `name`, root path, dev origin (or "served by Penwise"), adapter, notebook id |
-| **Frame** | Canvas item: `project`, `route` (path + query), `preset` (`phone 390×844`, `tablet 834×1194`, `desktop 1440×900`, custom), position/size on the page, current `scroll`, optional `patch` (ghost/variant) |
+| **Frame** | Canvas item: `project`, `route` (path + query), `preset` (`phone 390×844`, `tablet 834×1194`, `desktop 1440×900`, custom), position/size on the page, current `scroll`, optional `patch` (ghost/variant; ≤ 64 KiB of P1 JSON), `label` (≤ 80 bytes), `group` (variant group id, ≤ 64 bytes) and `chosen` (the owner's pick, exclusive within its group) |
 | **Mark** | A group of strokes the owner drew on a frame in one go (strokes within ~1.5 s and nearby belong together) |
 | **Binding** | `bound`: element key + offset from the element's top-left (no scaling, **[owner]**); `area`: document x/y in the frame page (scrolls with the page, clipped to the frame) |
 | **State** | The interaction recipe active when the mark was drawn (e.g. `click nav > button.menu`), replayable |

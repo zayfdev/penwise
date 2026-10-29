@@ -27,4 +27,10 @@ internal class FrameEntry(
 
     var pendingRoute: String? = null
     var routeRunnable: Runnable? = null
+
+    /** The `pw:patch` decisions already sent to this page; reset on every load. */
+    val patches = PatchFeed()
+
+    /** The owner's local Ghost toggle: a before/after view, never synced; gone with the frame. */
+    var patchOn = true
 }

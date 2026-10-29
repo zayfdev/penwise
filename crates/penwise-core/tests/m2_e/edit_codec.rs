@@ -3,8 +3,8 @@
 use super::fixtures::{BLUE, RED, every_kind, id, shape_kinds, square};
 use super::item_codec::reseal;
 use penwise_core::codec::edit::{
-    EDIT_MAGIC, EDIT_VERSION, EDIT_VERSION_V1, EDIT_VERSION_V2, decode_edit, decode_edit_body,
-    encode_edit, encode_edit_body,
+    EDIT_MAGIC, EDIT_VERSION, EDIT_VERSION_V1, EDIT_VERSION_V2, EDIT_VERSION_V3, decode_edit,
+    decode_edit_body, encode_edit, encode_edit_body,
 };
 use penwise_core::codec::item::{ITEM_MAGIC, encode_item};
 use penwise_core::codec::varint::{Reader, write_uv32};
@@ -19,7 +19,8 @@ fn blob(edit: &Edit) -> Vec<u8> {
     out
 }
 
-/// The version [`encode_edit`] must pick for `edit` (minimal: v2 only for a frame field).
+/// The version [`encode_edit`] must pick for `edit` (minimal: v2 for a frame field, v3 for a mark field or
+/// item layout v2, v4 for the frame patch/label/group/chosen fields).
 /// True when `item` needs item layout v2 (a bound stroke or a mark).
 fn needs_item_v2(item: &penwise_core::item::Item) -> bool {
     match &item.kind {
@@ -29,9 +30,23 @@ fn needs_item_v2(item: &penwise_core::item::Item) -> bool {
     }
 }
 
+/// True when `item` needs item layout v3 (a frame with a patch, label, group or chosen flag).
+fn needs_item_v3(item: &penwise_core::item::Item) -> bool {
+    match &item.kind {
+        penwise_core::item::ItemKind::Frame(frame) => {
+            frame.patch.is_some()
+                || !frame.label.is_empty()
+                || frame.group.is_some()
+                || frame.chosen
+        }
+        _ => false,
+    }
+}
+
 fn expected_version(edit: &Edit) -> u16 {
     match edit {
-        Edit::Add(item) if needs_item_v2(item) => EDIT_VERSION,
+        Edit::Add(item) if needs_item_v3(item) => EDIT_VERSION,
+        Edit::Add(item) if needs_item_v2(item) => EDIT_VERSION_V3,
         Edit::Add(_) | Edit::Delete(_) => EDIT_VERSION_V1,
         Edit::Update { patch, .. } => {
             let highest = patch
@@ -40,8 +55,10 @@ fn expected_version(edit: &Edit) -> u16 {
                 .map(|field| u32::from(field.code()))
                 .max()
                 .unwrap_or(0);
-            if highest >= 15 {
+            if highest >= 17 {
                 EDIT_VERSION
+            } else if highest >= 15 {
+                EDIT_VERSION_V3
             } else if highest >= 13 {
                 EDIT_VERSION_V2
             } else {
@@ -120,6 +137,24 @@ fn single(field: Field, variant: usize) -> ItemPatch {
         Field::FrameRoute => p.frame_route = Some(["", "/a?b=c"][variant % 2].to_owned()),
         Field::MarkStatus => p.mark_status = Some(MarkStatus::ALL[variant % 4]),
         Field::MarkStrokes => p.mark_strokes = Some(vec![id(1), id(2), id(3)]),
+        Field::FramePatch => {
+            p.frame_patch = Some(if variant.is_multiple_of(2) {
+                None
+            } else {
+                Some(r#"{"css":"h1{color:red}"}"#.to_owned())
+            });
+        }
+        Field::FrameLabel => {
+            p.frame_label = Some(["", "variant A ✍"][variant % 2].to_owned());
+        }
+        Field::FrameGroup => {
+            p.frame_group = Some(if variant.is_multiple_of(2) {
+                None
+            } else {
+                Some("grp-1".to_owned())
+            });
+        }
+        Field::FrameChosen => p.frame_chosen = Some(variant.is_multiple_of(2)),
     }
     p
 }
@@ -220,7 +255,7 @@ fn unknown_tag_and_mask_bits_are_invalid() {
     let mask_at = 6 + 1 + 16;
     assert_eq!(bytes[mask_at], 0);
     let mut bad = bytes[..mask_at].to_vec();
-    bad.extend_from_slice(&[0x80, 0x80, 0x02]); // bit 15 (two bits past the last field)
+    bad.extend_from_slice(&[0x80, 0x80, 0x80, 0x01]); // bit 21 (one past the last field)
     bad.extend_from_slice(&bytes[mask_at + 1..]);
     assert_eq!(
         decode_edit(&reseal(bad)),
@@ -261,10 +296,19 @@ fn blobs_use_the_minimal_version_and_older_blobs_still_decode() {
     let bytes = blob(&marked);
     assert_eq!(
         bytes[4..6],
-        EDIT_VERSION.to_le_bytes(),
+        EDIT_VERSION_V3.to_le_bytes(),
         "mark fields need v3"
     );
     assert_eq!(decode_edit(&bytes), Ok(marked));
+
+    let chosen = update(single(Field::FrameChosen, 1));
+    let bytes = blob(&chosen);
+    assert_eq!(
+        bytes[4..6],
+        EDIT_VERSION.to_le_bytes(),
+        "frame variant fields need v4"
+    );
+    assert_eq!(decode_edit(&bytes), Ok(chosen));
 
     let mut v1_frame = bytes;
     v1_frame[4..6].copy_from_slice(&EDIT_VERSION_V1.to_le_bytes());
@@ -277,10 +321,10 @@ fn blobs_use_the_minimal_version_and_older_blobs_still_decode() {
     );
 
     let mut unknown = blob(&Edit::Delete(id(1)));
-    unknown[4..6].copy_from_slice(&4_u16.to_le_bytes());
+    unknown[4..6].copy_from_slice(&5_u16.to_le_bytes());
     assert_eq!(
         decode_edit(&reseal(unknown)),
-        Err(CodecError::UnsupportedVersion(4))
+        Err(CodecError::UnsupportedVersion(5))
     );
 }
 

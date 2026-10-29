@@ -45,6 +45,14 @@ export interface Frame {
   readonly cssH: number;
   readonly x: number;
   readonly y: number;
+  /** P1 patch JSON text applied over the page (ghost/variant); `null` = the page as served. */
+  readonly patch: string | null;
+  /** Label the owner sees on the frame chip (`""` for a plain frame). */
+  readonly label: string;
+  /** Variant group id, `null` for a plain frame. */
+  readonly group: string | null;
+  /** The owner's pick within its group (one chosen frame dims the group's others). */
+  readonly chosen: boolean;
 }
 
 /** A linked project (`GET /projects`). */
@@ -60,6 +68,13 @@ export interface Project {
 
 function finite(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+/** The patch as text: the core stores text, a JSON object is stringified so the bridge gets one form. */
+function readPatch(value: unknown): string | null {
+  if (typeof value === "string") return value === "" ? null : value;
+  if (typeof value === "object" && value !== null) return JSON.stringify(value);
+  return null;
 }
 
 function readFrame(entry: unknown): Frame | null {
@@ -86,6 +101,10 @@ function readFrame(entry: unknown): Frame | null {
     cssH,
     x,
     y,
+    patch: readPatch(row.patch),
+    label: typeof row.label === "string" ? row.label : "",
+    group: typeof row.group === "string" && row.group !== "" ? row.group : null,
+    chosen: row.chosen === true,
   };
 }
 
@@ -115,7 +134,11 @@ export function sameFrame(a: Frame, b: Frame): boolean {
     a.cssW === b.cssW &&
     a.cssH === b.cssH &&
     a.x === b.x &&
-    a.y === b.y
+    a.y === b.y &&
+    a.patch === b.patch &&
+    a.label === b.label &&
+    a.group === b.group &&
+    a.chosen === b.chosen
   );
 }
 

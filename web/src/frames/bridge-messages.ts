@@ -30,6 +30,12 @@ export interface Hit {
   readonly rect: Rect | null;
 }
 
+/** One DOM op of a P1 patch the bridge could not apply. */
+export interface PatchFailure {
+  readonly index: number;
+  readonly reason: string;
+}
+
 /** A decoded bridge message. Unknown or malformed messages decode to `null`. */
 export type BridgeMessage =
   | { readonly t: "layout"; readonly layout: Layout }
@@ -39,7 +45,11 @@ export type BridgeMessage =
       readonly key: string | null;
       readonly rect: Rect | null;
     }
-  | { readonly t: "replayed"; readonly state: string; readonly ok: boolean };
+  | { readonly t: "replayed"; readonly state: string; readonly ok: boolean }
+  /** A (re)loaded document: the host re-sends the watch list and the frame's patch. */
+  | { readonly t: "hello" }
+  /** Result of applying/reverting a patch (`ok` false lists the DOM ops that failed). */
+  | { readonly t: "patched"; readonly ok: boolean; readonly failed: readonly PatchFailure[] };
 
 /** How a stroke drawn over a frame follows it (contract K1 `mode`). */
 export type BindingMode = "bound" | "area";
@@ -127,6 +137,23 @@ export function decodeBridge(data: unknown): BridgeMessage | null {
       ok: row.ok === true,
     };
   }
+  if (row.t === "pw:hello") return { t: "hello" };
+  if (row.t === "pw:patched") {
+    const failed: PatchFailure[] = [];
+    if (Array.isArray(row.failed)) {
+      for (const entry of row.failed) {
+        if (typeof entry !== "object" || entry === null) continue;
+        const failure = entry as Record<string, unknown>;
+        const index = finite(failure.index);
+        if (index === null) continue;
+        failed.push({
+          index,
+          reason: typeof failure.reason === "string" ? failure.reason : "",
+        });
+      }
+    }
+    return { t: "patched", ok: row.ok === true, failed };
+  }
   return null;
 }
 
@@ -147,6 +174,25 @@ export function hitRequest(
 /** `pw:replay`: rebuild a recorded page state in the frame. */
 export function replayMessage(state: string): { t: "pw:replay"; state: string } {
   return { t: "pw:replay", state };
+}
+
+/**
+ * What to send a bridge for a frame's temporary patch: applied while the ghost is on, reverted while it is
+ * off. `null` = a plain frame (nothing to send). The patch travels as its JSON text; the bridge parses it.
+ */
+export function patchFor(
+  patch: string | null,
+  ghost: boolean,
+): { readonly patch: string; readonly on: boolean } | null {
+  return patch === null ? null : { patch, on: ghost };
+}
+
+/** `pw:patch`: apply (`on`) or revert the frame's patch on the live page. */
+export function patchMessage(
+  patch: string,
+  on: boolean,
+): { t: "pw:patch"; patch: string; on: boolean } {
+  return { t: "pw:patch", patch, on };
 }
 
 /** The core's layout JSON (`Viewer.set_frame_layout`): the bridge reading plus the frame's preset. */

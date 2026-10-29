@@ -50,6 +50,10 @@ impl ItemPatch {
             Field::FrameRoute => self.frame_route == other.frame_route,
             Field::MarkStatus => self.mark_status == other.mark_status,
             Field::MarkStrokes => self.mark_strokes == other.mark_strokes,
+            Field::FramePatch => self.frame_patch == other.frame_patch,
+            Field::FrameLabel => self.frame_label == other.frame_label,
+            Field::FrameGroup => self.frame_group == other.frame_group,
+            Field::FrameChosen => self.frame_chosen == other.frame_chosen,
         }
     }
 
@@ -75,6 +79,10 @@ impl ItemPatch {
             (Field::FrameRoute, ItemKind::Frame(f)) => self.frame_route = Some(f.route.clone()),
             (Field::MarkStatus, ItemKind::Mark(m)) => self.mark_status = Some(m.status),
             (Field::MarkStrokes, ItemKind::Mark(m)) => self.mark_strokes = Some(m.strokes.clone()),
+            (Field::FramePatch, ItemKind::Frame(f)) => self.frame_patch = Some(f.patch.clone()),
+            (Field::FrameLabel, ItemKind::Frame(f)) => self.frame_label = Some(f.label.clone()),
+            (Field::FrameGroup, ItemKind::Frame(f)) => self.frame_group = Some(f.group.clone()),
+            (Field::FrameChosen, ItemKind::Frame(f)) => self.frame_chosen = Some(f.chosen),
             _ => {}
         }
     }
@@ -119,6 +127,10 @@ impl ItemPatch {
                     f.css_h = size.css_h;
                 }
                 set(&mut f.route, self.frame_route.as_ref());
+                set(&mut f.patch, self.frame_patch.as_ref());
+                set(&mut f.label, self.frame_label.as_ref());
+                set(&mut f.group, self.frame_group.as_ref());
+                set(&mut f.chosen, self.frame_chosen.as_ref());
             }
             ItemKind::Mark(m) => {
                 set(&mut m.status, self.mark_status.as_ref());

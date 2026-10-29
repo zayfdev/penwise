@@ -1,13 +1,16 @@
-//! Frame items (design harness C1): the page's frames as JSON, and the add/preset/route tools.
+//! Frame items (design harness C1/M4): the page's frames as JSON, the add/preset/route tools and the owner's
+//! variant pick.
 //!
-//! The JSON is the contract the tablet and the PC window share (see `docs/design-harness-spec.md` C1):
-//! `[{"id","project","route","preset","cssW","cssH","rect":[x,y,w,h]}]`, ids as 32 lowercase hex, `rect` in
-//! page units. Every tool applies its edits to the scene, records them as one undo step and returns them for
+//! The JSON is the contract the tablet and the PC window share (see `docs/design-harness-spec.md` C1, P2):
+//! `[{"id","project","route","preset","cssW","cssH","rect":[x,y,w,h],"patch","label","group","chosen"}]`,
+//! ids as 32 lowercase hex, `rect` in page units, `patch` the P1 patch as an object (or `null`). Every tool
+//! applies its edits to the scene, records them as one undo step and returns them for
 //! [`SceneHandle::commit_into`], like the pen tools.
 
 use penwise_core::edit::{Edit, ItemPatch};
 use penwise_core::item::{
     FrameItem, FramePreset, FrameSize, FrameSpec, ItemId, ItemKind, Layer, LayerSet, add_frame,
+    set_chosen,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -50,6 +53,10 @@ impl SceneHandle {
                     "cssW": frame.css_w,
                     "cssH": frame.css_h,
                     "rect": [rect.min_x, rect.min_y, rect.width(), rect.height()],
+                    "patch": patch_json(frame.patch.as_deref()),
+                    "label": frame.label,
+                    "group": frame.group,
+                    "chosen": frame.chosen,
                 }))
             })
             .collect();
@@ -136,6 +143,17 @@ impl SceneHandle {
         self.local(vec![edit])
     }
 
+    /// Marks variant frame `id` as the owner's pick (or un-marks it). Choosing one un-chooses the other frames
+    /// of its group in the same edit batch, so one commit is one undo step. An unknown/non-frame id, a frame
+    /// without a group, or an unchanged state commits nothing.
+    ///
+    /// # Errors
+    /// [`SyncError::Edit`] only if the scene rejects the update.
+    pub fn set_frame_chosen(&mut self, id: ItemId, chosen: bool) -> Result<Vec<Edit>, SyncError> {
+        let edits = set_chosen(&self.scene, id, chosen)?;
+        self.local(edits)
+    }
+
     /// The frame's preset, or `custom` when `id` is not a live frame.
     #[must_use]
     pub(super) fn frame_preset(&self, id: ItemId) -> FramePreset {
@@ -149,6 +167,12 @@ impl SceneHandle {
             _ => None,
         }
     }
+}
+
+/// The frame's patch as the P1 object the clients read; `null` when absent or unparseable (a stored string
+/// that fails to parse is a bug the server reports, not a reason to break the frame list).
+fn patch_json(patch: Option<&str>) -> Option<serde_json::Value> {
+    patch.and_then(|text| serde_json::from_str(text).ok())
 }
 
 /// `u32` sizes from JS numbers: fixed presets resolve to their own size, custom sizes must both be positive.

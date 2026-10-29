@@ -555,3 +555,331 @@ async fn state_recipe_records_the_menu_open_resets_on_close_and_replays() {
     inspect.shutdown().await;
     server.shutdown().await;
 }
+
+/* ------------------------------------------------------------------ patches (M4, P3) */
+
+/// Applies a patch through the exposed API (what the server's headless pages do) and returns `{ok, failed}`.
+async fn apply_direct(inspect: &Inspect, page: &Page, patch: Value) -> Value {
+    let patch = serde_json::to_string(&patch).expect("patch json");
+    inspect
+        .eval(
+            page,
+            &format!("window.PenwiseBridge.applyPatch({patch}, true)"),
+        )
+        .await
+        .expect("apply patch")
+}
+
+/// Applies a patch the way a host does (a `pw:patch` message) and waits for the `pw:patched` answer.
+async fn send_patch(inspect: &Inspect, page: &Page, patch: Value, on: bool) {
+    let message = serde_json::to_string(&json!({ "t": "pw:patch", "patch": patch, "on": on }))
+        .expect("message json");
+    let before = messages(inspect, page, "pw:patched").await.len();
+    inspect
+        .eval(page, &format!("window.PenwiseBridge.receive({message}); 1"))
+        .await
+        .expect("patch message");
+    for _ in 0..120 {
+        if messages(inspect, page, "pw:patched").await.len() > before {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("no pw:patched answer");
+}
+
+/// `selector`'s text, or `None` when the element is absent or the navigation destroyed the execution context.
+async fn probe_text(inspect: &Inspect, page: &Page, selector: &str) -> Option<String> {
+    let script = format!(
+        "(function () {{ var e = document.querySelector({}); return e ? e.textContent : null; }})()",
+        serde_json::to_string(selector).expect("selector json")
+    );
+    let value = inspect.eval(page, &script).await.ok()?;
+    Some(value.as_str().unwrap_or_default().to_owned())
+}
+
+async fn text_at(inspect: &Inspect, page: &Page, selector: &str) -> String {
+    probe_text(inspect, page, selector).await.expect("text")
+}
+
+/// Polls until `selector`'s text is `want` (up to 6 s), returning the last text seen. A reload swaps the
+/// document under the evaluator, so "wait until the new page shows this" is the only race-free check.
+async fn wait_text(inspect: &Inspect, page: &Page, selector: &str, want: &str) -> String {
+    let mut last = String::new();
+    for _ in 0..120 {
+        if let Some(text) = probe_text(inspect, page, selector).await {
+            last = text;
+            if last == want {
+                return last;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    last
+}
+
+fn css_replace_insert_remove() -> Value {
+    json!({
+      "css": "#mover { background: rgb(1, 2, 3); }",
+      "dom": [
+        { "op": "replace", "selector": "#title", "html": "<h1 id=\"title\">Patched</h1>" },
+        { "op": "insert_before", "selector": "#mover", "html": "<p id=\"before\">before</p>" },
+        { "op": "remove", "selector": "[data-row=\"b\"]" },
+        { "op": "set_attr", "selector": "#mover", "name": "title", "value": "hi" }
+      ]
+    })
+}
+
+#[tokio::test]
+async fn a_patch_applies_css_replace_insert_and_remove() {
+    if !chromium_installed() {
+        tracing::warn!("chromium is not installed; bridge patch test skipped");
+        return;
+    }
+    let server = project().await;
+    let (inspect, page) = open(&server).await;
+
+    let result = apply_direct(&inspect, &page, css_replace_insert_remove()).await;
+    assert_eq!(result["ok"], json!(true), "applied: {result}");
+    assert_eq!(result["failed"], json!([]));
+    assert_eq!(text_at(&inspect, &page, "#title").await, "Patched");
+    assert_eq!(text_at(&inspect, &page, "#before").await, "before");
+    assert_eq!(
+        inspect
+            .eval(&page, "document.querySelector('[data-row=\"b\"]') === null")
+            .await
+            .expect("removed"),
+        json!(true)
+    );
+    assert_eq!(
+        inspect
+            .eval(
+                &page,
+                "getComputedStyle(document.getElementById('mover')).backgroundColor"
+            )
+            .await
+            .expect("computed style"),
+        json!("rgb(1, 2, 3)")
+    );
+    assert_eq!(
+        inspect
+            .eval(
+                &page,
+                "document.getElementById('mover').getAttribute('title')"
+            )
+            .await
+            .expect("attribute"),
+        json!("hi")
+    );
+    assert_eq!(
+        inspect
+            .eval(
+                &page,
+                "document.querySelectorAll('style[data-pw-patch]').length"
+            )
+            .await
+            .expect("style"),
+        json!(1)
+    );
+
+    page.close().await;
+    inspect.shutdown().await;
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn reverting_a_patch_restores_the_exact_dom() {
+    if !chromium_installed() {
+        tracing::warn!("chromium is not installed; bridge patch revert test skipped");
+        return;
+    }
+    let server = project().await;
+    let (inspect, page) = open(&server).await;
+    let before = inspect
+        .eval(&page, "document.getElementById('app').outerHTML")
+        .await
+        .expect("outerHTML");
+    let before = before.as_str().expect("string").to_owned();
+
+    let patch = json!({
+      "css": ".box { outline: 3px solid red }",
+      "dom": [
+        { "op": "replace", "selector": "#title", "html": "<h1 id=\"title\">Changed</h1>" },
+        { "op": "remove", "selector": ".row[data-row=\"a\"]" },
+        { "op": "insert_after", "selector": "#mover", "html": "<i id=\"after\">after</i>" },
+        { "op": "prepend", "selector": "#list", "html": "<li id=\"first\">first</li>" },
+        { "op": "set_text", "selector": "#two", "html": null, "value": "two!" },
+        { "op": "add_class", "selector": "#mover", "name": "moved" },
+        { "op": "remove_class", "selector": "#title", "name": "gone" },
+        { "op": "set_attr", "selector": "#mover", "name": "data-state", "value": "open" },
+        { "op": "remove_attr", "selector": "#two", "name": "href" }
+      ]
+    });
+    let result = apply_direct(&inspect, &page, patch).await;
+    assert_eq!(result["ok"], json!(true), "applied: {result}");
+    assert_ne!(
+        inspect
+            .eval(&page, "document.getElementById('app').outerHTML")
+            .await
+            .expect("patched outerHTML"),
+        json!(before),
+        "the patch changed the DOM"
+    );
+
+    let reverted = inspect
+        .eval(&page, "window.PenwiseBridge.revertPatch(); 1")
+        .await
+        .expect("revert");
+    assert_eq!(reverted, json!(1));
+    let after = inspect
+        .eval(&page, "document.getElementById('app').outerHTML")
+        .await
+        .expect("outerHTML");
+    assert_eq!(after.as_str(), Some(before.as_str()), "revert is exact");
+    assert_eq!(
+        inspect
+            .eval(
+                &page,
+                "document.querySelectorAll('style[data-pw-patch]').length"
+            )
+            .await
+            .expect("style"),
+        json!(0)
+    );
+
+    page.close().await;
+    inspect.shutdown().await;
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_patch_is_reapplied_after_a_reload() {
+    if !chromium_installed() {
+        tracing::warn!("chromium is not installed; bridge patch reload test skipped");
+        return;
+    }
+    let server = project().await;
+    let (inspect, page) = open(&server).await;
+    send_patch(
+        &inspect,
+        &page,
+        json!({ "css": "#mover { background: rgb(9, 8, 7); }", "dom": [
+            { "op": "set_text", "selector": "#mover", "value": "patched" }
+        ] }),
+        true,
+    )
+    .await;
+    assert_eq!(text_at(&inspect, &page, "#mover").await, "patched");
+
+    inspect
+        .eval(&page, "location.reload(); 1")
+        .await
+        .expect("reload");
+    // The old document says "patched", so seeing "mover" proves the reloaded page is the unpatched one and
+    // its bridge is back. Then behave as a host: re-send the patch after the load.
+    let reloaded = wait_text(&inspect, &page, "#mover", "mover").await;
+    assert_eq!(reloaded, "mover", "the reloaded document is unpatched");
+    let result = apply_direct(
+        &inspect,
+        &page,
+        json!({ "css": "#mover { background: rgb(9, 8, 7); }", "dom": [
+            { "op": "set_text", "selector": "#mover", "value": "patched" }
+        ] }),
+    )
+    .await;
+    assert_eq!(result["ok"], json!(true));
+    let patched = wait_text(&inspect, &page, "#mover", "patched").await;
+    assert_eq!(patched, "patched", "the host re-applied the patch");
+
+    page.close().await;
+    inspect.shutdown().await;
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn failed_selectors_are_reported_and_the_rest_applies() {
+    if !chromium_installed() {
+        tracing::warn!("chromium is not installed; bridge patch failure test skipped");
+        return;
+    }
+    let server = project().await;
+    let (inspect, page) = open(&server).await;
+    let result = apply_direct(
+        &inspect,
+        &page,
+        json!({ "dom": [
+            { "op": "set_text", "selector": "#title", "value": "first" },
+            { "op": "set_attr", "selector": ".does-not-exist", "name": "title", "value": "x" },
+            { "op": "remove", "selector": "div[" }
+        ] }),
+    )
+    .await;
+    assert_eq!(result["ok"], json!(false), "{result}");
+    let failed = result["failed"].as_array().expect("failed list");
+    assert_eq!(failed.len(), 2, "{result}");
+    assert_eq!(failed[0]["index"], json!(1));
+    assert_eq!(failed[0]["reason"], json!("no match"));
+    assert_eq!(failed[1]["index"], json!(2));
+    assert_eq!(failed[1]["reason"], json!("bad selector"));
+    assert_eq!(
+        text_at(&inspect, &page, "#title").await,
+        "first",
+        "the good op ran"
+    );
+
+    page.close().await;
+    inspect.shutdown().await;
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn layout_and_keys_work_on_the_patched_dom() {
+    if !chromium_installed() {
+        tracing::warn!("chromium is not installed; bridge patched-layout test skipped");
+        return;
+    }
+    let server = project().await;
+    let (inspect, page) = open(&server).await;
+    let key = "v1||div#mover.box:nth-of-type(1)".to_owned();
+    watch(&inspect, &page, std::slice::from_ref(&key)).await;
+    let first = wait_layout(&inspect, &page, |message| rect_of(message, &key).is_some()).await;
+    let x_before = rect_of(&first, &key).expect("rect")[0];
+
+    let before = layout_count(&inspect, &page).await;
+    send_patch(
+        &inspect,
+        &page,
+        json!({ "css": "#mover { margin-left: 60px }", "dom": [
+            { "op": "set_text", "selector": "#mover", "value": "moved" }
+        ] }),
+        true,
+    )
+    .await;
+    let moved = wait_layout_since(&inspect, &page, before, |message| {
+        rect_of(message, &key).is_some_and(|rect| rect[0] > x_before + 30.0)
+    })
+    .await;
+    assert!(
+        rect_of(&moved, &key).is_some_and(|rect| rect[0] > x_before + 30.0),
+        "the css moved the watched element"
+    );
+
+    // The key still resolves to the patched element and the hit still names it.
+    let resolved = inspect
+        .eval(
+            &page,
+            &format!(
+                "(function () {{ var e = window.PenwiseBridge.resolveKey({}); return e ? e.textContent : null; }})()",
+                serde_json::to_string(&key).expect("key json")
+            ),
+        )
+        .await
+        .expect("resolve");
+    assert_eq!(resolved, json!("moved"));
+    let hit = hit_key(&inspect, &page, "#mover").await;
+    assert_eq!(hit, key);
+
+    page.close().await;
+    inspect.shutdown().await;
+    server.shutdown().await;
+}

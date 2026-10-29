@@ -274,6 +274,10 @@ pub fn frame(id: ItemId, z: i64) -> Item {
             preset: FramePreset::Phone,
             css_w: 390,
             css_h: 844,
+            patch: Some(r#"{"css":"h1{color:red}"}"#.to_owned()),
+            label: "variant A".to_owned(),
+            group: Some("grp-1".to_owned()),
+            chosen: true,
         }),
     );
     it.transform = Affine::translate(100.75, -40.0);

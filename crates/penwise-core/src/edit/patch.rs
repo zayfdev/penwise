@@ -46,11 +46,19 @@ pub enum Field {
     MarkStatus,
     /// Mark `strokes` (its member list). Code 16.
     MarkStrokes,
+    /// Frame `patch` (the ghost/variant P1 JSON; LWW, `Some(None)` clears). Code 17.
+    FramePatch,
+    /// Frame `label`. Code 18.
+    FrameLabel,
+    /// Frame `group` (variant group id; `Some(None)` clears). Code 19.
+    FrameGroup,
+    /// Frame `chosen` (the owner's pick; choosing one un-chooses its group's others). Code 20.
+    FrameChosen,
 }
 
 impl Field {
     /// Every field in code order.
-    pub const ALL: [Field; 17] = [
+    pub const ALL: [Field; 21] = [
         Field::Deleted,
         Field::Layer,
         Field::Z,
@@ -68,6 +76,10 @@ impl Field {
         Field::FrameRoute,
         Field::MarkStatus,
         Field::MarkStrokes,
+        Field::FramePatch,
+        Field::FrameLabel,
+        Field::FrameGroup,
+        Field::FrameChosen,
     ];
 
     /// Frozen code (see variant docs).
@@ -95,7 +107,12 @@ impl Field {
             Self::Paint => matches!(tag, ItemKindTag::Fill | ItemKindTag::Text),
             Self::Polygons => tag == ItemKindTag::Fill,
             Self::Text | Self::TextBox | Self::FontSize => tag == ItemKindTag::Text,
-            Self::FramePreset | Self::FrameRoute => tag == ItemKindTag::Frame,
+            Self::FramePreset
+            | Self::FrameRoute
+            | Self::FramePatch
+            | Self::FrameLabel
+            | Self::FrameGroup
+            | Self::FrameChosen => tag == ItemKindTag::Frame,
             Self::MarkStatus | Self::MarkStrokes => tag == ItemKindTag::Mark,
         }
     }
@@ -125,6 +142,14 @@ pub struct ItemPatch {
     pub mark_status: Option<crate::marks::MarkStatus>,
     /// The mark's member strokes, in addition order.
     pub mark_strokes: Option<Vec<ItemId>>,
+    /// The frame's ghost/variant patch (`Some(None)` clears it).
+    pub frame_patch: Option<Option<String>>,
+    /// The frame's label.
+    pub frame_label: Option<String>,
+    /// The frame's variant group id (`Some(None)` clears it).
+    pub frame_group: Option<Option<String>>,
+    /// The frame's chosen flag.
+    pub frame_chosen: Option<bool>,
 }
 
 impl ItemPatch {
@@ -191,6 +216,10 @@ impl ItemPatch {
             Field::FrameRoute => self.frame_route.is_some(),
             Field::MarkStatus => self.mark_status.is_some(),
             Field::MarkStrokes => self.mark_strokes.is_some(),
+            Field::FramePatch => self.frame_patch.is_some(),
+            Field::FrameLabel => self.frame_label.is_some(),
+            Field::FrameGroup => self.frame_group.is_some(),
+            Field::FrameChosen => self.frame_chosen.is_some(),
         }
     }
 
@@ -214,6 +243,10 @@ impl ItemPatch {
             Field::FrameRoute => self.frame_route.clone_from(&from.frame_route),
             Field::MarkStatus => self.mark_status = from.mark_status,
             Field::MarkStrokes => self.mark_strokes.clone_from(&from.mark_strokes),
+            Field::FramePatch => self.frame_patch.clone_from(&from.frame_patch),
+            Field::FrameLabel => self.frame_label.clone_from(&from.frame_label),
+            Field::FrameGroup => self.frame_group.clone_from(&from.frame_group),
+            Field::FrameChosen => self.frame_chosen = from.frame_chosen,
         }
     }
 

@@ -139,6 +139,7 @@ export class App {
         view: () => this.pageView.transform,
         origin: () => this.stage.getBoundingClientRect(),
         projects: () => this.projects,
+        snapshotBusy: () => this.snapshots.inProgress,
         flush: () => this.connection.flush(),
         repaint: () => this.pageView.invalidateCommitted(),
         changed: () => this.afterLocalEdit(),
@@ -208,6 +209,7 @@ export class App {
       pending: this.viewer.pending_ops(),
       head: this.viewer.head_seq().toString(),
       layouts: this.frames.layouts,
+      frameBuilds: this.frames.frameBuilds,
       states: this.frames.states,
       marks: this.frames.currentMarks,
     }));
@@ -313,6 +315,12 @@ export class App {
   }
 
   private showPage(page: string | null): void {
+    // Re-opening the page that is already shown is a no-op: a fresh `Watch` would restart the page snapshot
+    // (emptying the replica for a moment) and reload every framed site for nothing.
+    if (page === this.current) {
+      this.refreshFrames();
+      return;
+    }
     this.pen.abort();
     this.current = page;
     this.userMoved = false;

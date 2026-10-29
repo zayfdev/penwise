@@ -200,3 +200,104 @@ fn frame_tools_commit_list_and_undo() {
     assert_eq!(frame["preset"], "phone");
     assert_eq!(frame["cssW"], 390);
 }
+
+/// P2/M4: variant frames list their patch (as an object), label, group and chosen flag; picking one
+/// un-chooses its group's others in one undoable commit.
+#[test]
+fn frame_variants_list_their_fields_and_the_owner_picks_one() {
+    use penwise_core::edit::Edit;
+    use penwise_core::item::{
+        FramePreset, FrameSpec, ItemId, Layer, Scene, VariantSpec, add_frame, variant_frames,
+    };
+    use serde_json::{Value, json};
+
+    let (mut core, page) = core_with_page(7);
+    let base = ItemId([1; 16]);
+    let (a, b) = (ItemId([2; 16]), ItemId([3; 16]));
+    let spec = FrameSpec::new(
+        "portfolio".to_owned(),
+        "/".to_owned(),
+        FramePreset::Phone,
+        None,
+        None,
+        100.0,
+        0.0,
+    )
+    .unwrap();
+    let base_edits = vec![add_frame(&spec, base, Layer::Ink, 1 << 16)];
+    let mut scratch = Scene::new(penwise_core::item::PageKind::Infinite);
+    scratch.apply_all(&base_edits).unwrap();
+    let variants = [
+        VariantSpec {
+            id: a,
+            label: "A".to_owned(),
+            patch: r#"{"css":"h1{color:red}"}"#.to_owned(),
+        },
+        VariantSpec {
+            id: b,
+            label: "B".to_owned(),
+            patch: r#"{"css":"h1{color:blue}"}"#.to_owned(),
+        },
+    ];
+    let adds: Vec<Edit> = variant_frames(&scratch, base, &variants, "grp-1", 2 << 16).unwrap();
+    core.commit_edits(page, &base_edits, 5_000).unwrap();
+    core.commit_edits(page, &adds, 5_001).unwrap();
+    let mut scene = SceneHandle::open(&core, page, 3).unwrap();
+
+    let listed = |scene: &SceneHandle| -> Vec<Value> {
+        serde_json::from_str(&scene.frames_json()).expect("frames json")
+    };
+    let frames = listed(&scene);
+    assert_eq!(frames.len(), 3);
+    let variant = frames
+        .iter()
+        .find(|frame| frame["id"] == json!(b.to_hex()))
+        .expect("variant B");
+    assert_eq!(variant["label"], "B");
+    assert_eq!(variant["group"], "grp-1");
+    assert_eq!(variant["chosen"], false);
+    assert_eq!(variant["patch"]["css"], "h1{color:blue}");
+    let plain = frames
+        .iter()
+        .find(|frame| frame["id"] == json!(base.to_hex()))
+        .expect("base");
+    assert_eq!(plain["patch"], Value::Null);
+    assert_eq!(plain["label"], "");
+
+    // Picking A is one update; picking B then un-chooses A in the same batch.
+    let edits = scene.set_frame_chosen(a, true).unwrap();
+    assert_eq!(edits.len(), 1);
+    scene.commit_into(&mut core, &edits, 5_002).unwrap();
+    let chosen = |scene: &SceneHandle, id: ItemId| {
+        listed(scene)
+            .into_iter()
+            .find(|frame| frame["id"] == json!(id.to_hex()))
+            .expect("frame")["chosen"]
+            .clone()
+    };
+    assert_eq!(chosen(&scene, a), true);
+    let edits = scene.set_frame_chosen(b, true).unwrap();
+    assert_eq!(edits.len(), 2, "the pick plus A un-chosen");
+    scene.commit_into(&mut core, &edits, 5_003).unwrap();
+    assert_eq!(chosen(&scene, a), false);
+    assert_eq!(chosen(&scene, b), true);
+
+    // One undo step restores the whole choice.
+    let undone = scene.undo().unwrap();
+    scene.commit_into(&mut core, &undone, 5_004).unwrap();
+    assert_eq!(chosen(&scene, a), true);
+    assert_eq!(chosen(&scene, b), false);
+
+    // A frame without a group, or an unknown id, commits nothing.
+    assert!(scene.set_frame_chosen(base, true).unwrap().is_empty());
+    assert!(
+        scene
+            .set_frame_chosen(ItemId([9; 16]), true)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        scene.set_frame_chosen(a, true).unwrap().is_empty(),
+        "unchanged"
+    );
+}

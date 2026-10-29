@@ -87,6 +87,23 @@ impl FrameView {
         // A replay click may have scrolled or focused something: measure at the origin again, because a
         // screenshot clip is document coordinates and the ink is placed in viewport coordinates.
         inspect.eval(&page, "window.scrollTo(0, 0)").await?;
+        // The frame's ghost/variant patch is part of what the owner sees, so the bundle and the snapshot read
+        // the patched DOM: the patch goes on after the state replay, before the keys resolve.
+        if let Some(text) = item.patch.as_deref() {
+            match apply_patch(inspect, &page, text).await {
+                Ok(answer) if answer.get("ok") == Some(&Value::Bool(true)) => {}
+                Ok(answer) => {
+                    let failed = answer.get("failed").cloned().unwrap_or(Value::Null);
+                    tracing::warn!(
+                        frame = %frame.to_hex(),
+                        failed = %failed,
+                        "frame patch partly applied"
+                    );
+                }
+                Err(error) => tracing::warn!(frame = %frame.to_hex(), %error, "frame patch failed"),
+            }
+            inspect.eval(&page, "window.scrollTo(0, 0)").await?;
+        }
         let nodes = resolve(inspect, &page, keys).await?;
         let (scroll, doc, viewport) = geometry(inspect, &page).await?;
         let mut layouts = FrameLayouts::new();
@@ -210,6 +227,29 @@ async fn geometry(
         Ok([first as f32, second as f32])
     };
     Ok((pair("scroll")?, pair("doc")?, pair("viewport")?))
+}
+
+/// Applies P1 patch text through the page's bridge and returns its `{ok, failed}` answer.
+///
+/// # Errors
+/// The page could not be evaluated (a closed target, a navigation in flight).
+pub(crate) async fn apply_patch(
+    inspect: &Inspect,
+    page: &Page,
+    text: &str,
+) -> Result<Value, AgentError> {
+    let literal = serde_json::to_string(text)
+        .map_err(|error| AgentError::Internal(format!("patch: {error}")))?;
+    let script = format!(
+        "(function (patch) {{
+           var bridge = window.PenwiseBridge;
+           if (!bridge || typeof bridge.applyPatch !== 'function') {{
+             return {{ ok: false, failed: [{{ index: 0, reason: 'no bridge' }}] }};
+           }}
+           return bridge.applyPatch(patch, true);
+         }})({literal})"
+    );
+    Ok(inspect.eval(page, &script).await?)
 }
 
 /// The `[selector, text]` of the element at a viewport point, for an arrow's endpoints.

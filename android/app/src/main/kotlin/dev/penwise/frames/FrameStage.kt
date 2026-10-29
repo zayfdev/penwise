@@ -36,10 +36,11 @@ internal class FrameStageModel(
     val actions: FrameStageActions,
 )
 
-/** The stage's callbacks: frame item edits and the core's layout feed and mark status. */
+/** The stage's callbacks: frame item edits, the owner's variant pick, the core's layout feed and mark status. */
 internal class FrameStageActions(
     val onPreset: (id: String, preset: String) -> Unit,
     val onRoute: (id: String, route: String) -> Unit,
+    val onChoose: (id: String) -> Unit,
     val onLayout: (id: String, json: String) -> Unit,
     val onMarkStatus: (id: String, status: String) -> Unit,
 )
@@ -102,6 +103,7 @@ internal fun FrameStage(
             layer = layer,
             onPreset = model.actions.onPreset,
             onRoute = model.actions.onRoute,
+            onChoose = model.actions.onChoose,
         )
         FrameMarkChips(
             marks = model.marks,

@@ -1,4 +1,5 @@
-//! Frames in the browser (design harness C1): a page's frames as JSON, plus the add/preset/route edits.
+//! Frames in the browser (design harness C1/M4): a page's frames as JSON, the add/preset/route edits and the
+//! owner's variant pick.
 //!
 //! Ids here are the 26-char ULID text the rest of the viewer uses (`stroke_begin` returns the same form);
 //! `rect` is `[x, y, w, h]` in page units. Every edit goes through [`Viewer::record_local`], so it is one undo
@@ -7,7 +8,7 @@
 use penwise_core::edit::{Edit, ItemPatch};
 use penwise_core::item::{
     FrameItem, FramePreset, FrameSize, FrameSpec, IdSource, ItemId, ItemKind, Layer, LayerSet,
-    add_frame,
+    add_frame, set_chosen,
 };
 use penwise_proto::{ItemRef, PageId};
 use serde::Deserialize;
@@ -32,8 +33,9 @@ struct AddFrameRequest {
 
 #[wasm_bindgen]
 impl Viewer {
-    /// Live frames of `page` as JSON: `[{"id","project","route","preset","cssW","cssH","rect":[x,y,w,h]}]`, in
-    /// paint order. Unknown page → `[]`.
+    /// Live frames of `page` as JSON:
+    /// `[{"id","project","route","preset","cssW","cssH","rect":[x,y,w,h],"patch","label","group","chosen"}]`,
+    /// in paint order; `patch` is the P1 patch as an object (or `null`). Unknown page → `[]`.
     ///
     /// # Errors
     /// `JsError` for a malformed page id.
@@ -72,6 +74,16 @@ impl Viewer {
     pub fn set_frame_route(&mut self, id: &str, route: &str, now_ms: f64) -> Result<(), JsError> {
         Ok(self.change_route(parse_item(id)?, route, whole_ms(now_ms))?)
     }
+
+    /// Marks variant frame `id` as the owner's pick (or un-marks it); choosing one un-chooses the other frames
+    /// of its group in the same undo step. An unknown/non-frame id, a frame without a group, or an unchanged
+    /// state pushes nothing.
+    ///
+    /// # Errors
+    /// `JsError` for a malformed id before `identify`, or a rejected edit.
+    pub fn set_frame_chosen(&mut self, id: &str, chosen: bool, now_ms: f64) -> Result<(), JsError> {
+        Ok(self.choose(parse_item(id)?, chosen, whole_ms(now_ms))?)
+    }
 }
 
 impl Viewer {
@@ -99,6 +111,10 @@ impl Viewer {
                     "cssW": frame.css_w,
                     "cssH": frame.css_h,
                     "rect": [rect.min_x, rect.min_y, rect.width(), rect.height()],
+                    "patch": patch_json(frame.patch.as_deref()),
+                    "label": frame.label,
+                    "group": frame.group,
+                    "chosen": frame.chosen,
                 }))
             })
             .collect();
@@ -199,6 +215,24 @@ impl Viewer {
         self.record_local(page, &[edit], now_ms)
     }
 
+    /// [`Viewer::set_frame_chosen`] typed.
+    ///
+    /// # Errors
+    /// As [`Viewer::set_frame_chosen`].
+    pub fn choose(&mut self, id: ItemId, chosen: bool, now_ms: u64) -> Result<(), WasmError> {
+        let Some((page, _)) = self.frame(id) else {
+            return Ok(());
+        };
+        let edits = {
+            let view = self.replica.page(page).ok_or(WasmError::UnknownPage)?;
+            set_chosen(view.scene(), id, chosen)?
+        };
+        if edits.is_empty() {
+            return Ok(());
+        }
+        self.record_local(page, &edits, now_ms)
+    }
+
     /// `(page, frame)` of live frame `id`, if any page holds it.
     fn frame(&self, id: ItemId) -> Option<(PageId, FrameItem)> {
         let catalog = self.replica.catalog();
@@ -216,6 +250,11 @@ impl Viewer {
             }
         })
     }
+}
+
+/// The frame's patch as the P1 object the clients read; `null` when absent or unparseable.
+fn patch_json(patch: Option<&str>) -> Option<serde_json::Value> {
+    patch.and_then(|text| serde_json::from_str(text).ok())
 }
 
 /// Parses an item id from its 26-char ULID text.

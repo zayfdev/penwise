@@ -34,8 +34,90 @@ pub(crate) fn tool(
         "penwise_frame_snapshot" => snapshot(request, endpoint),
         "penwise_marks" => marks(request, endpoint),
         "penwise_mark_status" => status(request, endpoint),
+        "penwise_ghost" => ghost(request, endpoint),
+        "penwise_variants" => variants(request, endpoint),
+        "penwise_choice" => choice(request, endpoint),
+        "penwise_variants_clear" => variants_clear(request, endpoint),
         _ => return None,
     })
+}
+
+/// `POST /frames/<id>/ghost` — `{patch}` sets a ghost, `{clear: true}` removes it.
+fn ghost(request: &Value, endpoint: &Endpoint) -> Result<Value, Value> {
+    let args = arguments(request);
+    let frame = args
+        .get("frame")
+        .and_then(Value::as_str)
+        .ok_or_else(|| error(-32602, "missing frame"))?;
+    let body = if args.get("clear").and_then(Value::as_bool).unwrap_or(false) {
+        json!({ "patch": Value::Null })
+    } else {
+        let patch = args
+            .get("patch")
+            .filter(|patch| !patch.is_null())
+            .ok_or_else(|| error(-32602, "missing patch or clear"))?;
+        json!({ "patch": patch })
+    };
+    let path = format!("/frames/{}/ghost", encode_segment(frame));
+    post_text(endpoint, &path, &body.to_string())
+}
+
+/// `POST /frames/<id>/variants` — `{variants: [{label, patch}]}`, 2 to 4.
+fn variants(request: &Value, endpoint: &Endpoint) -> Result<Value, Value> {
+    let args = arguments(request);
+    let frame = args
+        .get("frame")
+        .and_then(Value::as_str)
+        .ok_or_else(|| error(-32602, "missing frame"))?;
+    let variants = args
+        .get("variants")
+        .filter(|variants| variants.is_array())
+        .ok_or_else(|| error(-32602, "missing variants (2 to 4 of {label, patch})"))?;
+    let body = json!({ "variants": variants });
+    let path = format!("/frames/{}/variants", encode_segment(frame));
+    post_text(endpoint, &path, &body.to_string())
+}
+
+/// `GET /variants/<group>` — the pick as one text block, then the variants' mark crops.
+fn choice(request: &Value, endpoint: &Endpoint) -> Result<Value, Value> {
+    let args = arguments(request);
+    let group = args
+        .get("group")
+        .and_then(Value::as_str)
+        .ok_or_else(|| error(-32602, "missing group"))?;
+    let path = format!("/variants/{}", encode_segment(group));
+    let body = endpoint
+        .get(&path)
+        .map_err(|failure| error(-32603, &failure))?;
+    let text = String::from_utf8_lossy(&body).into_owned();
+    let reply: Value = match serde_json::from_str(&text) {
+        Ok(reply) => reply,
+        Err(_) => return Ok(text_content(&text)),
+    };
+    let mut content = vec![json!({ "type": "text", "text": text })];
+    for mark in reply
+        .get("marks")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        content.extend(crops(mark, Images::All, endpoint)?);
+    }
+    Ok(json!({ "content": content }))
+}
+
+/// `DELETE /variants/<group>` — the frames go, the marks stay as done.
+fn variants_clear(request: &Value, endpoint: &Endpoint) -> Result<Value, Value> {
+    let args = arguments(request);
+    let group = args
+        .get("group")
+        .and_then(Value::as_str)
+        .ok_or_else(|| error(-32602, "missing group"))?;
+    let path = format!("/variants/{}", encode_segment(group));
+    let reply = endpoint
+        .delete(&path, "{}")
+        .map_err(|failure| error(-32603, &failure))?;
+    Ok(text_content(&String::from_utf8_lossy(&reply)))
 }
 
 /// `GET /frames/<id>/snapshot.png?ink=…` as a text summary plus the PNG.

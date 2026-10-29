@@ -21,12 +21,12 @@ use penwise_core::edit::Edit;
 use penwise_core::item::{Item, ItemId, ItemKind, Layer, StrokeItem};
 use penwise_core::marks::{Binding, BindingMode, MarkItem, MarkStatus};
 use penwise_core::sample::Sample;
-use penwise_proto::{ItemRef, PageId};
+use penwise_proto::{AnyOp, ItemRef, Op, OpId, PageId};
 use serde_json::{Value, json};
 
 use crate::api::projects::routes as group;
 use crate::frames::registry::LinkRequest;
-use crate::testing::Rig;
+use crate::testing::{Rig, T0};
 
 const HTML: &str = include_str!("../../tests/fixtures/harness/index.html");
 const CSS: &str = include_str!("../../tests/fixtures/harness/styles.css");
@@ -171,6 +171,29 @@ async fn create_frame(base: &str, page: PageId, x: f32, y: f32) -> ItemId {
     ItemId::from_hex(text)
         .or_else(|| text.parse::<ItemRef>().ok().map(ItemId::from))
         .expect("frame id parses")
+}
+
+/// Appends `edits` as a device's ops with fresh server stamps: later than every op so far, exactly how a
+/// `FrameChosen` edit arrives from the tablet.
+async fn device_edits(rig: &Rig, page: PageId, edits: Vec<Edit>) {
+    let device = rig.storage.server_device();
+    let mut ops = Vec::with_capacity(edits.len());
+    for (index, edit) in edits.into_iter().enumerate() {
+        let stamp = rig.storage.server_stamp().await.expect("stamp");
+        #[allow(clippy::cast_possible_truncation, reason = "a handful of edits")]
+        let offset = index as u64;
+        ops.push(AnyOp::Item(Box::new(Op {
+            op_id: OpId::from_parts(T0, 500 + u128::from(offset)),
+            device,
+            hlc: stamp,
+            page,
+            edit,
+        })));
+    }
+    rig.storage
+        .append_ops(device, ops)
+        .await
+        .expect("device ops");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -408,4 +431,248 @@ async fn frames_open_creates_the_review_page_side_by_side_and_snapshots_png() {
     .expect("snapshot");
     assert_eq!(plain.status(), reqwest::StatusCode::OK);
     assert_eq!(png_size(&plain.bytes().await.expect("bytes")), (1440, 900));
+}
+
+/* ------------------------------------------------------------------ ghosts and variants (M4, P4) */
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_ghost_sets_clears_and_reports_failed_selectors() {
+    if !chromium() {
+        eprintln!("skipping: no chromium at /usr/bin/chromium (set PENWISE_CHROMIUM)");
+        return;
+    }
+    let (mut rig, base) = fixture().await;
+    let page = rig.fixed_page().await;
+    let frame = create_frame(&base, page, 10.0, 20.0).await;
+    let snapshot = || {
+        let url = format!("{base}/frames/{}/snapshot.png?ink=false", frame.to_hex());
+        async move {
+            reqwest::get(url)
+                .await
+                .expect("snapshot")
+                .bytes()
+                .await
+                .expect("bytes")
+                .to_vec()
+        }
+    };
+    let before = snapshot().await;
+
+    let patch = json!({
+        "css": "#mover { background: rgb(1, 2, 3) }",
+        "dom": [{ "op": "set_text", "selector": "#title", "value": "Ghosted" }]
+    });
+    let response = post(
+        &format!("{base}/frames/{}/ghost", frame.to_hex()),
+        json!({ "patch": patch }),
+    )
+    .await;
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let result: Value = response.json().await.expect("ghost json");
+    assert_eq!(result["ok"], json!(true), "{result}");
+    assert_eq!(result["failed"], json!([]));
+
+    // The snapshot is the patched page: the same frame without its patch renders different pixels.
+    let patched = snapshot().await;
+    assert_ne!(patched, before, "the snapshot shows the patch");
+    assert_eq!(png_size(&patched), (390, 844));
+
+    // The stored text is the sanitized P1 JSON.
+    let view = rig.view(page).await;
+    let stored = view
+        .replica
+        .scene()
+        .get(frame)
+        .and_then(|item| match &item.kind {
+            ItemKind::Frame(frame) => frame.patch.clone(),
+            _ => None,
+        })
+        .expect("the frame keeps its patch");
+    assert!(stored.contains("set_text"), "{stored}");
+
+    // A selector matching nothing is reported, and the unsafe parts of the patch never reach the frame.
+    let response = post(
+        &format!("{base}/frames/{}/ghost", frame.to_hex()),
+        json!({ "patch": {
+            "dom": [
+                { "op": "remove", "selector": ".does-not-exist" },
+                { "op": "replace", "selector": "#mover", "html": "<script>bad()</script><b onclick=\"x()\">m</b>" }
+            ]
+        } }),
+    )
+    .await;
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let result: Value = response.json().await.expect("ghost json");
+    assert_eq!(result["ok"], json!(false), "{result}");
+    assert_eq!(result["failed"][0]["index"], json!(0));
+    assert_eq!(result["failed"][0]["reason"], json!("no match"));
+    let view = rig.view(page).await;
+    let stored = view
+        .replica
+        .scene()
+        .get(frame)
+        .and_then(|item| match &item.kind {
+            ItemKind::Frame(frame) => frame.patch.clone(),
+            _ => None,
+        })
+        .expect("patch");
+    assert!(!stored.contains("script"), "{stored}");
+    assert!(!stored.contains("onclick"), "{stored}");
+
+    // `null` clears it, and the frame renders as the code has it again.
+    let response = post(
+        &format!("{base}/frames/{}/ghost", frame.to_hex()),
+        json!({ "patch": Value::Null }),
+    )
+    .await;
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let view = rig.view(page).await;
+    let cleared = view
+        .replica
+        .scene()
+        .get(frame)
+        .and_then(|item| match &item.kind {
+            ItemKind::Frame(frame) => frame.patch.clone(),
+            _ => None,
+        });
+    assert_eq!(cleared, None);
+    assert_eq!(snapshot().await, before, "no patch, the original pixels");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn variants_sit_side_by_side_take_the_pick_and_keep_marks_on_clear() {
+    if !chromium() {
+        eprintln!("skipping: no chromium at /usr/bin/chromium (set PENWISE_CHROMIUM)");
+        return;
+    }
+    let (mut rig, base) = fixture().await;
+    let page = rig.fixed_page().await;
+    let frame = create_frame(&base, page, 10.0, 20.0).await;
+
+    let body = json!({ "variants": [
+        { "label": "A", "patch": { "css": "#mover { background: red }" } },
+        { "label": "B", "patch": { "css": "#mover { background: blue }" } },
+        { "label": "C", "patch": { "dom": [{ "op": "set_text", "selector": "#title", "value": "C" }] } }
+    ] });
+    let response = post(&format!("{base}/frames/{}/variants", frame.to_hex()), body).await;
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let created: Value = response.json().await.expect("variants json");
+    let group = created["group"].as_str().expect("group").to_owned();
+    let ids: Vec<ItemId> = created["frames"]
+        .as_array()
+        .expect("frames")
+        .iter()
+        .map(|id| ItemId::from_hex(id.as_str().expect("id")).expect("hex"))
+        .collect();
+    assert_eq!(ids.len(), 3);
+
+    // Side by side: gap 40, same row, same project/route/preset, tagged with the group and labels.
+    let view = rig.view(page).await;
+    let scene = view.replica.scene();
+    let base_x = scene.get(frame).expect("base").transform.e;
+    let mut expected_x = base_x + 390.0 + 40.0;
+    for (id, label) in ids.iter().zip(["A", "B", "C"]) {
+        let item = scene.get(*id).expect("variant");
+        assert_eq!(item.transform.e, expected_x, "gap 40");
+        assert_eq!(item.transform.f, 20.0);
+        let ItemKind::Frame(variant) = &item.kind else {
+            panic!("a variant is a frame")
+        };
+        assert_eq!(variant.label, label);
+        assert_eq!(variant.group.as_deref(), Some(group.as_str()));
+        assert!(!variant.chosen);
+        assert_eq!(variant.project, "prj_harness");
+        assert_eq!(variant.route, "/");
+        assert_eq!(variant.preset, penwise_core::item::FramePreset::Phone);
+        assert!(variant.patch.is_some());
+        expected_x += 390.0 + 40.0;
+    }
+
+    // The group read before a pick: three labelled frames, no choice.
+    let listing = json(&format!("{base}/variants/{group}")).await;
+    assert_eq!(listing["group"], group);
+    assert_eq!(listing["chosen"], Value::Null);
+    let frames = listing["frames"].as_array().expect("frames");
+    assert_eq!(frames.len(), 3);
+    assert_eq!(frames[1]["label"], "B");
+    assert_eq!(frames[1]["patch"]["css"], "#mover { background: blue }");
+
+    // The owner taps "Use this" on the tablet: a device op, exactly what `set_chosen` emits.
+    let chosen = ids[1];
+    let view = rig.view(page).await;
+    let edits =
+        penwise_core::item::set_chosen(view.replica.scene(), chosen, true).expect("set_chosen");
+    assert_eq!(edits.len(), 1, "nobody else was chosen");
+    device_edits(&rig, page, edits).await;
+    let view = rig.view(page).await;
+    let chosen_now = view
+        .replica
+        .scene()
+        .get(chosen)
+        .and_then(|item| match &item.kind {
+            ItemKind::Frame(frame) => Some(frame.chosen),
+            _ => None,
+        });
+    assert_eq!(chosen_now, Some(true), "the device pick lands in the scene");
+    let picked = json(&format!("{base}/variants/{group}")).await;
+    assert_eq!(picked["chosen"], chosen.to_hex());
+    assert_eq!(picked["frames"][1]["chosen"], json!(true));
+    assert_eq!(picked["frames"][0]["chosen"], json!(false));
+
+    // Ink drawn on a variant is in the group's bundles.
+    let binding = Binding::new(
+        chosen,
+        BindingMode::Bound,
+        penwise_core::item::FramePreset::Phone,
+        Some(MOVER_KEY.to_owned()),
+        String::new(),
+        [10.0, 20.0],
+    )
+    .expect("binding");
+    let stroke = rig.item_id();
+    let mark = rig.item_id();
+    rig.edit(page, Edit::Add(bound_stroke(stroke, 1, binding)))
+        .await;
+    rig.edit(
+        page,
+        Edit::Add(
+            MarkItem {
+                frame: chosen,
+                preset: penwise_core::item::FramePreset::Phone,
+                status: MarkStatus::New,
+                state: String::new(),
+                strokes: vec![stroke],
+            }
+            .item(mark, 2),
+        ),
+    )
+    .await;
+    let bundled = json(&format!("{base}/variants/{group}")).await;
+    let marks = bundled["marks"].as_array().expect("marks");
+    assert_eq!(marks.len(), 1, "{bundled}");
+    assert_eq!(marks[0]["frame"], chosen.to_hex());
+    assert_eq!(marks[0]["kind"]["guess"], "circle");
+    assert!(marks[0]["images"]["with_ink"].is_string(), "{bundled}");
+
+    // Clearing removes the frames and leaves the ink as `done` in the page's log.
+    let response = reqwest::Client::new()
+        .delete(format!("{base}/variants/{group}"))
+        .send()
+        .await
+        .expect("delete");
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let cleared: Value = response.json().await.expect("clear json");
+    assert_eq!(cleared["removed"], json!(3));
+    assert_eq!(cleared["marks"], json!(1));
+    let view = rig.view(page).await;
+    let scene = view.replica.scene();
+    for id in &ids {
+        assert!(scene.get(*id).is_none(), "the variant frame is gone");
+    }
+    let kept = penwise_core::marks::mark_of(scene, mark).expect("the mark stays");
+    assert_eq!(kept.status, MarkStatus::Done);
+    let missing = reqwest::get(format!("{base}/variants/{group}"))
+        .await
+        .expect("get");
+    assert_eq!(missing.status(), reqwest::StatusCode::NOT_FOUND);
 }

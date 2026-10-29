@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Page } from "playwright-core";
 import { afterAll, describe, expect, it } from "vitest";
-import { useHarness } from "./harness";
+import { settle, useHarness } from "./harness";
 
 const h = useHarness();
 
@@ -56,7 +56,10 @@ describe("frames in the PC window", () => {
       .poll(() => iframe.getAttribute("src"), { timeout: 10_000 })
       .toBe(`http://127.0.0.1:${site.port}/`);
     // The iframe keeps the preset size in CSS px, so the site sees a 390-wide viewport...
-    expect(await iframe.evaluate((node) => getComputedStyle(node).width)).toBe("390px");
+    // Poll: the node must never be read while a transient re-render has detached it.
+    await expect
+      .poll(() => iframe.evaluate((node) => getComputedStyle(node).width), { timeout: 10_000 })
+      .toBe("390px");
     // ...and the canvas view scales it on screen.
     const scale = await viewScale(viewer);
     const box = await iframe.boundingBox();
@@ -67,6 +70,33 @@ describe("frames in the PC window", () => {
       .poll(() => viewer.frameLocator("#frames iframe").locator("#marker").textContent())
       .toBe("Penwise e2e site");
     expect(await viewer.locator("#frame-chips .frame-chip").count()).toBe(1);
+    // The live site must not be reloaded by a transient refresh (snapshot/refreshProjects race).
+    expect(await viewer.evaluate(() => window.__penwise?.state().frameBuilds)).toBe(1);
+    await viewer.close();
+  });
+
+  it("does not rebuild a frame when the shown page is opened again", async () => {
+    const site = await linkSite("e2e reshow");
+    const page = await pageWithFrame(site.id, "phone");
+    const viewer = await h.openViewer(page);
+    const iframe = viewer.locator("#frames iframe");
+    // The viewer may have auto-shown another page first; clicking ours is then a real switch.
+    await expect.poll(() => iframe.count(), { timeout: 10_000 }).toBe(1);
+    await settle(viewer);
+    const shown = await iframe.elementHandle();
+    if (!shown) throw new Error("no frame iframe");
+    const builds = () => viewer.evaluate(() => window.__penwise?.state().frameBuilds ?? 0);
+    const before = await builds();
+
+    // Re-opening the page that is already shown is a no-op for its frames: no re-watch, no snapshot,
+    // no reload of the live site.
+    await viewer.click(`#pages [data-page="${page}"]`);
+    await settle(viewer);
+    expect(await builds()).toBe(before);
+    await expect.poll(() => shown.evaluate((node) => node.isConnected)).toBe(true);
+    await expect
+      .poll(() => iframe.evaluate((node) => getComputedStyle(node).width), { timeout: 10_000 })
+      .toBe("390px");
     await viewer.close();
   });
 
@@ -112,7 +142,7 @@ describe("frames in the PC window", () => {
     expect(await iframe.evaluate((node) => getComputedStyle(node).height)).toBe("900px");
 
     // The route field is an ordinary frame edit too (set_frame_route).
-    const route = viewer.locator("#frame-chips .frame-chip input");
+    const route = viewer.locator('#frame-chips .frame-chip input[type="text"]');
     await route.fill("/index.html");
     await route.press("Tab");
     await expect

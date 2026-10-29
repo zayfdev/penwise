@@ -34,6 +34,7 @@ import dev.penwise.frames.FramePreset
 import dev.penwise.frames.FrameStage
 import dev.penwise.frames.FrameStageActions
 import dev.penwise.frames.FrameStageModel
+import dev.penwise.frames.MarksGuide
 import dev.penwise.ink.InkCanvas
 import dev.penwise.ink.PageList
 import dev.penwise.ink.PageScene
@@ -106,6 +107,7 @@ fun CanvasScreen(
         FrameStageActions(
             onPreset = page::setFramePreset,
             onRoute = page::setFrameRoute,
+            onChoose = { page.setFrameChosen(it, true) },
             onLayout = page::setFrameLayout,
             onMarkStatus = page::setMarkStatus,
         )
@@ -153,9 +155,7 @@ fun CanvasScreen(
         }
     }
     confirmClear?.let { forPage -> ClearPageDialog(forPage, open, page) { confirmClear = null } }
-    if (showAddFrame) {
-        NewFrameDialog(projects, page, canvasSize) { showAddFrame = false }
-    }
+    if (showAddFrame) NewFrameDialog(projects, page, canvasSize) { showAddFrame = false }
 }
 
 /** The canvas chrome's callbacks, one value so the drawer takes few parameters. */
@@ -204,6 +204,7 @@ private fun CanvasDrawer(
                 onRename = page.catalog::renamePage,
                 onDelete = page.catalog::deletePage,
             )
+            MarksGuide()
         }
     }
 }

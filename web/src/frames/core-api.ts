@@ -21,6 +21,8 @@ export interface CoreApi {
   set_mark_status(id: string, status: string, now_ms: number): void;
   /** Shows or hides done marks; true when what is drawn may have changed. */
   set_show_done(on: boolean): boolean;
+  /** M4 (contract P4): the owner's pick among a variant group; one batch, one undo step. */
+  set_frame_chosen(id: string, chosen: boolean, now_ms: number): void;
 }
 
 /** The viewer seen through the M2 contract. */

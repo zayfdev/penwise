@@ -203,8 +203,8 @@ fn header_and_trailer_errors() {
         Err(CodecError::BadMagic { found: *b"PWSK" })
     );
     let mut bad = bytes.clone();
-    bad[4..6].copy_from_slice(&3_u16.to_le_bytes());
-    assert_eq!(decode_item(&bad), Err(CodecError::UnsupportedVersion(3)));
+    bad[4..6].copy_from_slice(&4_u16.to_le_bytes());
+    assert_eq!(decode_item(&bad), Err(CodecError::UnsupportedVersion(4)));
     let mut bad = bytes.clone();
     bad.push(0);
     assert_eq!(

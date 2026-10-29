@@ -1,17 +1,11 @@
 package dev.penwise.frames
 
-import android.annotation.SuppressLint
 import android.content.Context
-import android.graphics.Color
 import android.os.SystemClock
 import android.util.Log
 import android.view.InputDevice
 import android.view.MotionEvent
-import android.webkit.WebSettings
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import android.widget.FrameLayout
-import dev.penwise.BuildConfig
 import dev.penwise.ink.FrameBinder
 import dev.penwise.ink.FrameHost
 import dev.penwise.ink.HitAnswer
@@ -81,20 +75,36 @@ internal class FrameLayer(
      * Shows [specs]: a new frame's WebView is opened, a frame whose URL changed is loaded again (or adopted when the
      * page already shows that route), a resized frame is re-laid out, a moved one is translated, and a frame that is
      * gone is destroyed. A frame that stays keeps its WebView and its page state (its scroll position included).
+     *
+     * A patch, label, group or choice change is none of those: every spec is taken, then the patch decisions go out
+     * and [sync] re-applies the variant dimming.
      */
     fun setFrames(specs: List<FrameSpec>) {
         val plan = FrameDiff.plan(entries.values.map { it.spec }, specs)
-        if (plan.isEmpty) return
-        for (id in plan.close) entries.remove(id)?.let { release(it) }
-        for (spec in plan.open) {
-            val view = open(spec)
-            entries[spec.id] = FrameEntry(spec, view)
-            addView(view)
+        if (!plan.isEmpty) {
+            for (id in plan.close) entries.remove(id)?.let { release(it) }
+            for (spec in plan.open) {
+                val view = FrameViews.open(context, spec, density) { message -> deliver(spec.id, message) }
+                entries[spec.id] = FrameEntry(spec, view)
+                addView(view)
+            }
+            for (spec in plan.load) entries[spec.id]?.let { load(it, spec) }
+            for (spec in plan.resize) entries[spec.id]?.let { resize(it, spec) }
         }
-        for (spec in plan.load) entries[spec.id]?.let { load(it, spec) }
-        for (spec in plan.resize) entries[spec.id]?.let { resize(it, spec) }
-        for (spec in plan.move) entries[spec.id]?.let { it.spec = spec }
+        for (spec in specs) entries[spec.id]?.let { it.spec = spec }
         sync()
+        for (entry in entries.values) sendPatch(entry)
+    }
+
+    /** The Ghost chip's on/off toggle: a local before/after view of the frame's patch, never synced. */
+    fun setPatchOn(
+        id: String,
+        on: Boolean,
+    ) {
+        val entry = entries[id] ?: return
+        if (entry.patchOn == on) return
+        entry.patchOn = on
+        sendPatch(entry)
     }
 
     /**
@@ -264,7 +274,15 @@ internal class FrameLayer(
             entry.view.translationY = placement.top
             entry.view.scaleX = placement.scale
             entry.view.scaleY = placement.scale
+            // A variant the owner did not pick is dimmed until (and unless) it wins: the comparison stays on screen.
+            entry.view.alpha = if (isDimmed(entry.spec)) DIMMED_ALPHA else 1f
         }
+    }
+
+    /** Sends the patch decision the page does not have yet; a silent no-op when it already shows that. */
+    private fun sendPatch(entry: FrameEntry) {
+        val message = entry.patches.next(entry.spec.patch, entry.patchOn) ?: return
+        FrameCommands.patch(entry.view, message)
     }
 
     /** The item's page box (C1): `css_w × css_h` page units, whatever the display density. */
@@ -318,39 +336,6 @@ internal class FrameLayer(
     }
 
     /**
-     * Opens a page at [spec]'s preset size. The WebView is laid out at the preset converted to device px, so its CSS
-     * viewport is the preset width (the page's breakpoints are the preset's, at any canvas zoom); the canvas scale is a
-     * view transform on top of that.
-     */
-    @SuppressLint("SetJavaScriptEnabled")
-    private fun open(spec: FrameSpec): WebView {
-        val view = WebView(context)
-        with(view.settings) {
-            javaScriptEnabled = true
-            domStorageEnabled = true
-            // The page is a document, not an app: no pinch inside it, no zoom buttons; the canvas owns the zoom.
-            setSupportZoom(false)
-            builtInZoomControls = false
-            displayZoomControls = false
-            // No useWideViewPort: the layout width is the view's width, so the page sees the preset as its viewport.
-            useWideViewPort = false
-            loadWithOverviewMode = false
-            mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
-        }
-        view.setBackgroundColor(Color.WHITE)
-        view.isVerticalScrollBarEnabled = false
-        view.isHorizontalScrollBarEnabled = false
-        view.webViewClient = WebViewClient()
-        view.addJavascriptInterface(FrameBridge { message -> deliver(spec.id, message) }, FrameMessages.HOST)
-        view.layoutParams = LayoutParams((spec.cssWidth * density).toInt(), (spec.cssHeight * density).toInt())
-        view.pivotX = 0f
-        view.pivotY = 0f
-        if (BuildConfig.DEBUG) WebView.setWebContentsDebuggingEnabled(true)
-        view.loadUrl(spec.url)
-        return view
-    }
-
-    /**
      * Points [entry] at [spec]: a page that already shows the spec's route (the user clicked a link; the item follows)
      * adopts it without a reload, anything else (another project, another host, a route typed by the user) loads.
      */
@@ -399,6 +384,9 @@ internal class FrameLayer(
                     onScroll?.invoke(frameId, entry.scroll)
                     // A fresh document starts with no watched keys: ask for the marks' ones before the first layout.
                     sendWatch(entry)
+                    // A fresh document also starts without the ghost/variant patch: apply it again at once.
+                    entry.patches.reset()
+                    sendPatch(entry)
                     Log.i(
                         TAG,
                         "$frameId hello ${message.url} doc ${message.docWidth}x${message.docHeight} " +
@@ -428,6 +416,10 @@ internal class FrameLayer(
 
                 is FrameMessage.Replayed -> {
                     Log.i(TAG, "$frameId replay '${message.state}' ok=${message.ok}")
+                }
+
+                is FrameMessage.Patched -> {
+                    Log.i(TAG, "$frameId patched ok=${message.ok} failed=${message.failed}")
                 }
             }
         }
@@ -478,5 +470,8 @@ internal class FrameLayer(
 
         /** Route reports right after a programmatic load describe the document being replaced. */
         const val LOAD_QUIET_MS = 1_500L
+
+        /** A variant the owner did not pick: dimmed, so the picked one stands out at a glance. */
+        const val DIMMED_ALPHA = 0.6f
     }
 }

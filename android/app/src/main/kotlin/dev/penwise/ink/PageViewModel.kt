@@ -346,6 +346,12 @@ class PageViewModel(
         json: String,
     ) = frameSession.setLayout(id, json)
 
+    /** The owner's pick among a variant group: one undoable edit that un-chooses the rest. */
+    fun setFrameChosen(
+        id: String,
+        chosen: Boolean,
+    ) = frameSession.setFrameChosen(id, chosen)
+
     /** Sets a mark's status; the core records one undoable edit and the chips follow. */
     fun setMarkStatus(
         markId: String,

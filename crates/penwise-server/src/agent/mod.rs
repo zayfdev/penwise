@@ -13,12 +13,14 @@ mod cache;
 mod entry;
 mod frame;
 mod frames;
+mod ghost;
 mod handwriting;
 mod images;
 mod kind;
 mod scene;
 #[cfg(test)]
 mod tests;
+mod variants;
 
 use axum::Router;
 use axum::routing::{get, post};
@@ -46,5 +48,11 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/marks", get(bundle::list))
         .route("/marks/{id}/image/{kind}", get(images::route))
         .route("/frames/open", post(frames::frame_open))
+        .route("/frames/{id}/ghost", post(ghost::ghost))
+        .route("/frames/{id}/variants", post(variants::create))
         .route("/frames/{id}/snapshot.png", get(frames::frame_snapshot))
+        .route(
+            "/variants/{group}",
+            get(variants::show).delete(variants::clear),
+        )
 }

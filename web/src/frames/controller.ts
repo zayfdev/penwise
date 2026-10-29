@@ -12,6 +12,7 @@ import {
   type BindingMode,
   type Layout,
   layoutJson,
+  type PatchFailure,
   type Rect,
   type StrokeBinding,
 } from "./bridge-messages";
@@ -26,6 +27,7 @@ import {
   parseFrames,
   presetSize,
 } from "./model";
+import { framesAreStale } from "./refresh";
 
 /** Inset of a frame added from the sidebar, CSS px from the visible top-left. */
 const FRAME_INSET_PX = 32;
@@ -40,6 +42,8 @@ export interface FrameDeps {
   /** Stage origin in client px. */
   origin(): { left: number; top: number };
   projects(): readonly Project[];
+  /** A sync snapshot is half applied: the replica's items (and so its frames) are incomplete. */
+  snapshotBusy(): boolean;
   /** Flushes the outbox after an edit (frame items, mark status). */
   flush(): void;
   /** The committed scene may have changed: repaint it. */
@@ -54,6 +58,8 @@ export class FrameController {
   private readonly layer: FrameLayer;
   private readonly markLayer: MarkLayer;
   private frames: readonly Frame[] = [];
+  /** The page `frames` was read from (a snapshot is only stale for that page). */
+  private framesPage: string | null = null;
   private marks: readonly Mark[] = [];
   private mode: BindingMode = "bound";
   private showDone = false;
@@ -69,6 +75,8 @@ export class FrameController {
       preset: (frame, preset) => this.setPreset(frame, preset),
       route: (frame, route) => this.setRoute(frame, route),
       layout: (frame, layout) => this.layout(frame, layout),
+      choose: (frame) => this.setChosen(frame),
+      patched: (frame, ok, failed) => this.patched(frame, ok, failed),
     });
     this.markLayer = new MarkLayer(
       marksRoot,
@@ -105,14 +113,29 @@ export class FrameController {
     return this.layer.layoutCount();
   }
 
+  /** Iframes built so far: more than one per frame item means a live site was reloaded for no reason. */
+  get frameBuilds(): number {
+    return this.layer.stats.built;
+  }
+
   /** The page state recipe of each shown frame (a mark whose state differs is dimmed). */
   get states(): readonly string[] {
     return this.frames.map((frame) => this.layer.stateOf(frame.id));
   }
 
-  /** Re-reads the page's frames and marks, then tells each bridge what to watch. */
+  /**
+   * Re-reads the page's frames and marks, then tells each bridge what to watch.
+   *
+   * While a snapshot is half applied the replica's items are incomplete (`begin_snapshot` empties them), so
+   * the same page keeps its live frames and chips: re-reading now would tear the iframes down and reload the
+   * framed site. The snapshot's end triggers another refresh with the complete state.
+   */
   refresh(): readonly Frame[] {
     const page = this.deps.page();
+    if (framesAreStale(page, this.framesPage, this.frames.length, this.deps.snapshotBusy())) {
+      return this.frames;
+    }
+    this.framesPage = page;
     this.frames = page === null ? [] : parseFrames(this.deps.viewer.frames(page));
     this.layer.render(this.frames, this.deps.projects());
     this.refreshMarks();
@@ -219,6 +242,27 @@ export class FrameController {
       return;
     }
     this.edit();
+  }
+
+  /** The owner picked a variant: it becomes the chosen frame of its group (the core un-picks the others). */
+  private setChosen(frame: Frame): void {
+    try {
+      this.deps.core.set_frame_chosen(frame.id, true, Date.now());
+    } catch (error) {
+      this.deps.problem(`variant not chosen: ${String(error)}`);
+      return;
+    }
+    this.edit();
+  }
+
+  /** A patch op the bridge could not apply (bad selector, refused attribute): say which, once. */
+  private patched(frame: Frame, ok: boolean, failed: readonly PatchFailure[]): void {
+    if (ok || failed.length === 0) return;
+    const first = failed[0];
+    const reason = first && first.reason !== "" ? `: ${first.reason}` : "";
+    this.deps.problem(
+      `ghost on ${frame.label || frame.route} has ${failed.length} failed op${failed.length === 1 ? "" : "s"}${reason}`,
+    );
   }
 
   private setRoute(frame: Frame, route: string): void {

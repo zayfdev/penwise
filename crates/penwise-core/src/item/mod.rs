@@ -27,8 +27,9 @@ pub use affine::Affine;
 pub use erase::EraseItem;
 pub use fill::{FillItem, Polygon};
 pub use frame::{
-    FrameItem, FramePreset, FrameSize, FrameSpec, MAX_FRAME_SIDE, MAX_PROJECT_LEN, MAX_ROUTE_LEN,
-    add_frame,
+    FrameItem, FramePreset, FrameSize, FrameSpec, MAX_FRAME_SIDE, MAX_GROUP_LEN, MAX_LABEL_LEN,
+    MAX_PATCH_LEN, MAX_PROJECT_LEN, MAX_ROUTE_LEN, MAX_VARIANTS, VARIANT_GAP_PX, VariantSpec,
+    add_frame, group_frames, set_chosen, set_patch, variant_frames,
 };
 pub use geometry::{DeriveContext, ItemGeometry, RenderBand, RenderKey};
 pub use id::{IdSource, ItemId};

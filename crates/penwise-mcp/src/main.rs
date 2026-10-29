@@ -88,7 +88,7 @@ fn initialize(request: &serde_json::Value) -> serde_json::Value {
         "protocolVersion": version,
         "capabilities": { "tools": { "listChanged": false } },
         "serverInfo": { "name": SERVER_NAME, "version": SERVER_VERSION },
-        "instructions": "Penwise: the user's pen tablet page. Use penwise_page_png to look at what they drew; on linked projects use penwise_marks to read marks on a frame (kind, colour, handwriting, element, source lines, crops).",
+        "instructions": "Penwise: the user's pen tablet page. Use penwise_page_png to look at what they drew; on linked projects use penwise_marks to read marks on a frame (kind, colour, handwriting, element, source lines, crops). Before editing code, show a change with penwise_ghost or propose 2-4 options with penwise_variants, then read the owner's pick with penwise_choice.",
     })
 }
 

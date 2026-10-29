@@ -8,9 +8,11 @@
  *        {t:"pw:hit", id, key, selector, rect}                 in answer to a hit request
  *        {t:"pw:route", route}                                 when the location changes
  *        {t:"pw:replayed", state, ok}                          in answer to a replay request
+ *        {t:"pw:patched", ok, failed:[{index, reason}]}        after a patch apply/revert
  *   in:  {t:"pw:hit?", id, x, y}                               x/y are viewport CSS px
  *        {t:"pw:watch", keys:[...]}                            replace the watched element keys
  *        {t:"pw:replay", state}                                replay a recorded click recipe
+ *        {t:"pw:patch", patch, on}                             on=true applies, on=false reverts
  *        {t:"pw:scrollTo", x, y}
  *        {t:"pw:navigate", route}                              same-origin path; a full navigation
  *
@@ -26,6 +28,12 @@
  * A step disappears again when its toggle returns to the value it had before, so closing the menu resets the
  * recipe to "". Replay clicks the recorded selectors in order on the current route and reports whether the page
  * ended up in that state.
+ *
+ * A patch (`pw:patch`) is `{css, dom:[{op, selector, html?, name?, value?}]}`: the CSS goes into one
+ * `<style data-pw-patch>`, the ops run against every element their selector matches, and unmatched or invalid
+ * selectors come back in `failed` with their index. `on=false` restores the pre-patch DOM exactly (placeholders
+ * for removed elements, recorded attributes/classes/text). The patch is not stored: the host re-sends it after
+ * every `pw:hello`/load, and the layout and keys keep working on the patched DOM.
  *
  * The scroll position is saved per `location.pathname` in session storage before a reload/`pagehide` and restored
  * after load, so the owner stays where they were when the code changes.
@@ -60,6 +68,10 @@
 
   var state = "";
   var stateSteps = [];
+
+  var PATCH_ATTR = "data-pw-patch";
+  var patchUndo = [];
+  var patchActive = false;
 
   function send(message) {
     try {
@@ -712,6 +724,281 @@
     }, 0);
   }
 
+  /* ------------------------------------------------------------------ patches */
+
+  // The owner's frame shows a patch (a ghost or a variant) without touching the project's files. Everything is
+  // recorded so `on=false` puts the DOM back exactly: removed/replaced elements wait behind a comment
+  // placeholder, inserted nodes are references we remove again, and attribute/class/text changes carry their
+  // old value. The CSS lives in one `<style data-pw-patch>`; `textContent` means it can never escape the tag.
+
+  var FORBIDDEN_TAGS = { script: 1, iframe: 1, object: 1, embed: 1 };
+
+  // `javascript:` with whitespace, controls and character references resolved (the server strips the same).
+  function dangerousValue(value) {
+    var text = String(value).replace(/&#(x?)([0-9a-f]+);?/gi, function (match, hex, digits) {
+      var code = parseInt(digits, hex ? 16 : 10);
+      return isFinite(code) ? String.fromCharCode(code) : match;
+    });
+    text = text.replace(/[\s\u0000-\u001f]/g, "").toLowerCase();
+    return text.indexOf("javascript:") === 0;
+  }
+
+  // Removes forbidden elements and attributes from a parsed subtree, in place.
+  function scrub(node) {
+    if (!node) return;
+    if (node.nodeType === 1) {
+      var attributes = node.attributes;
+      for (var i = attributes.length - 1; i >= 0; i -= 1) {
+        var attribute = attributes[i];
+        var name = attribute.name.toLowerCase();
+        if (name.indexOf("on") === 0 || dangerousValue(attribute.value)) {
+          node.removeAttribute(attribute.name);
+        }
+      }
+    }
+    var child = node.firstChild;
+    while (child) {
+      var next = child.nextSibling;
+      if (child.nodeType === 1 && FORBIDDEN_TAGS[child.tagName.toLowerCase()] === 1) {
+        node.removeChild(child);
+      } else {
+        scrub(child);
+      }
+      child = next;
+    }
+  }
+
+  // Patch HTML as detached nodes: `template` parses fragments without running scripts, and never loads an
+  // image or an iframe before we have scrubbed it (the fragment is inert until inserted).
+  function fragment(html) {
+    var template = document.createElement("template");
+    if (template.content) {
+      template.innerHTML = String(html);
+      scrub(template.content);
+      return Array.prototype.slice.call(template.content.childNodes);
+    }
+    var doc = document.implementation.createHTMLDocument("");
+    doc.body.innerHTML = String(html);
+    scrub(doc.body);
+    var nodes = [];
+    while (doc.body.firstChild) nodes.push(doc.body.removeChild(doc.body.firstChild));
+    return nodes;
+  }
+
+  function insertNodes(parent, nodes, before) {
+    for (var i = 0; i < nodes.length; i += 1) {
+      parent.insertBefore(nodes[i], before || null);
+    }
+  }
+
+  function patchStyle() {
+    return document.querySelector("style[" + PATCH_ATTR + "]");
+  }
+
+  function removePatchStyle() {
+    var style = patchStyle();
+    if (style && style.parentNode) style.parentNode.removeChild(style);
+  }
+
+  // The node an op's selector must find; null (reported) for a bad or unmatched selector.
+  function queryOrFail(selector, index, failed) {
+    if (typeof selector !== "string" || !selector) {
+      if (selector !== undefined) failed.push({ index: index, reason: "bad selector" });
+      return null;
+    }
+    var matches;
+    try {
+      matches = document.querySelectorAll(selector);
+    } catch (_) {
+      failed.push({ index: index, reason: "bad selector" });
+      return null;
+    }
+    if (!matches.length) {
+      failed.push({ index: index, reason: "no match" });
+      return null;
+    }
+    return matches;
+  }
+
+  function replaceWithNodes(element, nodes) {
+    var parent = element.parentNode;
+    if (!parent) return false;
+    var placeholder = document.createComment("pw-patch");
+    parent.insertBefore(placeholder, element);
+    insertNodes(parent, nodes, placeholder);
+    parent.removeChild(element);
+    patchUndo.push({
+      kind: "removed",
+      element: element,
+      placeholder: placeholder,
+      inserted: nodes
+    });
+    return true;
+  }
+
+  function applyOne(op, element, index, failed) {
+    if (!element || element.nodeType !== 1) return;
+    var html = op.html == null ? "" : op.html;
+    var nodes;
+    switch (op.op) {
+      case "replace":
+        nodes = fragment(html);
+        if (!replaceWithNodes(element, nodes)) failed.push({ index: index, reason: "no parent" });
+        return;
+      case "remove":
+        if (!replaceWithNodes(element, [])) failed.push({ index: index, reason: "no parent" });
+        return;
+      case "insert_before":
+        nodes = fragment(html);
+        insertNodes(element.parentNode, nodes, element);
+        patchUndo.push({ kind: "inserted", nodes: nodes });
+        return;
+      case "insert_after":
+        nodes = fragment(html);
+        insertNodes(element.parentNode, nodes, element.nextSibling);
+        patchUndo.push({ kind: "inserted", nodes: nodes });
+        return;
+      case "append":
+        nodes = fragment(html);
+        insertNodes(element, nodes, null);
+        patchUndo.push({ kind: "inserted", nodes: nodes });
+        return;
+      case "prepend":
+        nodes = fragment(html);
+        insertNodes(element, nodes, element.firstChild);
+        patchUndo.push({ kind: "inserted", nodes: nodes });
+        return;
+      case "set_attr":
+        if (typeof op.name !== "string" || !op.name) {
+          failed.push({ index: index, reason: "bad attribute" });
+          return;
+        }
+        if (op.name.toLowerCase().indexOf("on") === 0 || dangerousValue(op.value == null ? "" : op.value)) {
+          return;
+        }
+        patchUndo.push({ kind: "attr", element: element, name: op.name, value: element.getAttribute(op.name) });
+        element.setAttribute(op.name, op.value == null ? "" : String(op.value));
+        return;
+      case "remove_attr":
+        if (typeof op.name !== "string" || !op.name) {
+          failed.push({ index: index, reason: "bad attribute" });
+          return;
+        }
+        patchUndo.push({ kind: "attr", element: element, name: op.name, value: element.getAttribute(op.name) });
+        element.removeAttribute(op.name);
+        return;
+      case "set_text":
+        patchUndo.push({ kind: "text", element: element, text: element.textContent });
+        element.textContent = op.value == null ? "" : String(op.value);
+        return;
+      case "add_class":
+      case "remove_class":
+        if (typeof op.name !== "string" || !op.name || /\s/.test(op.name)) {
+          failed.push({ index: index, reason: "bad class" });
+          return;
+        }
+        patchUndo.push({
+          kind: "class",
+          element: element,
+          name: op.name,
+          had: element.classList.contains(op.name)
+        });
+        if (op.op === "add_class") element.classList.add(op.name);
+        else element.classList.remove(op.name);
+        return;
+      default:
+        failed.push({ index: index, reason: "unknown op" });
+    }
+  }
+
+  function applyOps(dom, failed) {
+    if (!dom || typeof dom.length !== "number") return;
+    for (var i = 0; i < dom.length; i += 1) {
+      var op = dom[i];
+      if (!op || typeof op !== "object") {
+        failed.push({ index: i, reason: "bad op" });
+        continue;
+      }
+      var matches = queryOrFail(op.selector, i, failed);
+      if (!matches) continue;
+      for (var j = 0; j < matches.length; j += 1) applyOne(op, matches[j], i, failed);
+    }
+  }
+
+  function undoOne(record) {
+    if (record.kind === "removed") {
+      for (var i = 0; i < record.inserted.length; i += 1) {
+        var inserted = record.inserted[i];
+        if (inserted.parentNode) inserted.parentNode.removeChild(inserted);
+      }
+      var parent = record.placeholder.parentNode;
+      if (parent) parent.replaceChild(record.element, record.placeholder);
+    } else if (record.kind === "inserted") {
+      for (var j = 0; j < record.nodes.length; j += 1) {
+        var node = record.nodes[j];
+        if (node.parentNode) node.parentNode.removeChild(node);
+      }
+    } else if (record.kind === "attr") {
+      if (record.value === null) record.element.removeAttribute(record.name);
+      else record.element.setAttribute(record.name, record.value);
+    } else if (record.kind === "text") {
+      record.element.textContent = record.text;
+    } else if (record.kind === "class") {
+      if (record.had) record.element.classList.add(record.name);
+      else record.element.classList.remove(record.name);
+    }
+  }
+
+  // Puts the DOM back exactly as it was before the patch (reverse order, so nesting unwinds).
+  function revertPatch() {
+    for (var i = patchUndo.length - 1; i >= 0; i -= 1) {
+      try {
+        undoOne(patchUndo[i]);
+      } catch (_) {
+        /* the page moved the node itself; keep reverting the rest */
+      }
+    }
+    patchUndo = [];
+    removePatchStyle();
+    patchActive = false;
+    scheduleLayout();
+  }
+
+  // Applies `patch` (`on` false reverts). Returns `{ok, failed}` synchronously, which the server's headless
+  // validation reads; the host hears the same as `{t:"pw:patched"}`.
+  function applyPatch(patch, on) {
+    revertPatch();
+    var failed = [];
+    if (on === false) return { ok: true, failed: failed };
+    if (typeof patch === "string") {
+      try {
+        patch = JSON.parse(patch);
+      } catch (_) {
+        patch = null;
+      }
+    }
+    if (!patch || typeof patch !== "object") {
+      failed.push({ index: 0, reason: "bad patch" });
+      return { ok: false, failed: failed };
+    }
+    if (typeof patch.css === "string" && patch.css && document.head) {
+      var style = document.createElement("style");
+      style.setAttribute(PATCH_ATTR, "");
+      style.textContent = patch.css;
+      document.head.appendChild(style);
+    }
+    applyOps(patch.dom, failed);
+    patchActive = true;
+    scheduleLayout();
+    return { ok: failed.length === 0, failed: failed };
+  }
+
+  function patchMessage(patch, on) {
+    var result = applyPatch(patch, on);
+    send({ t: "pw:patched", ok: result.ok, failed: result.failed });
+    return result;
+  }
+
   /* ------------------------------------------------------------------ hits and messages */
 
   function hit(id, x, y) {
@@ -745,6 +1032,8 @@
       watch(data.keys);
     } else if (data.t === "pw:replay") {
       replay(data.state);
+    } else if (data.t === "pw:patch") {
+      patchMessage(data.patch, data.on !== false);
     } else if (data.t === "pw:scrollTo") {
       window.scrollTo(Number(data.x) || 0, Number(data.y) || 0);
       scheduleScroll();
@@ -768,6 +1057,15 @@
     selectorOf: selectorOf,
     stateOf: function () {
       return state;
+    },
+    // The server's headless pages apply a ghost/variant patch directly and read the same `{ok, failed}` a host
+    // gets over `pw:patched`.
+    applyPatch: function (patch, on) {
+      return applyPatch(patch, on);
+    },
+    revertPatch: revertPatch,
+    patched: function () {
+      return patchActive;
     }
   };
 

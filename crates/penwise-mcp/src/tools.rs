@@ -223,6 +223,68 @@ const TOOLS: &str = r##"{
         },
         "required": ["id", "status"]
       }
+    },
+    {
+      "name": "penwise_ghost",
+      "description": "Show a temporary patch live on a frame before editing any file: CSS plus simple DOM ops (no JS). Reports ops whose selector matched nothing. `clear` removes the ghost.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "frame": { "type": "string", "description": "Frame item id from penwise_frame_open." },
+          "patch": {
+            "type": "object",
+            "description": "P1 patch: {css, dom: [{op, selector, html?, name?, value?}]}, up to 64 KiB. Ops: replace, remove, insert_before, insert_after, append, prepend, set_attr, remove_attr, set_text, add_class, remove_class.",
+            "properties": {
+              "css": { "type": "string", "description": "Stylesheet applied as one <style data-pw-patch>." },
+              "dom": { "type": "array", "items": { "type": "object" } }
+            }
+          },
+          "clear": { "type": "boolean", "description": "Remove the frame's patch instead of setting one." }
+        },
+        "required": ["frame"]
+      }
+    },
+    {
+      "name": "penwise_variants",
+      "description": "Propose 2–4 variants as frames beside the base frame, each with a label and its own patch. The owner taps one on the tablet or PC; read it back with penwise_choice.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "frame": { "type": "string", "description": "The base frame's item id." },
+          "variants": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 4,
+            "items": {
+              "type": "object",
+              "properties": {
+                "label": { "type": "string", "description": "Short label the owner sees (≤ 80 characters)." },
+                "patch": { "type": "object", "description": "The variant's P1 patch." }
+              },
+              "required": ["label", "patch"]
+            }
+          }
+        },
+        "required": ["frame", "variants"]
+      }
+    },
+    {
+      "name": "penwise_choice",
+      "description": "Which variant the owner picked (or null), the frames of the group, and the mark bundles they drew on the variants, with crop images.",
+      "inputSchema": {
+        "type": "object",
+        "properties": { "group": { "type": "string", "description": "Group id returned by penwise_variants." } },
+        "required": ["group"]
+      }
+    },
+    {
+      "name": "penwise_variants_clear",
+      "description": "Remove a variant group's frames. The owner's marks on them are kept as done.",
+      "inputSchema": {
+        "type": "object",
+        "properties": { "group": { "type": "string", "description": "Group id returned by penwise_variants." } },
+        "required": ["group"]
+      }
     }
   ]
 }"##;

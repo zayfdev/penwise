@@ -2,11 +2,12 @@
 //!
 //! Owner: slice e (M2).
 //!
-//! Layout v3 (conventions as in [`super::item`]; v1/v2 blobs still decode, they just cannot carry the frame
-//! fields (v2) or the mark fields and v2 item bodies (v3)):
+//! Layout v4 (conventions as in [`super::item`]; v1–v3 blobs still decode, they just cannot carry the newer
+//! fields (frame fields in v2, mark fields and v2 item bodies in v3, frame patch/label/group/chosen and v3 item
+//! bodies in v4)):
 //! ```text
 //! magic     4   b"PWED"
-//! version   u16 = 3
+//! version   u16 = 4
 //! body          tag u8: 0 Add | 1 Delete | 2 Update
 //!   Add         item body (item::encode_item_body)
 //!   Delete      id
@@ -16,10 +17,12 @@
 //!               | ShapeSize f32×2 | Text len uv + UTF-8 | TextBox f32×2 | FontSize f32
 //!               | FramePreset preset u8 + css_w uv + css_h uv | FrameRoute len uv + UTF-8
 //!               | MarkStatus status u8 | MarkStrokes count uv + ids
+//!               | FramePatch flag u8 [+ len uv + UTF-8] | FrameLabel len uv + UTF-8
+//!               | FrameGroup flag u8 [+ len uv + UTF-8] | FrameChosen u8 0/1
 //! trailer   u64 FNV-1a 64
 //! ```
-//! `Add` carries an item body at the item layout the version implies (v1/v2 → item v1, v3 → item v2).
-//! Mask bits beyond the version's known fields are `InvalidValue` (a newer writer must bump the version).
+//! `Add` carries an item body at the item layout the version implies (v1/v2 → item v1, v3 → item v2, v4 → item
+//! v3). Mask bits beyond the version's known fields are `InvalidValue` (a newer writer must bump the version).
 
 use super::error::CodecError;
 use super::item::fields::{
@@ -27,7 +30,9 @@ use super::item::fields::{
     read_polygons, read_shape_kind, read_str, read_z, write_affine, write_flag, write_id,
     write_len, write_opt_color, write_paint, write_polygons, write_shape_kind, write_str, write_z,
 };
-use super::item::{ITEM_VERSION, ITEM_VERSION_V1, decode_item_body_at, encode_item_body_at};
+use super::item::{
+    ITEM_VERSION, ITEM_VERSION_V1, ITEM_VERSION_V2, decode_item_body_at, encode_item_body_at,
+};
 use super::params_fields::{invalid, write_f32s};
 use super::stroke::{decode_params, encode_params};
 use super::varint::{Reader, write_uv32};
@@ -38,10 +43,12 @@ use crate::marks::MarkStatus;
 
 /// Edit blob magic.
 pub const EDIT_MAGIC: [u8; 4] = *b"PWED";
-/// Version this build needs for the mark fields (mask bits 15 and 16) and for `Add` blobs (item layout v2).
-/// Edits that need neither are written at the smallest version that carries them, so old blobs re-encode byte
-/// for byte and older readers keep working.
-pub const EDIT_VERSION: u16 = 3;
+/// Version this build needs for the frame patch/label/group/chosen fields (mask bits 17–20) and `Add` blobs
+/// carrying frame variants (item layout v3). Edits that need less are written at the smallest version that
+/// carries them, so old blobs re-encode byte for byte and older readers keep working.
+pub const EDIT_VERSION: u16 = 4;
+/// Mark fields (mask bits 15 and 16), item layout v2.
+pub const EDIT_VERSION_V3: u16 = 3;
 /// Frame fields (`FramePreset`/`FrameRoute`, mask bits 13 and 14), item layout v1.
 pub const EDIT_VERSION_V2: u16 = 2;
 /// The baseline version: no frame fields, mask bits `< 13`.
@@ -51,7 +58,9 @@ const TAG_ADD: u8 = 0;
 const TAG_DELETE: u8 = 1;
 const TAG_UPDATE: u8 = 2;
 /// Number of known fields: mask bits `0..FIELD_COUNT` (bit = `Field::code`).
-const FIELD_COUNT: u32 = 17;
+const FIELD_COUNT: u32 = 21;
+/// Known fields of [`EDIT_VERSION_V3`].
+const FIELD_COUNT_V3: u32 = 17;
 /// Known fields of [`EDIT_VERSION_V2`].
 const FIELD_COUNT_V2: u32 = 15;
 /// Known fields of [`EDIT_VERSION_V1`].
@@ -66,13 +75,14 @@ pub fn encode_edit(edit: &Edit, out: &mut Vec<u8>) {
     write_trailer(out, start);
 }
 
-/// The smallest version that carries `edit`: an `Add` of an item that needs item layout v2 (a bound stroke or a
-/// mark) is v3 and every other `Add`/`Delete` is v1; an `Update` needs v3 / v2 / v1 by its highest set field
-/// code.
+/// The smallest version that carries `edit`: an `Add` of an item that needs item layout v3 (a frame variant) is
+/// v4, of one that needs v2 (a bound stroke or a mark) is v3, and every other `Add`/`Delete` is v1; an `Update`
+/// needs v4 / v3 / v2 / v1 by its highest set field code.
 fn version_for(edit: &Edit) -> u16 {
     let Edit::Update { patch, .. } = edit else {
         return match edit {
-            Edit::Add(item) if needs_item_v2(item) => EDIT_VERSION,
+            Edit::Add(item) if needs_item_v3(item) => EDIT_VERSION,
+            Edit::Add(item) if needs_item_v2(item) => EDIT_VERSION_V3,
             _ => EDIT_VERSION_V1,
         };
     };
@@ -82,8 +92,10 @@ fn version_for(edit: &Edit) -> u16 {
         .map(|field| u32::from(field.code()))
         .max()
         .unwrap_or(0);
-    if highest >= FIELD_COUNT_V2 {
+    if highest >= FIELD_COUNT_V3 {
         EDIT_VERSION
+    } else if highest >= FIELD_COUNT_V2 {
+        EDIT_VERSION_V3
     } else if highest >= FIELD_COUNT_V1 {
         EDIT_VERSION_V2
     } else {
@@ -102,11 +114,17 @@ pub fn decode_edit(bytes: &[u8]) -> Result<Edit, CodecError> {
     let version = read_header_any(
         &mut r,
         EDIT_MAGIC,
-        &[EDIT_VERSION_V1, EDIT_VERSION_V2, EDIT_VERSION],
+        &[
+            EDIT_VERSION_V1,
+            EDIT_VERSION_V2,
+            EDIT_VERSION_V3,
+            EDIT_VERSION,
+        ],
     )?;
     let fields = match version {
         EDIT_VERSION_V1 => FIELD_COUNT_V1,
         EDIT_VERSION_V2 => FIELD_COUNT_V2,
+        EDIT_VERSION_V3 => FIELD_COUNT_V3,
         _ => FIELD_COUNT,
     };
     let body = decode_body(&mut r, fields, item_version(version)).map(|edit| (edit, r.position()));
@@ -154,12 +172,26 @@ fn needs_item_v2(item: &crate::item::Item) -> bool {
     }
 }
 
+/// True when `item` cannot be written at item layout v2: a frame with a patch, label, group or chosen flag.
+/// (Marks and bound strokes need only v2.)
+fn needs_item_v3(item: &crate::item::Item) -> bool {
+    match &item.kind {
+        crate::item::ItemKind::Frame(frame) => {
+            frame.patch.is_some()
+                || !frame.label.is_empty()
+                || frame.group.is_some()
+                || frame.chosen
+        }
+        _ => false,
+    }
+}
+
 /// The item layout that version implies for its `Add` bodies.
 fn item_version(version: u16) -> u16 {
-    if version >= EDIT_VERSION {
-        ITEM_VERSION
-    } else {
-        ITEM_VERSION_V1
+    match version {
+        EDIT_VERSION_V1 | EDIT_VERSION_V2 => ITEM_VERSION_V1,
+        EDIT_VERSION_V3 => ITEM_VERSION_V2,
+        _ => ITEM_VERSION,
     }
 }
 
@@ -197,6 +229,10 @@ fn field_mask(p: &ItemPatch) -> u32 {
         p.frame_route.is_some(),
         p.mark_status.is_some(),
         p.mark_strokes.is_some(),
+        p.frame_patch.is_some(),
+        p.frame_label.is_some(),
+        p.frame_group.is_some(),
+        p.frame_chosen.is_some(),
     ];
     (0_u32..).zip(present).fold(
         0,
@@ -261,6 +297,37 @@ fn encode_patch(p: &ItemPatch, out: &mut Vec<u8>) {
             write_id(out, *id);
         }
     }
+    if let Some(v) = &p.frame_patch {
+        write_opt_str(out, v.as_deref());
+    }
+    if let Some(v) = &p.frame_label {
+        write_str(out, v);
+    }
+    if let Some(v) = &p.frame_group {
+        write_opt_str(out, v.as_deref());
+    }
+    if let Some(v) = p.frame_chosen {
+        write_flag(out, v);
+    }
+}
+
+/// `flag u8` + the text when present.
+fn write_opt_str(out: &mut Vec<u8>, text: Option<&str>) {
+    match text {
+        Some(text) => {
+            write_flag(out, true);
+            write_str(out, text);
+        }
+        None => write_flag(out, false),
+    }
+}
+
+fn read_opt_str(r: &mut Reader<'_>, field: &'static str) -> Result<Option<String>, CodecError> {
+    if read_flag(r, field)? {
+        Ok(Some(read_str(r)?))
+    } else {
+        Ok(None)
+    }
 }
 
 fn decode_patch(r: &mut Reader<'_>, fields: u32) -> Result<ItemPatch, CodecError> {
@@ -288,6 +355,14 @@ fn decode_patch(r: &mut Reader<'_>, fields: u32) -> Result<ItemPatch, CodecError
         frame_route: has(14).then(|| read_str(r)).transpose()?,
         mark_status: has(15).then(|| read_mark_status(r)).transpose()?,
         mark_strokes: has(16).then(|| read_ids(r)).transpose()?,
+        frame_patch: has(17)
+            .then(|| read_opt_str(r, "frame.patch flag"))
+            .transpose()?,
+        frame_label: has(18).then(|| read_str(r)).transpose()?,
+        frame_group: has(19)
+            .then(|| read_opt_str(r, "frame.group flag"))
+            .transpose()?,
+        frame_chosen: has(20).then(|| read_flag(r, "frame.chosen")).transpose()?,
     })
 }
 

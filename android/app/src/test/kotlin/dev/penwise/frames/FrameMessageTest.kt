@@ -33,6 +33,18 @@ class FrameMessageTest {
     }
 
     @Test
+    fun patched_reports_the_outcome_and_the_failed_ops() {
+        val failed =
+            """{"t":"pw:patched","ok":false,"failed":[{"index":1,"reason":"no match"},""" +
+                """{"index":3,"reason":"no match"}]}"""
+        assertEquals(FrameMessage.Patched(ok = false, failed = 2), FrameMessages.parse(failed))
+        assertEquals(
+            FrameMessage.Patched(ok = true, failed = 0),
+            FrameMessages.parse("""{"t":"pw:patched","ok":true}"""),
+        )
+    }
+
+    @Test
     fun unknown_types_are_dropped() {
         assertNull(FrameMessages.parse("""{"t":"pw:patchApplied"}"""))
         assertNull(FrameMessages.parse("""{"url":"http://127.0.0.1:17421/"}"""))

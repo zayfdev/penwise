@@ -57,6 +57,12 @@ sealed interface FrameMessage {
         val state: String,
         val ok: Boolean,
     ) : FrameMessage
+
+    /** `pw:patched`, the answer to a `pw:patch`: whether every op applied, and how many did not. */
+    data class Patched(
+        val ok: Boolean,
+        val failed: Int,
+    ) : FrameMessage
 }
 
 /**
@@ -83,8 +89,15 @@ internal object FrameMessages {
             "pw:hit" -> hit(message)
             "pw:layout" -> layout(message)
             "pw:replayed" -> FrameMessage.Replayed(message.optString("state"), message.optBoolean("ok"))
+            "pw:patched" -> patched(message)
             else -> null
         }
+
+    private fun patched(message: JSONObject) =
+        FrameMessage.Patched(
+            ok = message.optBoolean("ok", false),
+            failed = message.optJSONArray("failed")?.length() ?: 0,
+        )
 
     private fun hello(message: JSONObject) =
         FrameMessage.Hello(

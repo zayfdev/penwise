@@ -1,6 +1,7 @@
 //! Browser drawing: pointer conversion, live deltas, the committed `Add`, the `PushOps` gate and own undo/redo.
 #![allow(
     clippy::unwrap_used,
+    clippy::expect_used,
     clippy::panic,
     reason = "test harness: failures are reported by panicking"
 )]
@@ -567,4 +568,135 @@ fn frames_are_placed_listed_restyled_and_undone() {
     assert_eq!(frame["preset"], "phone");
     assert_eq!(viewer.undo(&page, NOW_F).unwrap(), 1);
     assert_eq!(viewer.frames(&page).unwrap(), "[]", "the Add is undone");
+}
+
+/// Every live frame of `page` as JSON.
+fn frame_list(viewer: &Viewer, page: &str) -> Vec<serde_json::Value> {
+    serde_json::from_str(&viewer.frames(page).unwrap()).expect("json array")
+}
+
+/// Whether frame `id` is the owner's pick, by its 26-char id text.
+fn is_chosen(viewer: &Viewer, page: &str, id: &str) -> bool {
+    frame_list(viewer, page)
+        .into_iter()
+        .find(|frame| frame["id"] == serde_json::json!(id))
+        .expect("frame")["chosen"]
+        .as_bool()
+        .expect("bool")
+}
+
+/// A variant frame item as the agent's server would add it.
+fn variant_item(n: u64, label: &str, css: &str) -> penwise_core::item::Item {
+    use penwise_core::item::{Affine, FrameItem, FramePreset, Item, ItemKind, Layer};
+    use penwise_proto::ItemRef;
+
+    let mut frame = FrameItem::new(
+        "site".to_owned(),
+        "/".to_owned(),
+        FramePreset::Phone,
+        390,
+        844,
+    );
+    frame.patch = Some(format!(r#"{{"css":"{css}"}}"#));
+    label.clone_into(&mut frame.label);
+    frame.group = Some("grp-1".to_owned());
+    Item {
+        id: ItemRef::from_parts(NOW, u128::from(n)).into(),
+        layer: Layer::Ink,
+        z: i64::try_from(n).unwrap() << 16,
+        transform: Affine::translate(530.0 + 430.0 * f32::from(u8::try_from(n - 3).unwrap()), 0.0),
+        kind: ItemKind::Frame(frame),
+    }
+}
+
+/// M4/P2: variant frames expose patch (as an object), label, group and chosen, and the pick un-chooses the
+/// group's other frames in one local edit batch.
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+fn variant_frames_expose_their_fields_and_the_owner_picks_one() {
+    use common::item_op;
+    use penwise_proto::ItemRef;
+
+    let (mut viewer, page) = ready();
+    let base = viewer
+        .add_frame(
+            &page,
+            r#"{"project":"site","route":"/","preset":"phone","x":100,"y":0}"#,
+            NOW_F,
+        )
+        .unwrap();
+    let plain = frame_list(&viewer, &page).remove(0);
+    assert_eq!(plain["patch"], serde_json::Value::Null);
+    assert_eq!(plain["label"], "");
+    assert_eq!(plain["group"], serde_json::Value::Null);
+    assert_eq!(plain["chosen"], false);
+
+    let (a, b) = (
+        variant_item(3, "A", "h1{color:red}"),
+        variant_item(4, "B", "h1{color:blue}"),
+    );
+    let (a_id, b_id) = (
+        ItemRef::from(a.id).to_string(),
+        ItemRef::from(b.id).to_string(),
+    );
+    let mut clock = HlcClock::new(device(1));
+    let ops: Vec<SeqOp> = [a, b]
+        .into_iter()
+        .enumerate()
+        .map(|(i, item)| {
+            let seq = u64::try_from(i).unwrap() + 11;
+            SeqOp {
+                seq: u64::try_from(i).unwrap() + 3,
+                op: item_op(&mut clock, NOW, seq, page_id(2), Edit::Add(item)),
+            }
+        })
+        .collect();
+    let got = send(
+        &mut viewer,
+        &ServerMsg::OpsSince {
+            from_seq: 2,
+            upto_seq: 3,
+            ops,
+            head_seq: 3,
+            more: false,
+        },
+    );
+    assert_eq!(got.apply_errors, 0);
+
+    let listed = frame_list(&viewer, &page);
+    assert_eq!(listed.len(), 3);
+    let variant = listed
+        .iter()
+        .find(|frame| frame["id"] == serde_json::json!(a_id))
+        .expect("variant A");
+    assert_eq!(variant["label"], "A");
+    assert_eq!(variant["group"], "grp-1");
+    assert_eq!(variant["chosen"], false);
+    assert_eq!(variant["patch"]["css"], "h1{color:red}");
+
+    let pending = viewer.pending_ops();
+    viewer.set_frame_chosen(&a_id, true, NOW_F + 10.0).unwrap();
+    assert_eq!(viewer.pending_ops(), pending + 1, "one Update op");
+    assert!(is_chosen(&viewer, &page, &a_id));
+
+    let pending = viewer.pending_ops();
+    viewer.set_frame_chosen(&b_id, true, NOW_F + 20.0).unwrap();
+    assert!(!is_chosen(&viewer, &page, &a_id), "A is un-chosen");
+    assert!(is_chosen(&viewer, &page, &b_id));
+    assert!(
+        viewer.pending_ops() > pending,
+        "the pick and the un-choice are queued"
+    );
+
+    // Unchanged, ungrouped and unknown ids push nothing.
+    let pending = viewer.pending_ops();
+    for id in [b_id.clone(), base, ItemRef::from_parts(NOW, 9).to_string()] {
+        viewer.set_frame_chosen(&id, true, NOW_F + 30.0).unwrap();
+    }
+    assert_eq!(viewer.pending_ops(), pending);
+
+    // Undo walks the pick back: B un-picked and A picked again in one step.
+    assert_eq!(viewer.undo(&page, NOW_F + 40.0).unwrap(), 2);
+    assert!(is_chosen(&viewer, &page, &a_id));
+    assert!(!is_chosen(&viewer, &page, &b_id));
 }

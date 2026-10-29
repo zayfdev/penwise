@@ -42,6 +42,9 @@
     <string name="frame_reload">Reload</string>
     <string name="frame_bind_element">Element</string>
     <string name="frame_bind_area">Area</string>
+    <string name="frame_ghost">Ghost</string>
+    <string name="frame_variant">Variant</string>
+    <string name="frame_use_this">Use this</string>
     <string name="drawer_marks">Marks</string>
     <string name="marks_show_done">Show done</string>
     <string name="mark_action_done">Done</string>
@@ -51,6 +54,27 @@
     <string name="mark_status_seen">Seen mark</string>
     <string name="mark_status_done">Done mark</string>
     <string name="mark_status_reopened">Reopened mark</string>
+    <string name="marks_guide_title">Marks guide</string>
+    <string name="mark_guide_circle">Circle</string>
+    <string name="mark_guide_circle_meaning">Look here (focus)</string>
+    <string name="mark_guide_arrow">Arrow</string>
+    <string name="mark_guide_arrow_meaning">Move this there (tail = what, head = where)</string>
+    <string name="mark_guide_cross">Cross</string>
+    <string name="mark_guide_cross_meaning">Remove</string>
+    <string name="mark_guide_wavy">Wavy line</string>
+    <string name="mark_guide_wavy_meaning">Feels off (the agent asks or proposes)</string>
+    <string name="mark_guide_box">Box in empty space</string>
+    <string name="mark_guide_box_meaning">New thing here (contents = sketch)</string>
+    <string name="mark_guide_strike">Line through text</string>
+    <string name="mark_guide_strike_meaning">Change this text (handwriting nearby = the new text)</string>
+    <string name="mark_guide_handwriting">Handwriting</string>
+    <string name="mark_guide_handwriting_meaning">Read freely by the agent</string>
+    <string name="mark_colour_red">Red ink</string>
+    <string name="mark_colour_red_meaning">Problem</string>
+    <string name="mark_colour_blue">Blue ink</string>
+    <string name="mark_colour_blue_meaning">Idea</string>
+    <string name="mark_colour_green">Green ink</string>
+    <string name="mark_colour_green_meaning">Good, keep</string>
     <string name="clear_page_title">Clear this page?</string>
     <string name="clear_page_message">All ink on this page is removed. Undo brings it back; the server also keeps the history.</string>
     <string name="tool_preset_color">Auto</string>

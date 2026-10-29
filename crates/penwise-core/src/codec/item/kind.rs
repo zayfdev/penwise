@@ -63,6 +63,9 @@ pub(super) fn encode_kind(kind: &ItemKind, version: u16, out: &mut Vec<u8>) {
             write_uv32(out, frame.css_h);
             write_str(out, &frame.project);
             write_str(out, &frame.route);
+            if version >= 3 {
+                encode_frame_variant(frame, out);
+            }
         }
         ItemKind::Mark(mark) => {
             write_id(out, mark.frame);
@@ -122,13 +125,11 @@ pub(super) fn decode_kind(
             let css_h = r.uv32()?;
             let project = read_str(r)?;
             let route = read_str(r)?;
-            ItemKind::Frame(FrameItem {
-                project,
-                route,
-                preset,
-                css_w,
-                css_h,
-            })
+            let mut frame = FrameItem::new(project, route, preset, css_w, css_h);
+            if version >= 3 {
+                decode_frame_variant(r, &mut frame)?;
+            }
+            ItemKind::Frame(frame)
         }
         ItemKindTag::Mark => {
             let frame = read_id(r)?;
@@ -149,6 +150,43 @@ pub(super) fn decode_kind(
             })
         }
     })
+}
+
+/// v3 frame fields: `patch flag u8 [+ len uv + UTF-8]; label (len uv + UTF-8); group flag u8 [+ len uv +
+/// UTF-8]; chosen flag u8`.
+fn encode_frame_variant(frame: &FrameItem, out: &mut Vec<u8>) {
+    match &frame.patch {
+        Some(patch) => {
+            write_flag(out, true);
+            write_str(out, patch);
+        }
+        None => write_flag(out, false),
+    }
+    write_str(out, &frame.label);
+    match &frame.group {
+        Some(group) => {
+            write_flag(out, true);
+            write_str(out, group);
+        }
+        None => write_flag(out, false),
+    }
+    write_flag(out, frame.chosen);
+}
+
+fn decode_frame_variant(r: &mut Reader<'_>, frame: &mut FrameItem) -> Result<(), CodecError> {
+    frame.patch = if read_flag(r, "frame.patch flag")? {
+        Some(read_str(r)?)
+    } else {
+        None
+    };
+    frame.label = read_str(r)?;
+    frame.group = if read_flag(r, "frame.group flag")? {
+        Some(read_str(r)?)
+    } else {
+        None
+    };
+    frame.chosen = read_flag(r, "frame.chosen")?;
+    Ok(())
 }
 
 fn encode_stroke(stroke: &StrokeItem, version: u16, out: &mut Vec<u8>) {

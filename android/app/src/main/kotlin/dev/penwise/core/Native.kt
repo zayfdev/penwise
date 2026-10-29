@@ -393,7 +393,11 @@ internal object Native {
         nowMs: Long,
     ): ByteArray
 
-    /** Every live frame as JSON: `[{id, project, route, preset, cssW, cssH, rect: [x, y, w, h]}]`, ids as 32 hex. */
+    /**
+     * Every live frame as JSON:
+     * `[{id, project, route, preset, cssW, cssH, rect: [x, y, w, h], patch, label, group, chosen}]`,
+     * ids as 32 hex. `patch` is the P1 patch as an object (or `null`), `group` a variant group id (or `null`).
+     */
     external fun sceneFrames(handle: Long): String
 
     /** Places a frame from `{project, route, preset, cssW?, cssH?, x, y}` on the ink layer. */
@@ -420,6 +424,18 @@ internal object Native {
         handle: Long,
         id: ByteArray,
         route: String,
+        core: Long,
+        nowMs: Long,
+    ): ByteArray
+
+    /**
+     * Marks variant frame [id] as the owner's pick (or un-marks it). Choosing one un-chooses the other frames
+     * of its group in the same edit, so one call is one undo step.
+     */
+    external fun sceneSetFrameChosen(
+        handle: Long,
+        id: ByteArray,
+        chosen: Boolean,
         core: Long,
         nowMs: Long,
     ): ByteArray

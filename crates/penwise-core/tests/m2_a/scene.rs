@@ -32,13 +32,13 @@ fn frame(id: ItemId, z: i64) -> Item {
     let mut it = crate::fixtures::item(
         id,
         z,
-        ItemKind::Frame(FrameItem {
-            project: "portfolio".to_owned(),
-            route: "/".to_owned(),
-            preset: FramePreset::Phone,
-            css_w: 390,
-            css_h: 844,
-        }),
+        ItemKind::Frame(FrameItem::new(
+            "portfolio".to_owned(),
+            "/".to_owned(),
+            FramePreset::Phone,
+            390,
+            844,
+        )),
     );
     it.transform = Affine::translate(500.0, 0.0);
     it

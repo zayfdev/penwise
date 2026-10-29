@@ -13,6 +13,8 @@ export interface ProbeState {
   readonly head: string;
   /** Frames whose bridge has reported a layout (0 before the injected script is live). */
   readonly layouts: number;
+  /** Iframes built so far: more than the number of frames means a live site was reloaded for no reason. */
+  readonly frameBuilds: number;
   /** Page state recipe of each shown frame (`""` = initial state). */
   readonly states: readonly string[];
   /** Marks of the shown page as the core reports them (`rect` is page coords, `null` when hidden). */

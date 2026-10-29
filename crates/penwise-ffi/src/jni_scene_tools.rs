@@ -370,6 +370,30 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneSetFrameRoute<'local>(
     })
 }
 
+/// Marks variant frame `id` as the owner's pick (or un-marks it); choosing one un-chooses its group's others.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_penwise_core_Native_sceneSetFrameChosen<'local>(
+    mut env: EnvUnowned<'local>,
+    _this: JObject<'local>,
+    handle: jlong,
+    id: JByteArray<'local>,
+    chosen: jboolean,
+    core: jlong,
+    now_ms: jlong,
+) -> JByteArray<'local> {
+    guarded(&mut env, |env| {
+        let id = item_in(env, &id)?;
+        let scene = handle_mut::<SceneHandle>(handle)?;
+        let edits = scene.set_frame_chosen(id, chosen)?;
+        scene.commit_into(
+            handle_mut::<SyncCore>(core)?,
+            &edits,
+            now_ms.cast_unsigned(),
+        )?;
+        bytes_out(env, &encode_edits(&edits))
+    })
+}
+
 /// Commits a stroke drawn on a frame (`bindingJson` = `{"frame":"<32hex>","mode":"bound"|"area","key":"…"?}`);
 /// samples are page coords. Returns the edit blob (the stroke plus its mark add/update).
 #[unsafe(no_mangle)]

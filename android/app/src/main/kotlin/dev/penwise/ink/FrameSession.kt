@@ -167,6 +167,20 @@ internal class FrameSession(
     }
 
     /**
+     * The owner's pick among a variant group (§4 variants, P2): one undoable edit that un-chooses the rest. The chips
+     * follow from the core's next sweep; nothing is sent to the server here.
+     */
+    fun setFrameChosen(
+        id: String,
+        chosen: Boolean,
+    ) {
+        val item = projection.item(id) ?: return
+        if (item.chosen == chosen) return
+        val bytes = Ids.bytes(id) ?: return
+        edit { it.setFrameChosen(bytes, chosen) }
+    }
+
+    /**
      * Feeds one `pw:layout` message into the core (K1). The core repaints through the scene change when the visible
      * output moved; the layout itself is local and never synced.
      */

@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { bindingJson, decodeBridge, isFromFrame, type Layout, layoutJson } from "./bridge-messages";
+import {
+  bindingJson,
+  decodeBridge,
+  isFromFrame,
+  type Layout,
+  layoutJson,
+  patchFor,
+  patchMessage,
+} from "./bridge-messages";
 
 const LAYOUT: Layout = {
   scroll: [0, 120],
@@ -80,18 +88,57 @@ describe("decodeBridge", () => {
     expect(decodeBridge({ t: "pw:hit", key: "v1|src|div" })).toBeNull();
   });
 
+  it("decodes hello and a patch result with its failed ops", () => {
+    expect(decodeBridge({ t: "pw:hello", url: "/" })).toEqual({ t: "hello" });
+    expect(
+      decodeBridge({
+        t: "pw:patched",
+        ok: false,
+        failed: [{ index: 0, reason: "bad selector" }, { index: "x" }, { index: 2 }],
+      }),
+    ).toEqual({
+      t: "patched",
+      ok: false,
+      failed: [
+        { index: 0, reason: "bad selector" },
+        { index: 2, reason: "" },
+      ],
+    });
+    expect(decodeBridge({ t: "pw:patched", ok: true })).toEqual({
+      t: "patched",
+      ok: true,
+      failed: [],
+    });
+  });
+
   it("decodes the replay answer and ignores what the client does not handle", () => {
     expect(decodeBridge({ t: "pw:replayed", state: "click:#menu", ok: true })).toEqual({
       t: "replayed",
       state: "click:#menu",
       ok: true,
     });
-    expect(decodeBridge({ t: "pw:hello", url: "/" })).toBeNull();
     expect(decodeBridge({ t: "pw:scroll", x: 0, y: 0 })).toBeNull();
     expect(decodeBridge({ t: "pw:route", route: "/x" })).toBeNull();
     expect(decodeBridge("not json")).toBeNull();
     expect(decodeBridge(null)).toBeNull();
     expect(decodeBridge([])).toBeNull();
+  });
+});
+
+describe("patch messages", () => {
+  const PATCH = '{"css":"h1{color:red}"}';
+
+  it("applies the patch while the ghost is on and reverts while it is off", () => {
+    expect(patchFor(PATCH, true)).toEqual({ patch: PATCH, on: true });
+    expect(patchFor(PATCH, false)).toEqual({ patch: PATCH, on: false });
+  });
+
+  it("sends nothing for a plain frame", () => {
+    expect(patchFor(null, true)).toBeNull();
+  });
+
+  it("builds the bridge message", () => {
+    expect(patchMessage(PATCH, false)).toEqual({ t: "pw:patch", patch: PATCH, on: false });
   });
 });
 

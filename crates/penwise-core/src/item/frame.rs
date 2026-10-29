@@ -1,14 +1,21 @@
 //! Frame items: a live web page (a linked project's route) shown on the page at a size preset.
 //!
-//! Owner: design-harness M1. Contract: [`docs/design-harness-spec.md`] §4, C1.
+//! Owner: design-harness M1 (item), M4 (patch, label, group, chosen + the edit helpers in [`edits`]).
+//! Contract: [`docs/design-harness-spec.md`] §4, C1/P2.
 //!
 //! A frame's local frame is the page box `[0, css_w] × [0, css_h]` with its top-left at the local origin (like
 //! text and pictures), so the item transform's translation is the frame's page position and the page box is
 //! `css_w × css_h` page units at scale 1. Only `route`, `preset` and the CSS size are mutable after `Add`
-//! ([`crate::edit::Field::FrameRoute`], [`crate::edit::Field::FramePreset`]); the project is fixed.
+//! ([`crate::edit::Field::FrameRoute`], [`crate::edit::Field::FramePreset`]), plus the ghost/variant fields
+//! ([`crate::edit::Field::FramePatch`], `FrameLabel`, `FrameGroup`, `FrameChosen`); the project is fixed.
 
-use super::{Affine, Item, ItemId, Layer};
-use crate::edit::{Edit, EditError};
+use crate::edit::EditError;
+
+mod edits;
+mod item;
+
+pub use edits::{VariantSpec, group_frames, set_chosen, set_patch, variant_frames};
+pub use item::{FrameItem, FrameSpec, add_frame};
 
 /// Longest project id, in bytes.
 pub const MAX_PROJECT_LEN: usize = 64;
@@ -16,6 +23,16 @@ pub const MAX_PROJECT_LEN: usize = 64;
 pub const MAX_ROUTE_LEN: usize = 2048;
 /// Largest CSS side, in px: a frame's page box must fit the codec's ±2²⁰ px position limit.
 pub const MAX_FRAME_SIDE: u32 = 1 << 20;
+/// Longest patch JSON text, in bytes (design harness P1).
+pub const MAX_PATCH_LEN: usize = 64 * 1024;
+/// Longest frame label, in bytes.
+pub const MAX_LABEL_LEN: usize = 80;
+/// Longest variant group id, in bytes.
+pub const MAX_GROUP_LEN: usize = 64;
+/// Gap between a base frame and its first variant, and between variants, in page px.
+pub const VARIANT_GAP_PX: f32 = 40.0;
+/// Most variants one group may hold (design harness P4).
+pub const MAX_VARIANTS: usize = 4;
 
 /// A frame's size preset. Codes are frozen (stored in the item and edit codecs; append only).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -135,149 +152,6 @@ impl FrameSize {
             Err(invalid("frame_size"))
         }
     }
-}
-
-/// A frame item: which project and route to show, at which preset size.
-#[derive(Debug, Clone, PartialEq)]
-pub struct FrameItem {
-    /// Linked project id (`1..=64` bytes).
-    pub project: String,
-    /// Route on that project, path and query (`/...`, `1..=2048` bytes).
-    pub route: String,
-    pub preset: FramePreset,
-    /// Page box width in CSS px (`1 ..= `[`MAX_FRAME_SIDE`]).
-    pub css_w: u32,
-    /// Page box height in CSS px.
-    pub css_h: u32,
-}
-
-impl FrameItem {
-    /// A frame item; the caller is expected to build it from a [`FrameSpec`] or validated JSON.
-    #[must_use]
-    pub fn new(
-        project: String,
-        route: String,
-        preset: FramePreset,
-        css_w: u32,
-        css_h: u32,
-    ) -> Self {
-        Self {
-            project,
-            route,
-            preset,
-            css_w,
-            css_h,
-        }
-    }
-
-    /// The preset and size as one value.
-    #[must_use]
-    pub fn size(&self) -> FrameSize {
-        FrameSize {
-            preset: self.preset,
-            css_w: self.css_w,
-            css_h: self.css_h,
-        }
-    }
-
-    /// Page size in page units, `[css_w, css_h]`.
-    #[must_use]
-    pub fn page_size(&self) -> [f32; 2] {
-        [side_px(self.css_w), side_px(self.css_h)]
-    }
-
-    /// The string fields' invariants: `project` non-empty and ≤ 64 bytes, `route` starts with `/` and is at most
-    /// 2048 bytes, and the size is valid.
-    ///
-    /// # Errors
-    /// [`EditError::InvalidValue`] naming `"frame_project"`, `"frame_route"` or `"frame_size"`.
-    pub fn check(&self) -> Result<(), EditError> {
-        if self.project.is_empty() || self.project.len() > MAX_PROJECT_LEN {
-            return Err(invalid("frame_project"));
-        }
-        if !self.route.starts_with('/') || self.route.len() > MAX_ROUTE_LEN {
-            return Err(invalid("frame_route"));
-        }
-        self.size().check()
-    }
-}
-
-/// A frame to place on a page: its content, size and page position. The one-call constructor the server and the
-/// clients use (C1).
-#[derive(Debug, Clone, PartialEq)]
-pub struct FrameSpec {
-    pub project: String,
-    pub route: String,
-    pub preset: FramePreset,
-    pub css_w: u32,
-    pub css_h: u32,
-    /// Page position of the frame's top-left corner.
-    pub x: f32,
-    pub y: f32,
-}
-
-impl FrameSpec {
-    /// Resolves `preset` against `css_w`/`css_h` (fixed presets ignore them) and checks the content and
-    /// position.
-    ///
-    /// # Errors
-    /// [`EditError::InvalidValue`] for a bad project, route, size or non-finite position.
-    pub fn new(
-        project: String,
-        route: String,
-        preset: FramePreset,
-        css_w: Option<u32>,
-        css_h: Option<u32>,
-        x: f32,
-        y: f32,
-    ) -> Result<Self, EditError> {
-        let size = FrameSize::resolve(preset, css_w, css_h)?;
-        let frame = FrameItem::new(project, route, size.preset, size.css_w, size.css_h);
-        frame.check()?;
-        if !(x.is_finite() && y.is_finite()) {
-            return Err(invalid("frame_position"));
-        }
-        Ok(Self {
-            project: frame.project,
-            route: frame.route,
-            preset: size.preset,
-            css_w: size.css_w,
-            css_h: size.css_h,
-            x,
-            y,
-        })
-    }
-
-    /// The placed item: identity transform plus a translation to `(x, y)`, so the page box is the CSS size at
-    /// scale 1.
-    #[must_use]
-    pub fn item(&self, id: ItemId, layer: Layer, z: i64) -> Item {
-        Item {
-            id,
-            layer,
-            z,
-            transform: Affine::translate(self.x, self.y),
-            kind: super::ItemKind::Frame(FrameItem::new(
-                self.project.clone(),
-                self.route.clone(),
-                self.preset,
-                self.css_w,
-                self.css_h,
-            )),
-        }
-    }
-
-    /// The `Add` edit placing this frame.
-    #[must_use]
-    pub fn edit(&self, id: ItemId, layer: Layer, z: i64) -> Edit {
-        Edit::Add(self.item(id, layer, z))
-    }
-}
-
-/// [`FrameSpec::edit`] as a free function (the server's one-call path).
-#[must_use]
-pub fn add_frame(spec: &FrameSpec, id: ItemId, layer: Layer, z: i64) -> Edit {
-    spec.edit(id, layer, z)
 }
 
 /// A CSS side as an `f32` page length: exact, because validated sides are ≤ 2²⁰.

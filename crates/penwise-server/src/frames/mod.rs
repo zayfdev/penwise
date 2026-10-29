@@ -13,6 +13,7 @@
 
 mod bridge;
 mod inject;
+pub(crate) mod patch;
 mod proxy;
 pub mod registry;
 mod static_site;

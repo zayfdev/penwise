@@ -12,6 +12,7 @@ export interface Probe {
     pending: number;
     view: { scale: number; originX: number; originY: number };
     layouts: number;
+    frameBuilds: number;
     states: string[];
     marks: {
       id: string;

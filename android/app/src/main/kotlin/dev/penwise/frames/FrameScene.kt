@@ -14,10 +14,19 @@ data class SceneFrame(
     val cssHeight: Int,
     val x: Float,
     val y: Float,
+    /** The ghost/variant patch (P1) as its JSON text, or null when the frame has none. */
+    val patch: String? = null,
+    /** The variant label (`""` when none). */
+    val label: String = "",
+    /** The variant group id, or null for a frame the owner placed themselves. */
+    val group: String? = null,
+    /** The owner picked this variant. */
+    val chosen: Boolean = false,
 )
 
 /**
- * The core's frame list (`sceneFrames`), parsed: `[{"id","project","route","preset","cssW","cssH","rect":[x,y,w,h]}]`,
+ * The core's frame list (`sceneFrames`), parsed:
+ * `[{"id","project","route","preset","cssW","cssH","rect":[x,y,w,h],"patch":{…}|null,"label","group","chosen"}]`,
  * in paint order. Pure JSON through `org.json`, no Android types, so the parse is unit-tested.
  */
 internal object SceneFrames {
@@ -43,8 +52,23 @@ internal object SceneFrames {
             cssHeight = frame.optInt(CSS_H, FramePreset.PHONE.cssHeight),
             x = rect?.optDouble(0)?.toFloat() ?: 0f,
             y = rect?.optDouble(1)?.toFloat() ?: 0f,
+            patch = patch(frame.opt(PATCH)),
+            label = string(frame.opt(LABEL)),
+            group = string(frame.opt(GROUP)).takeIf { it.isNotEmpty() },
+            chosen = frame.optBoolean(CHOSEN, false),
         )
     }
+
+    /** The patch as the JSON text the bridge is sent (the core sends an object; text is accepted too). */
+    private fun patch(value: Any?): String? =
+        when (value) {
+            is JSONObject -> value.toString()
+            is String -> value.takeIf { it.isNotEmpty() }
+            else -> null
+        }
+
+    /** A string the core sent; `null` and non-strings read as empty. */
+    private fun string(value: Any?): String = value as? String ?: ""
 
     private const val ID = "id"
     private const val PROJECT = "project"
@@ -53,6 +77,10 @@ internal object SceneFrames {
     private const val CSS_W = "cssW"
     private const val CSS_H = "cssH"
     private const val RECT = "rect"
+    private const val PATCH = "patch"
+    private const val LABEL = "label"
+    private const val GROUP = "group"
+    private const val CHOSEN = "chosen"
 
     /** A hex item id: 16 bytes. */
     private const val ID_LENGTH = 32

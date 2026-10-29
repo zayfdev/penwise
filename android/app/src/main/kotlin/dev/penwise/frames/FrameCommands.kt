@@ -43,6 +43,14 @@ internal object FrameCommands {
         post(view, JSONObject().put("t", "pw:replay").put("state", state))
     }
 
+    /** The ghost/variant patch decision (P3), as [PatchFeed] built it: `{t:"pw:patch", patch, on}`. */
+    fun patch(
+        view: WebView,
+        message: JSONObject,
+    ) {
+        post(view, message)
+    }
+
     private fun post(
         view: WebView,
         message: JSONObject,

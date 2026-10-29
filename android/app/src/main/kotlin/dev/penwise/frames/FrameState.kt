@@ -6,6 +6,9 @@ package dev.penwise.frames
  * and the canvas sees device px.
  *
  * [url] is the one the WebView loads: the project's own port on the host the tablet syncs with (see [FrameUrls]).
+ *
+ * [patch] is the ghost/variant patch (P1 JSON text) the page applies; [label] and [group] name a variant, and
+ * [chosen] is the owner's pick within its group (the core un-chooses the others).
  */
 data class FrameSpec(
     val id: String,
@@ -17,6 +20,10 @@ data class FrameSpec(
     val y: Float,
     val cssWidth: Int,
     val cssHeight: Int,
+    val patch: String? = null,
+    val label: String = "",
+    val group: String? = null,
+    val chosen: Boolean = false,
 )
 
 /** What the page inside a frame reports through the bridge. */

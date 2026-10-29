@@ -26,6 +26,10 @@ const frame = (over: Partial<Frame> = {}): Frame => ({
   cssH: 844,
   x: 10,
   y: 20,
+  patch: null,
+  label: "",
+  group: null,
+  chosen: false,
   ...over,
 });
 
@@ -88,8 +92,62 @@ describe("parseFrames", () => {
         cssH: 900,
         x: 100,
         y: 200,
+        patch: null,
+        label: "",
+        group: null,
+        chosen: false,
       },
     ]);
+  });
+
+  it("reads a ghost's patch and a variant's label, group and pick", () => {
+    const frames = parseFrames(
+      JSON.stringify([
+        {
+          id: "fr_ghost",
+          project: "prj_a",
+          route: "/",
+          preset: "phone",
+          cssW: 390,
+          cssH: 844,
+          rect: [0, 0, 390, 844],
+          patch: '{"css":"h1{color:red}"}',
+          label: "bold title",
+          group: "grp_1",
+          chosen: true,
+        },
+        {
+          id: "fr_object",
+          project: "prj_a",
+          route: "/",
+          preset: "phone",
+          cssW: 390,
+          cssH: 844,
+          rect: [0, 0, 390, 844],
+          patch: { css: "h1{color:blue}", dom: [] },
+          label: "",
+          group: null,
+          chosen: false,
+        },
+      ]),
+    );
+    expect(frames[0]).toMatchObject({
+      patch: '{"css":"h1{color:red}"}',
+      label: "bold title",
+      group: "grp_1",
+      chosen: true,
+    });
+    // The patch has one textual form in the client, whatever the core JSON carries.
+    expect(frames[1]?.patch).toBe('{"css":"h1{color:blue}","dom":[]}');
+    expect(frames[1]?.group).toBeNull();
+    expect(frames[1]?.label).toBe("");
+  });
+
+  it("treats missing patch/variant fields as a plain frame", () => {
+    const [plain] = parseFrames(
+      JSON.stringify([{ id: "p", project: "x", route: "/", rect: [0, 0, 10, 10] }]),
+    );
+    expect(plain).toMatchObject({ patch: null, label: "", group: null, chosen: false });
   });
 
   it("drops malformed entries instead of failing the page", () => {
@@ -121,6 +179,18 @@ describe("diffFrames", () => {
   it("does not report an unchanged frame", () => {
     const delta = diffFrames([frame()], [frame()]);
     expect(delta).toEqual({ added: [], updated: [], removed: [] });
+  });
+
+  it("reports a patch, label or pick change (the chip and the iframe must follow it)", () => {
+    for (const over of [
+      { patch: '{"css":"h1{color:red}"}' },
+      { label: "bold" },
+      { group: "grp_1" },
+      { chosen: true },
+    ]) {
+      const delta = diffFrames([frame()], [frame(over)]);
+      expect(delta.updated.map((f) => f.id)).toEqual(["fr_1"]);
+    }
   });
 });
 

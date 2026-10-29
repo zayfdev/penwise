@@ -2,12 +2,13 @@
 //!
 //! Owner: slice e (M2).
 //!
-//! Layout v2 (v1 still decodes; v2 adds the stroke binding and the Mark kind; fixed-width fields LE, `f32` =
+//! Layout v3 (v1/v2 still decode; v2 adds the stroke binding and the Mark kind; v3 adds the frame patch,
+//! label, group and chosen fields; fixed-width fields LE, `f32` =
 //! `to_bits()` LE through `float::canon`, must be finite on decode; `uv`/`sv` per `varint`; `id` = 16 raw ULID
 //! bytes; `pt` = point on the 1/16 px grid as `sv x, sv y`, first point of a run absolute, later points deltas):
 //! ```text
 //! magic     4   b"PWIT"
-//! version   u16 = 2
+//! version   u16 = 3
 //! body          see below (also embedded by the edit codec)
 //! trailer   u64 FNV-1a 64 of every preceding byte
 //!
@@ -25,14 +26,16 @@
 //!         ring = count uv + pts
 //! Text    content (len uv + UTF-8); size f32×2; font_size f32; paint; sources count uv + ids
 //! Image   asset 32 raw bytes (SHA-256); size f32×2 (w, h)
-//! Frame   preset u8 (FramePreset::code); css_w uv; css_h uv; project (len uv + UTF-8); route (len uv + UTF-8)
+//! Frame   preset u8 (FramePreset::code); css_w uv; css_h uv; project (len uv + UTF-8); route (len uv + UTF-8);
+//!         v3 only: patch flag u8 [+ len uv + UTF-8]; label (len uv + UTF-8); group flag u8 [+ len uv + UTF-8];
+//!         chosen flag u8 (0/1)
 //! Mark    frame id; preset u8 (FramePreset::code); status u8 (MarkStatus::code); state (len uv + UTF-8);
 //!         strokes count uv + ids
 //! binding (v2 only, after a stroke's trim) flag u8 [+ frame id; mode u8 (BindingMode::code);
 //!         preset u8; key flag u8 [+ len uv + UTF-8]; state (len uv + UTF-8); anchor f32×2]
 //! ```
-//! New kinds are append-only tags; a field added to an existing kind (the stroke binding) bumps the version, and
-//! v1 blobs keep decoding with the binding absent.
+//! New kinds are append-only tags; a field added to an existing kind (the stroke binding in v2, the frame fields
+//! in v3) bumps the version, and older blobs keep decoding with the newer fields absent/defaulted.
 //! Grid-stored values (erase paths, fill rings) round-trip exactly only when already on the 1/16 px grid
 //! (the producers snap them); everything else round-trips bit-exactly. Decoding validates with
 //! `Item::validate`, mapping its failure to `InvalidValue`.
@@ -55,7 +58,9 @@ use fields::{
 /// Item blob magic.
 pub const ITEM_MAGIC: [u8; 4] = *b"PWIT";
 /// Current item blob layout version.
-pub const ITEM_VERSION: u16 = 2;
+pub const ITEM_VERSION: u16 = 3;
+/// Item layout v2: stroke binding and Mark kind, no frame patch/label/group/chosen.
+pub const ITEM_VERSION_V2: u16 = 2;
 /// Baseline version: no stroke binding, no Mark kind.
 pub const ITEM_VERSION_V1: u16 = 1;
 
@@ -70,7 +75,7 @@ pub fn encode_item(item: &Item, out: &mut Vec<u8>) {
     write_trailer(out, start);
 }
 
-/// Decodes exactly one item blob (v1 or v2).
+/// Decodes exactly one item blob (v1, v2 or v3).
 ///
 /// # Errors
 /// `BadMagic`, `UnsupportedVersion`, `UnexpectedEof`, `VarintOverflow`, `ChecksumMismatch` (checked before
@@ -78,7 +83,11 @@ pub fn encode_item(item: &Item, out: &mut Vec<u8>) {
 /// 0/1, non-finite floats, bad UTF-8, `Item::validate` failure), `OutOfRange` (grid or sample values).
 pub fn decode_item(bytes: &[u8]) -> Result<Item, CodecError> {
     let mut r = Reader::new(bytes);
-    let version = read_header_any(&mut r, ITEM_MAGIC, &[ITEM_VERSION_V1, ITEM_VERSION])?;
+    let version = read_header_any(
+        &mut r,
+        ITEM_MAGIC,
+        &[ITEM_VERSION_V1, ITEM_VERSION_V2, ITEM_VERSION],
+    )?;
     let body = decode_item_body_at(&mut r, version).map(|item| (item, r.position()));
     finish_decode(bytes, body)
 }
@@ -88,8 +97,8 @@ pub fn encode_item_body(item: &Item, out: &mut Vec<u8>) {
     encode_item_body_at(item, ITEM_VERSION, out);
 }
 
-/// [`encode_item_body`] at layout `version` (edit blobs below v3 embed v1 bodies, so old edits re-encode byte
-/// for byte).
+/// [`encode_item_body`] at layout `version` (edit blobs below v3 embed v1 bodies and v3 embeds v2, so old edits
+/// re-encode byte for byte).
 pub(super) fn encode_item_body_at(item: &Item, version: u16, out: &mut Vec<u8>) {
     write_id(out, item.id);
     out.extend_from_slice(&[item.kind.tag().code(), item.layer.code()]);
@@ -106,7 +115,8 @@ pub fn decode_item_body(reader: &mut Reader<'_>) -> Result<Item, CodecError> {
     decode_item_body_at(reader, ITEM_VERSION)
 }
 
-/// [`decode_item_body`] for an item body written at `version` (edit blobs below v3 embed v1 bodies).
+/// [`decode_item_body`] for an item body written at `version` (edit blobs below v3 embed v1 bodies and v3
+/// embeds v2).
 ///
 /// # Errors
 /// As [`decode_item_body`].

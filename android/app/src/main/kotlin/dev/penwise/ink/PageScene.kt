@@ -231,6 +231,15 @@ class PageScene(
         route: String,
     ): ByteArray = tool { Native.sceneSetFrameRoute(it, id, route, syncHandle, clock()) }
 
+    /**
+     * Marks a variant frame as the owner's pick; the core un-chooses the rest of its group in the same edit, so the
+     * choice is one undo step (P2).
+     */
+    fun setFrameChosen(
+        id: ByteArray,
+        chosen: Boolean,
+    ): Boolean = commitChange(tool { Native.sceneSetFrameChosen(it, id, chosen, syncHandle, clock()) })
+
     /** A finished pen stroke on a frame, bound (or pinned) by [bindingJson] (K1); samples are in page px. */
     @Suppress("LongParameterList")
     fun addBoundStroke(

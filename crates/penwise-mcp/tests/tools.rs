@@ -20,7 +20,7 @@ mod common;
 use common::{Mcp, TOKEN};
 
 /// The tools `docs/mcp.md` documents.
-const DOCUMENTED: [&str; 19] = [
+const DOCUMENTED: [&str; 23] = [
     "penwise_page_png",
     "penwise_page_status",
     "penwise_annotate",
@@ -40,6 +40,10 @@ const DOCUMENTED: [&str; 19] = [
     "penwise_frame_snapshot",
     "penwise_marks",
     "penwise_mark_status",
+    "penwise_ghost",
+    "penwise_variants",
+    "penwise_choice",
+    "penwise_variants_clear",
 ];
 
 /// A fake Ollama that "reads" every page as the same words.

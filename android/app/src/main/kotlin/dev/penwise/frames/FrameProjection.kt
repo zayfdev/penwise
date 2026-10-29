@@ -76,6 +76,10 @@ internal class FrameProjection {
                         y = item.y,
                         cssWidth = item.cssWidth,
                         cssHeight = item.cssHeight,
+                        patch = item.patch,
+                        label = item.label,
+                        group = item.group,
+                        chosen = item.chosen,
                     )
                 }
             }

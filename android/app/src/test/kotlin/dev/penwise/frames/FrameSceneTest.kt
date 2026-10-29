@@ -1,6 +1,9 @@
 package dev.penwise.frames
 
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -26,6 +29,31 @@ class FrameSceneTest {
             ),
             SceneFrames.parse(json),
         )
+    }
+
+    @Test
+    fun a_frame_carries_its_patch_its_variant_label_and_the_choice() {
+        val json =
+            """[{"id":"00112233445566778899aabbccddeeff","project":"portfolio","route":"/","preset":"phone",""" +
+                """"cssW":390,"cssH":844,"rect":[0,0,390,844],""" +
+                """"patch":{"css":"h1{color:red}","dom":[]},"label":"Bold hero","group":"grp_1","chosen":true}]"""
+        val frame = SceneFrames.parse(json).single()
+        assertEquals("h1{color:red}", frame.patch?.let { JSONObject(it).optString("css") })
+        assertEquals("Bold hero", frame.label)
+        assertEquals("grp_1", frame.group)
+        assertTrue(frame.chosen)
+    }
+
+    @Test
+    fun a_frame_without_a_patch_or_a_group_reads_its_neutral_values() {
+        val json =
+            """[{"id":"00112233445566778899aabbccddeeff","project":"p","rect":[0,0,390,844],""" +
+                """"patch":null,"label":"","group":null,"chosen":false}]"""
+        val frame = SceneFrames.parse(json).single()
+        assertNull(frame.patch)
+        assertEquals("", frame.label)
+        assertNull(frame.group)
+        assertFalse(frame.chosen)
     }
 
     @Test

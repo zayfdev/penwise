@@ -378,12 +378,12 @@ fn the_frame_spec_is_the_one_call_constructor() {
     };
     assert_eq!(
         frame,
-        &FrameItem {
-            project: "portfolio".to_owned(),
-            route: "/about?tab=1".to_owned(),
-            preset: FramePreset::Custom,
-            css_w: 1024,
-            css_h: 768,
-        }
+        &FrameItem::new(
+            "portfolio".to_owned(),
+            "/about?tab=1".to_owned(),
+            FramePreset::Custom,
+            1024,
+            768,
+        )
     );
 }
