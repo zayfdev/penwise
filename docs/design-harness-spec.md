@@ -11,7 +11,7 @@ code differs. Owner-facing guide: `docs/design-harness.md`. Decisions marked **[
 | M2 — marks, binding, presets, state, status | done | `fe4d7ad` |
 | M3 — mark bundles, classifier, agent tools | done | `412cd2a` |
 | M4 — ghosts, variants, choice, cheat sheet | done | `270f8d6` |
-| M5 — Vite/Next adapters, MCP config writer, docs | done; commit not yet in `git log` when these docs landed | — |
+| M5 — Vite/Next adapters, MCP config writer, docs | done | `2b2b9b6` |
 
 ## 1. Goal
 
