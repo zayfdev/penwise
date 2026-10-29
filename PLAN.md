@@ -178,7 +178,8 @@ Two brush families in `penwise-core`, both deterministic on every surface:
 | M5 | MCP | All stage-1 tools usable from an agent; annotations appear live on tablet + browser |
 | M6 | Recognition | Scan button + auto-scan produce text layer; `get_page_text` returns it |
 
-**Status** (as of the op-log rewrite, HEAD 48d30e4; details in `docs/rewrite-design.md`, `docs/next-iteration.md`):
+**Status** (as of the design-harness M5 docs, after HEAD `270f8d6`; stage-1 details in `docs/rewrite-design.md`,
+harness details in `docs/design-harness-spec.md` and `docs/next-iteration.md`):
 
 - **M0 — done.** Toolchain and `just check` gate.
 - **M1 — done.** Both brush families, deterministic geometry, codec round-trips; gate record `docs/gates/M1.md` (historical).
@@ -188,6 +189,11 @@ Two brush families in `penwise-core`, both deterministic on every surface:
 - **M5 — done with a different shape.** `penwise-mcp` is a stdio server over the HTTP API (not `rmcp`); tools are `penwise_*` (`docs/mcp.md`), not the names in "MCP tools (stage 1)" above. Annotations reach tablet and browser live as ops from the server device.
 - **M6 — partial.** Server-side handwriting → text-layer items via a local Ollama model, `GET /text`, `GET /search`, MCP `penwise_page_text` / `penwise_search`. Not built: tablet scan button, auto-scan, a `Recognizer` trait / worker, `request_scan`.
 - **Browser drawing (post-M3, not in the original plan)** — pen/mouse ink with undo, text panel, search, pairing panel (`docs/draw.md`).
+- **Design harness v1 (separate track, M0–M5) — done.** Linked projects served or proxied with HMR, bridge, CDP
+  source mapping; marks bound to elements or areas, per preset and page state; agent bundles with kind, colour,
+  OCR, element and source lines; ghosts, variants and the owner's pick; Vite/SvelteKit and Next adapters that add
+  `data-pw-src`; `penwise link` writes the MCP config. Guide: `docs/design-harness.md`; agent prompt:
+  `docs/agent-prompt.md`; deviations: spec §13.
 
 ## Build process
 

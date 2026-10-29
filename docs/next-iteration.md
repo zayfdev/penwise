@@ -36,6 +36,28 @@ picture/anchor surface are all in the current code.
 - **Eraser and shape live previews are not sent to other devices.** The live channel carries only freehand
   `StrokeDelta` / `StrokeCancel` (`penwise-proto/src/live.rs`); other devices see an erase or shape when it commits.
 
+## Design harness (`docs/design-harness.md`)
+
+- **No Astro adapter.** Astro is detected by `penwise link`, but its marks carry no component source; source
+  entries fall back to URLs.
+- **Next CSS stays URL-only.** The Next adapter maps elements to component files; CSS rules carry the URL, not
+  a file line.
+- **Proxied HTML has no file line without an adapter.** The base HTML mapping parses the served document, and a
+  dev origin serves no document. Vite CSS still maps `/src/x.css` and `/@fs/…` to files.
+- **Vue and Svelte templates map only plain HTML elements.** A component tag (`<Card>`) gets no `data-pw-src`;
+  resolution infers the nearest ancestor with the attribute.
+- **`penwise_frame_open` does not switch the owner's page.** It creates the frame on the project's review page
+  and returns the page id; the tablet stays where it was until the agent calls `penwise_switch_page` or the
+  owner selects the page.
+- **No `penwise dev`.** The owner starts the dev server. `penwise status` reports whether it answers.
+- **Dev server down shows no last snapshot.** The proxy answers 502 with `dev server <origin> unreachable`;
+  the frame keeps its marks but has no page.
+- **State replay failure is silent on screen.** The mark stays greyed; there is no "state not reproducible"
+  label. A failed replay only logs on the tablet and returns `ok:false` to the bridge.
+- **No orphaned/ambiguous flags in bundles.** A deleted element is `element: null`; the agent must say so.
+- **Patches cannot run JavaScript.** Ghosts and variants are CSS plus DOM ops, not branches or worktrees.
+- **Live public sites are out of scope.** The proxy dials a local dev origin only.
+
 ## Security
 
 - **S7 hardening is pending.** One shared token (`$PENWISE_DATA/token`, accepted as `?token=` or

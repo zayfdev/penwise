@@ -25,6 +25,11 @@ Then point the agent at the installed binary (the server's data directory must b
 From source: `cargo build -p penwise-mcp` (or `just mcp` to run it by hand); the debug build lives at
 `target/debug/penwise-mcp` if you want to point the config there instead.
 
+`penwise link` in a project writes this config for you: `.mcp.json` (Claude Code) and `.omp/mcp.json` (omp)
+in the project root, both with the same `penwise` entry. It sets `PENWISE_PROJECT` to the registry id, so
+`penwise_marks` and `penwise_frame_open` default to that project. Existing servers in both files are kept; a
+broken existing file is reported and left untouched.
+
 ## Tools
 
 | Tool | Arguments | Returns |
@@ -44,7 +49,7 @@ From source: `cargo build -p penwise-mcp` (or `just mcp` to run it by hand); the
 | `penwise_remove_image` | `{id, page?}` | `{"removed":1}` |
 | `penwise_page_annotations` | `{page?}` | `{"elements":[{selector, strokes, rect, text}],"unanchored":n}` |
 | `penwise_projects` | — | `[{id, name, root, kind, origin?, static?, port, notebook}]` — linked design projects |
-| `penwise_frame_open` | `{project, route, preset, page?}` | `{"page":"<page id>","frame":"<item id>"}` — a live page as a frame (default page: the project's `<name> review`, created if missing) |
+| `penwise_frame_open` | `{project?, route, preset, page?}` | `{"page":"<page id>","frame":"<item id>"}` — a live page as a frame (project defaults to `PENWISE_PROJECT`; default page: the project's `<name> review`, created if missing) |
 | `penwise_frame_snapshot` | `{frame, ink?}` | PNG image content of the frame at its preset; `ink` includes the owner's marks (default true) |
 | `penwise_marks` | `{project?, page?, frame?, status?, since?, agent?, images?}` | mark bundles (§7.2) as a text block, plus `with_ink` and `context` image blocks per mark |
 | `penwise_mark_status` | `{id, status: seen\|done\|reopened\|new, note?}` | `{"id":…,"status":…}` |
@@ -67,11 +72,15 @@ browser, render in the PNG, persist with the page, and clear as a set. Promoting
 
 ## Design harness
 
+The owner's guide is `docs/design-harness.md`; the prompt to give an agent is `docs/agent-prompt.md`.
+
 `penwise_projects` → `penwise_frame_open` puts a linked project's route on a canvas page as a frame; the owner
 draws on the frame; `penwise_marks` returns each mark as a bundle (spec §7.2): the kind guess (`circle`, `arrow`
 with `from`/`to` elements, `cross`, `wavy`, `box_new`, `strike`, `underline`, `free`, with a confidence), the
 colour meaning (`problem` red, `idea` blue, `good` green), OCR text of the ink, the element (`selector`, `role`,
 `text`, `styles`, `rect`, and `source` `file:line` entries including the matching CSS rules) and three crop URLs.
+With a Vite or Next adapter, the first `source` entry is the component: `{file, line, col, kind: "component"}`,
+marked `inferred: true` when it came from the nearest ancestor with `data-pw-src`.
 
 `penwise_marks` returns the bundle JSON as one text block, then one image content block per mark for `with_ink`
 (default) and `context` (`images: "all"`); `images: "none"` skips the pictures when only the facts are needed.

@@ -175,12 +175,12 @@ const TOOLS: &str = r##"{
       "inputSchema": {
         "type": "object",
         "properties": {
-          "project": { "type": "string", "description": "Project id from penwise_projects." },
+          "project": { "type": "string", "description": "Project id from penwise_projects; defaults to PENWISE_PROJECT from the MCP config." },
           "route": { "type": "string", "description": "Same-origin path on the project, e.g. \"/\" or \"/work?tag=one\"." },
           "preset": { "type": "string", "enum": ["phone", "tablet", "desktop", "custom"], "description": "Frame size preset (phone 390×844, tablet 834×1194, desktop 1440×900)." },
           "page": { "type": "string", "description": "Page id; defaults to the project's review page." }
         },
-        "required": ["project", "route", "preset"]
+        "required": ["route", "preset"]
       }
     },
     {
@@ -201,7 +201,7 @@ const TOOLS: &str = r##"{
       "inputSchema": {
         "type": "object",
         "properties": {
-          "project": { "type": "string", "description": "Only marks on this project's frames." },
+          "project": { "type": "string", "description": "Only marks on this project's frames; defaults to PENWISE_PROJECT from the MCP config." },
           "page": { "type": "string", "description": "Only marks on this page." },
           "frame": { "type": "string", "description": "Only marks on this frame." },
           "status": { "type": "string", "enum": ["new", "seen", "done", "reopened", "all"], "description": "Status filter; the default is new plus reopened." },

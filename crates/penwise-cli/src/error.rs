@@ -15,6 +15,8 @@ pub enum Error {
     NotLinked(PathBuf),
     #[error("{0}")]
     Undetected(String),
+    #[error("{0}")]
+    Config(String),
     #[error(
         "cannot reach the Penwise server at {base}: {detail}\n  \
              start it with `systemctl --user start penwise.service`, or run `penwise`"

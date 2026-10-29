@@ -101,6 +101,9 @@ pub(super) fn css_sources(
             url,
             file,
             line,
+            col: None,
+            kind: None,
+            inferred: None,
             rule: Some(selector),
         });
         if out.len() >= MAX_CSS_RULES {
@@ -120,14 +123,52 @@ pub(super) fn document_file(page_url: &str, root: &Path) -> Option<String> {
     existing(root, &path)
 }
 
-/// The stylesheet path relative to `root`, when it is same-origin and exists on disk.
+/// The stylesheet path relative to `root`, when it exists under the project root.
+///
+/// Three URL shapes map to source files: a static asset path (`/styles.css`), a dev-server source path
+/// (`/src/app.css`, which Vite serves for files it transforms), and a Vite `/@fs/<absolute path>` (files outside
+/// the Vite root). Anything else, Next's `/_next/static/...` included, keeps its URL only.
 pub(super) fn asset_file(page_url: &str, source_url: &str, root: &Path) -> Option<String> {
     let page = reqwest::Url::parse(page_url).ok()?;
     let source = resolve(&page, source_url)?;
+    if let Some(rest) = source.path().strip_prefix("/@fs/") {
+        // Vite writes `/@fs/home/me/site/src/x.css` for `/home/me/site/src/x.css`: the slash after `@fs`
+        // is the one the URL path keeps, so the absolute path needs it back.
+        let decoded = decode_path(rest);
+        let absolute = if decoded.starts_with('/') {
+            decoded
+        } else {
+            format!("/{decoded}")
+        };
+        return root_relative(root, &absolute);
+    }
     if source.origin() != page.origin() {
         return None;
     }
-    existing(root, source.path().trim_start_matches('/'))
+    existing(root, &decode_path(source.path().trim_start_matches('/')))
+}
+
+/// `data-pw-src="<root-relative path>:<line>:<col>"` as `(file, line, col)`.
+///
+/// The attribute is written by the Penwise adapters. A malformed value yields nothing, so the element falls
+/// back to the document and CSS entries instead of carrying a fabricated location.
+pub(super) fn component_ref(value: &str) -> Option<(String, u32, u32)> {
+    let mut parts = value.trim().rsplitn(3, ':');
+    let col = parts.next()?.trim().parse().ok()?;
+    let line = parts.next()?.trim().parse().ok()?;
+    let file = parts.next()?.trim();
+    let file = file.strip_prefix("./").unwrap_or(file);
+    if file.is_empty()
+        || file.starts_with('/')
+        || line == 0
+        || col == 0
+        || file
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
+    {
+        return None;
+    }
+    Some((file.to_owned(), line, col))
 }
 
 /// The absolute stylesheet URL, or the page URL for an empty/inline source.
@@ -154,4 +195,32 @@ fn existing(root: &Path, relative: &str) -> Option<String> {
         return None;
     }
     root.join(relative).is_file().then(|| relative.to_owned())
+}
+
+/// An absolute path inside `root` as a root-relative file that exists, else `None`.
+fn root_relative(root: &Path, absolute: &str) -> Option<String> {
+    let path = Path::new(absolute);
+    let rest = path.strip_prefix(root).ok()?;
+    let relative = rest.to_str()?.replace('\\', "/");
+    existing(root, &relative)
+}
+
+/// Percent-decodes a URL path, so a file name with a space still maps to the file.
+fn decode_path(path: &str) -> String {
+    let bytes = path.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%'
+            && index + 2 < bytes.len()
+            && let Ok(byte) = u8::from_str_radix(&path[index + 1..index + 3], 16)
+        {
+            out.push(byte);
+            index += 3;
+        } else {
+            out.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(out).unwrap_or_else(|_| path.to_owned())
 }

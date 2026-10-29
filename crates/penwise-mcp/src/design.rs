@@ -7,9 +7,7 @@
 use serde_json::{Value, json};
 
 use crate::endpoint::Endpoint;
-use crate::{
-    arguments, base64, encode_segment, error, get_text, post_arguments, post_text, text_content,
-};
+use crate::{arguments, base64, encode_segment, error, get_text, post_text, text_content};
 
 /// Checkpoint name when a call does not name its agent.
 const DEFAULT_AGENT: &str = "agent";
@@ -27,12 +25,13 @@ pub(crate) fn tool(
     name: &str,
     request: &Value,
     endpoint: &Endpoint,
+    default_project: Option<&str>,
 ) -> Option<Result<Value, Value>> {
     Some(match name {
         "penwise_projects" => get_text(endpoint, "/projects"),
-        "penwise_frame_open" => post_arguments(request, endpoint, "/frames/open"),
+        "penwise_frame_open" => frame_open(request, endpoint, default_project),
         "penwise_frame_snapshot" => snapshot(request, endpoint),
-        "penwise_marks" => marks(request, endpoint),
+        "penwise_marks" => marks(request, endpoint, default_project),
         "penwise_mark_status" => status(request, endpoint),
         "penwise_ghost" => ghost(request, endpoint),
         "penwise_variants" => variants(request, endpoint),
@@ -40,6 +39,31 @@ pub(crate) fn tool(
         "penwise_variants_clear" => variants_clear(request, endpoint),
         _ => return None,
     })
+}
+
+/// `POST /frames/open` — `{project, route, preset, page?}`; `project` defaults to `PENWISE_PROJECT`.
+fn frame_open(
+    request: &Value,
+    endpoint: &Endpoint,
+    default_project: Option<&str>,
+) -> Result<Value, Value> {
+    let mut args = arguments(request);
+    if !args.is_object() {
+        args = json!({});
+    }
+    let project = args
+        .get("project")
+        .and_then(Value::as_str)
+        .filter(|project| !project.is_empty())
+        .or_else(|| default_project.filter(|project| !project.is_empty()))
+        .ok_or_else(|| {
+            error(
+                -32602,
+                "missing project (pass one, or set PENWISE_PROJECT in the MCP config)",
+            )
+        })?;
+    args["project"] = json!(project);
+    post_text(endpoint, "/frames/open", &args.to_string())
 }
 
 /// `POST /frames/<id>/ghost` — `{patch}` sets a ghost, `{clear: true}` removes it.
@@ -144,11 +168,15 @@ fn snapshot(request: &Value, endpoint: &Endpoint) -> Result<Value, Value> {
 }
 
 /// `GET /marks` — the bundle JSON as one text block, then the requested crops of every mark, in bundle order.
-fn marks(request: &Value, endpoint: &Endpoint) -> Result<Value, Value> {
+fn marks(
+    request: &Value,
+    endpoint: &Endpoint,
+    default_project: Option<&str>,
+) -> Result<Value, Value> {
     let args = arguments(request);
     let images = images_option(&args)?;
     let body = endpoint
-        .get(&marks_path(&args))
+        .get(&marks_path(&args, default_project))
         .map_err(|failure| error(-32603, &failure))?;
     let text = String::from_utf8_lossy(&body).into_owned();
     let bundle: Value = match serde_json::from_str(&text) {
@@ -185,11 +213,20 @@ fn status(request: &Value, endpoint: &Endpoint) -> Result<Value, Value> {
 
 /// `?project=…&page=…&frame=…&status=…&since=…&agent=…` for `GET /marks`.
 ///
-/// `since` defaults to `last` (the agent's previous checkpoint); `"none"` omits it, so the call sees every
-/// matching mark. The checkpoint is recorded under `agent` (`"agent"` unless the call names one).
-fn marks_path(args: &Value) -> String {
+/// `project` defaults to `PENWISE_PROJECT` (written by `penwise link`). `since` defaults to `last` (the agent's
+/// previous checkpoint); `"none"` omits it, so the call sees every matching mark. The checkpoint is recorded
+/// under `agent` (`"agent"` unless the call names one).
+fn marks_path(args: &Value, default_project: Option<&str>) -> String {
     let mut params = Vec::new();
-    for key in ["project", "page", "frame", "status"] {
+    let project = args
+        .get("project")
+        .and_then(Value::as_str)
+        .filter(|project| !project.is_empty())
+        .or_else(|| default_project.filter(|project| !project.is_empty()));
+    if let Some(project) = project {
+        params.push(format!("project={}", encode_segment(project)));
+    }
+    for key in ["page", "frame", "status"] {
         if let Some(value) = args
             .get(key)
             .and_then(Value::as_str)

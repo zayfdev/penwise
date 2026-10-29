@@ -59,18 +59,28 @@ impl Clip {
     }
 }
 
-/// One place an element's source comes from: the HTML document, or a matched CSS rule.
+/// One place an element's source comes from: the adapter's `data-pw-src`, the HTML document, or a matched
+/// CSS rule.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SourceLocation {
     /// The document or stylesheet URL as the browser saw it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
-    /// Path relative to the project root, when the URL is same-origin and the file exists.
+    /// Path relative to the project root: from `data-pw-src`, or when the URL is same-origin and the file exists.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file: Option<String>,
     /// 1-based line.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub line: Option<u32>,
+    /// 1-based column, when the adapter reported one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub col: Option<u32>,
+    /// `"component"` for a `data-pw-src` entry; `None` for the document and CSS rules.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<&'static str>,
+    /// `true` when the attribute was found on an ancestor rather than on the element itself.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inferred: Option<bool>,
     /// The matched selector for a CSS rule.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rule: Option<String>,
@@ -109,6 +119,12 @@ pub(super) struct JsInfo {
     pub styles: BTreeMap<String, String>,
     #[serde(default)]
     pub role_attr: Option<String>,
+    /// The adapter's `data-pw-src` on the element or its nearest ancestor.
+    #[serde(default)]
+    pub pw_src: Option<String>,
+    /// Whether that attribute came from an ancestor.
+    #[serde(default)]
+    pub pw_inferred: bool,
 }
 
 /// Builds an [`ElementInfo`] for a DOM node already resolved by the caller.
@@ -121,6 +137,22 @@ pub(super) async fn info_for(page: &Page, node_id: i64) -> Result<ElementInfo, E
     let url = page.url().to_owned();
     let root = page.root().map(Path::to_path_buf);
     let mut source = Vec::new();
+    // The adapter's build-time location is exact, so it comes before the served-document and CSS entries.
+    if let Some((file, line, col)) = info
+        .pw_src
+        .as_deref()
+        .and_then(super::source::component_ref)
+    {
+        source.push(SourceLocation {
+            url: None,
+            file: Some(file),
+            line: Some(line),
+            col: Some(col),
+            kind: Some("component"),
+            inferred: info.pw_inferred.then_some(true),
+            rule: None,
+        });
+    }
     if let Some(html) = page.document_html().await
         && let Some(line) = super::source::html_line(&html, &info.dom_path)
     {
@@ -130,6 +162,9 @@ pub(super) async fn info_for(page: &Page, node_id: i64) -> Result<ElementInfo, E
                 .as_deref()
                 .and_then(|root| super::source::document_file(&url, root)),
             line: Some(line),
+            col: None,
+            kind: None,
+            inferred: None,
             rule: None,
         });
     }
@@ -293,6 +328,18 @@ function () {
     return parts.join(" > ");
   };
   const rect = el.getBoundingClientRect();
+  const pwSource = () => {
+    let cur = el;
+    let inferred = false;
+    while (cur && cur.nodeType === 1) {
+      const value = cur.getAttribute("data-pw-src");
+      if (value) return { value: value, inferred: inferred };
+      inferred = true;
+      cur = cur.parentElement;
+    }
+    return null;
+  };
+  const pw = pwSource();
   return {
     selector: uniqueSelector(el),
     dom_path: domPath(el),
@@ -302,6 +349,8 @@ function () {
     outer_html: el.outerHTML,
     styles: styles,
     role_attr: el.getAttribute("role"),
+    pw_src: pw ? pw.value : null,
+    pw_inferred: pw ? pw.inferred : false,
   };
 }
 "##;

@@ -1,0 +1,41 @@
+{
+  "name": "@penwise/vite-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "description": "Dev-only Vite plugin that adds Penwise source attributes (data-pw-src) to JSX, Vue and Svelte markup.",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./jsx": "./jsx.cjs",
+    "./source": "./source.cjs",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "jsx.cjs",
+    "source.cjs",
+    "vue.js",
+    "svelte.js"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@babel/parser": "^7.29.11",
+    "magic-string": "^0.30.21"
+  },
+  "optionalDependencies": {
+    "@vue/compiler-dom": "^3.5.44",
+    "@vue/compiler-sfc": "^3.5.44",
+    "svelte": "^5.57.3"
+  },
+  "devDependencies": {
+    "react": "^19.3.1",
+    "vite": "^8.3.5"
+  }
+}

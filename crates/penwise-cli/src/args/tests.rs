@@ -30,7 +30,8 @@ fn link_defaults_to_the_current_folder() {
     assert_eq!(
         Command::Link {
             dir: PathBuf::from("."),
-            yes: false
+            yes: false,
+            no_adapter: false,
         },
         parse_strs(&["link"])
     );
@@ -41,9 +42,16 @@ fn link_takes_a_folder_and_the_yes_flag_in_either_order() {
     let expected = Command::Link {
         dir: PathBuf::from("/tmp/site"),
         yes: true,
+        no_adapter: false,
     };
     assert_eq!(expected, parse_strs(&["link", "--yes", "/tmp/site"]));
     assert_eq!(expected, parse_strs(&["link", "/tmp/site", "-y"]));
+    let skipped = Command::Link {
+        dir: PathBuf::from("/tmp/site"),
+        yes: false,
+        no_adapter: true,
+    };
+    assert_eq!(skipped, parse_strs(&["link", "--no-adapter", "/tmp/site"]));
 }
 
 #[test]

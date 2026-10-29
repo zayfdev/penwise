@@ -117,6 +117,73 @@ async fn fixture_file(State(root): State<PathBuf>, uri: Uri) -> Response {
     }
 }
 
+#[cfg(test)]
+mod adapter_source {
+    use super::*;
+
+    const COMPONENT_HTML: &str = include_str!("fixtures/site/component.html");
+    const APP_CSS: &str = include_str!("fixtures/site/src/app.css");
+
+    /// The adapter's `data-pw-src` is the first source entry, and a dev-origin stylesheet URL maps to its file.
+    #[tokio::test]
+    async fn adapter_attribute_is_first_and_dev_css_maps_to_its_source_file() {
+        let Some(chromium) = chromium() else {
+            return;
+        };
+        let (addr, server) = start_fixture().await;
+        let inspect = Inspect::with_chromium(chromium);
+        let url = format!("http://{addr}/component.html");
+        let mut page = inspect.open(&url, 800, 600).await.expect("page opens");
+        page.set_root(Some(fixture_root()));
+
+        // The element carrying the attribute reports it exactly.
+        let root = inspect.element(&page, "#hero-root").await.expect("root");
+        let first = root.source.first().expect("a source entry");
+        assert_eq!(first.file.as_deref(), Some("src/Hero.tsx"));
+        assert_eq!(first.line, Some(8));
+        assert_eq!(first.col, Some(3));
+        assert_eq!(first.kind, Some("component"));
+        assert_eq!(first.inferred, None);
+
+        // A descendant inherits it as an inferred location.
+        let child = inspect.element(&page, "#child").await.expect("child");
+        let first = child.source.first().expect("a source entry");
+        assert_eq!(first.file.as_deref(), Some("src/Hero.tsx"));
+        assert_eq!(first.line, Some(8));
+        assert_eq!(first.col, Some(3));
+        assert_eq!(first.kind, Some("component"));
+        assert_eq!(first.inferred, Some(true));
+
+        // The dev origin's `/src/app.css` resolves to the project file, with the matching rule.
+        let hero = inspect.element(&page, "#hero").await.expect("hero");
+        let css_line = line_of(APP_CSS, ".hero {");
+        assert!(
+            hero.source
+                .iter()
+                .any(|entry| entry.file.as_deref() == Some("src/app.css")
+                    && entry.line == Some(css_line)
+                    && entry.rule.as_deref() == Some(".hero")),
+            "{:#?}",
+            hero.source
+        );
+        // The served document entry is still there, after the component one.
+        let html_line = line_of(COMPONENT_HTML, "id=\"child\"");
+        assert!(
+            child
+                .source
+                .iter()
+                .any(|entry| entry.file.as_deref() == Some("component.html")
+                    && entry.line == Some(html_line)),
+            "{:#?}",
+            child.source
+        );
+
+        page.close().await;
+        inspect.shutdown().await;
+        server.abort();
+    }
+}
+
 #[tokio::test]
 async fn element_at_maps_the_heading_to_html_and_css_lines_and_snapshot_is_sized() {
     let Some(chromium) = chromium() else {

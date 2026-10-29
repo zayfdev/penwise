@@ -36,6 +36,10 @@ fn main() {
         port,
         token: resolve_token(),
     };
+    // The project `penwise link` wrote into this config: tools that take a project default to it.
+    let default_project = std::env::var("PENWISE_PROJECT")
+        .ok()
+        .filter(|project| !project.trim().is_empty());
     let stdin = std::io::stdin();
     let mut lines = stdin.lock().lines();
     while let Some(Ok(line)) = lines.next() {
@@ -50,7 +54,7 @@ fn main() {
                 continue;
             }
         };
-        if let Some(response) = handle(&request, &endpoint) {
+        if let Some(response) = handle(&request, &endpoint, default_project.as_deref()) {
             let mut out = std::io::stdout();
             if writeln!(out, "{response}").is_err() || out.flush().is_err() {
                 break;
@@ -60,7 +64,11 @@ fn main() {
 }
 
 /// Where the Penwise server lives.
-fn handle(request: &serde_json::Value, endpoint: &Endpoint) -> Option<serde_json::Value> {
+fn handle(
+    request: &serde_json::Value,
+    endpoint: &Endpoint,
+    default_project: Option<&str>,
+) -> Option<serde_json::Value> {
     let id = request.get("id")?.clone();
     let method = request
         .get("method")
@@ -69,7 +77,7 @@ fn handle(request: &serde_json::Value, endpoint: &Endpoint) -> Option<serde_json
     let result = match method {
         "initialize" => Ok(initialize(request)),
         "tools/list" => Ok(tools::tools_list()),
-        "tools/call" => call_tool(request, endpoint),
+        "tools/call" => call_tool(request, endpoint, default_project),
         "ping" => Ok(serde_json::json!({})),
         other => Err(error(-32601, &format!("unknown method {other}"))),
     };
@@ -88,19 +96,20 @@ fn initialize(request: &serde_json::Value) -> serde_json::Value {
         "protocolVersion": version,
         "capabilities": { "tools": { "listChanged": false } },
         "serverInfo": { "name": SERVER_NAME, "version": SERVER_VERSION },
-        "instructions": "Penwise: the user's pen tablet page. Use penwise_page_png to look at what they drew; on linked projects use penwise_marks to read marks on a frame (kind, colour, handwriting, element, source lines, crops). Before editing code, show a change with penwise_ghost or propose 2-4 options with penwise_variants, then read the owner's pick with penwise_choice.",
+        "instructions": "Penwise: the user's pen tablet page. Use penwise_page_png to look at what they drew; on linked projects use penwise_marks to read marks on a frame (kind, colour, handwriting, element, source lines, crops); PENWISE_PROJECT makes the project argument optional. Before editing code, show a change with penwise_ghost or propose 2-4 options with penwise_variants, then read the owner's pick with penwise_choice.",
     })
 }
 
 fn call_tool(
     request: &serde_json::Value,
     endpoint: &Endpoint,
+    default_project: Option<&str>,
 ) -> Result<serde_json::Value, serde_json::Value> {
     let name = request
         .pointer("/params/name")
         .and_then(serde_json::Value::as_str)
         .unwrap_or("");
-    if let Some(result) = design::tool(name, request, endpoint) {
+    if let Some(result) = design::tool(name, request, endpoint, default_project) {
         return result;
     }
     if matches!(

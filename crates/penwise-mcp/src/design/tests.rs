@@ -6,19 +6,25 @@ use super::{Images, images_option, marks_path};
 
 #[test]
 fn the_default_check_names_an_agent_and_asks_for_the_last_checkpoint() {
-    assert_eq!("/marks?since=last&agent=agent", marks_path(&json!({})));
+    assert_eq!(
+        "/marks?since=last&agent=agent",
+        marks_path(&json!({}), None)
+    );
 }
 
 #[test]
 fn filters_are_encoded_as_one_query_value_each() {
-    let path = marks_path(&json!({
-        "project": "prj_site",
-        "page": "pg 1",
-        "frame": "fr_1",
-        "status": "new",
-        "since": "none",
-        "agent": "omp"
-    }));
+    let path = marks_path(
+        &json!({
+            "project": "prj_site",
+            "page": "pg 1",
+            "frame": "fr_1",
+            "status": "new",
+            "since": "none",
+            "agent": "omp"
+        }),
+        None,
+    );
     assert_eq!(
         "/marks?project=prj_site&page=pg%201&frame=fr_1&status=new&agent=omp",
         path
@@ -29,7 +35,24 @@ fn filters_are_encoded_as_one_query_value_each() {
 fn an_empty_status_or_agent_falls_back_to_the_defaults() {
     assert_eq!(
         "/marks?since=last&agent=agent",
-        marks_path(&json!({ "project": "", "agent": "" }))
+        marks_path(&json!({ "project": "", "agent": "" }), None)
+    );
+}
+
+#[test]
+fn the_configured_project_is_the_default_filter() {
+    assert_eq!(
+        "/marks?project=prj_site&since=last&agent=agent",
+        marks_path(&json!({}), Some("prj_site"))
+    );
+    // An explicit argument wins over the configured default.
+    assert_eq!(
+        "/marks?project=prj_other&since=last&agent=agent",
+        marks_path(&json!({ "project": "prj_other" }), Some("prj_site"))
+    );
+    assert_eq!(
+        "/marks?project=prj_site&since=last&agent=agent",
+        marks_path(&json!({ "project": "" }), Some("prj_site"))
     );
 }
 

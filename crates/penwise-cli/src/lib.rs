@@ -8,12 +8,15 @@
     reason = "the CLI's output is the point; errors go to stderr in the binary"
 )]
 
+pub mod adapter;
 pub mod args;
 pub mod client;
 pub mod detect;
+pub mod diff;
 pub mod error;
 pub mod launcher;
 pub mod link;
+pub mod mcp_config;
 pub mod project_file;
 pub mod status;
 pub mod unlink;
@@ -28,7 +31,15 @@ use error::Error;
 pub fn run(args: &[String]) -> Result<(), Error> {
     match args::parse(args)? {
         Command::Open(extra) => launcher::open(&extra),
-        Command::Link { dir, yes } => link::run(&link::Options { dir, yes }),
+        Command::Link {
+            dir,
+            yes,
+            no_adapter,
+        } => link::run(&link::Options {
+            dir,
+            yes,
+            no_adapter,
+        }),
         Command::Unlink { dir } => unlink::run(&dir),
         Command::Status => status::run(),
         Command::Help => {

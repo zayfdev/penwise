@@ -27,6 +27,9 @@ pub struct Link {
     /// The dev server origin, for a proxied project.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<String>,
+    /// The framework adapter `penwise link` installed (`"vite"` or `"next"`), when it did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adapter: Option<String>,
 }
 
 impl Link {

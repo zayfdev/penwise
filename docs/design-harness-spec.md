@@ -1,7 +1,17 @@
 # Penwise design harness — spec (v1)
 
-Status: draft from the owner interview (2026-10-28). Decisions marked **[owner]** came from the interview;
-**[default]** are the orchestrator's choices, open to veto (§12).
+Status: **v1 built and in use** (2026-10-29). The decisions below are the design of record; §13 lists where the
+code differs. Owner-facing guide: `docs/design-harness.md`. Decisions marked **[owner]** came from the interview;
+**[default]** are the orchestrator's choices.
+
+| Milestone | Result | Commit |
+|---|---|---|
+| M0 — serving, proxy, bridge injection, CDP inspect, WebView frames | done | `e8d6ce0` |
+| M1 — `penwise link`, registry, `Frame`, frames on tablet and PC | done | `c72d4b3` |
+| M2 — marks, binding, presets, state, status | done | `fe4d7ad` |
+| M3 — mark bundles, classifier, agent tools | done | `412cd2a` |
+| M4 — ghosts, variants, choice, cheat sheet | done | `270f8d6` |
+| M5 — Vite/Next adapters, MCP config writer, docs | done; commit not yet in `git log` when these docs landed | — |
 
 ## 1. Goal
 
@@ -285,3 +295,54 @@ Run in the project folder:
 5. Frame ink is stored in frame coordinates, so marks are tied to the frame, not the canvas page.
 6. Patches are CSS plus simple DOM ops (insert, replace, remove, set attribute); no arbitrary JS in v1.
 7. The tablet's existing two-finger canvas pan/zoom stays even over frames; one finger inside a frame belongs to the page.
+
+## 13. Deviations in the built code
+
+Where the implementation differs from the sections above, the code is the reference.
+
+**CLI and registry (§8).**
+- Commands are `open`, `link`, `unlink` and `status`; there is no `penwise dev`, so the owner starts the dev
+  server. `penwise link` also takes `--yes`/`-y` and `--no-adapter`.
+- `link` asks three times: register, apply the adapter (Vite/SvelteKit/Next, default no), write the MCP config
+  (default yes). It prints the config diff before touching a file. `.penwise.json` gains `adapter` when an
+  adapter was applied; the MCP files are `.mcp.json` and `.omp/mcp.json` in the project root.
+- Project ports are persisted and reused (first free from 7421, `PENWISE_PROJECT_PORT`); re-linking a root
+  updates its row.
+
+**Agent interface (§7).**
+- `penwise-mcp` is a stdio MCP server that calls the server's loopback HTTP API; it is not an HTTP MCP endpoint.
+- There is no `penwise_frame_reload`: live reload/HMR refreshes frames, and the tablet/PC chips reload by hand.
+  `penwise_variants_clear` exists. `penwise_mark_status` accepts `new` as well as seen/done/reopened.
+- `PENWISE_PROJECT` (set by `penwise link`) is the default `project` filter for `penwise_marks` and
+  `penwise_frame_open` when the call omits it.
+- The bundle has no top-level `orphaned`/`ambiguous` flag. A gone element is `element: null`; the agent reports
+  it. `element.source` entries are `{url?, file?, line?, rule?}`, plus `{col, kind: "component"}` from an
+  adapter. A source entry can be marked `inferred: true` when it came from an ancestor with `data-pw-src`.
+- A patch is limited to 64 KiB, 200 DOM ops and 512-character selectors, sanitized on the server and again in
+  the bridge. Variants are created in one edit batch.
+- Frames default to the project's `<name> review` page (created on demand) and are placed right of the existing
+  ones. Labels are at most 80 characters. `penwise_frame_open` does not switch the owner's page; the agent calls
+  `penwise_switch_page` or the owner selects the page.
+
+**Adapters (§7.3).**
+- `data-pw-src="<root-relative path>:<line>:<col>"` is added only in dev builds, only to lowercase intrinsic
+  elements; components get none. The server reads the element's attribute, else the nearest ancestor's, and
+  marks that source entry `inferred: true`.
+- Vite: `@penwise/vite-plugin` in `adapters/vite`, default export `penwise({root?})`; SvelteKit uses the same
+  plugin. Next: `@penwise/next` in `adapters/next`, `withPenwise(config)`. Astro gets no adapter.
+- The value is checked before use: no absolute path, no `.`/`..` segment, line and column at least 1.
+- Adapter packages resolve from `PENWISE_ADAPTERS`, up to four ancestors of the CLI binary, else the checkout
+  the binary was built from. With none, `link` skips the adapter step silently.
+
+**Serving and source mapping (§6, §7.3).**
+- Bridge keys are `v1|<data-pw-src>|<fingerprint>`. Resolution tries the exact attribute, then an id-anchored
+  `nth-of-type` path, then a fingerprint; spec §6.2 named only the first and the last.
+- Static projects map HTML lines by parsing the served document. Proxied origins have no served document, so
+  their HTML has no file line without an adapter.
+- Vite CSS maps `/src/x.css` and `/@fs/<abs>` (under the root) to `file:line`; Next CSS stays URL-only.
+- With the dev server down, the proxy answers 502 `dev server <origin> unreachable`. The frame does not keep a
+  last snapshot.
+
+**States and marks (§6.3, §9).**
+- A failed state replay leaves the mark greyed; there is no "state not reproducible" label.
+- Only clicks that toggle `aria-expanded`, `details`/`dialog` open state, or a state class are recorded.

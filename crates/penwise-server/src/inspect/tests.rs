@@ -11,7 +11,7 @@
 use penwise_testkit::TempDir;
 
 use super::base64::decode_base64;
-use super::source::{asset_file, document_file, html_line};
+use super::source::{asset_file, component_ref, document_file, html_line};
 
 const PAGE: &str = r#"<!doctype html>
 <html lang="en">
@@ -170,6 +170,71 @@ fn url_mapping_is_relative_to_the_project_root() {
         asset_file("http://127.0.0.1:17421/", "/missing.css", root.path()),
         None
     );
+}
+
+#[test]
+fn dev_server_source_paths_and_fs_paths_map_to_project_files() {
+    let root = TempDir::new("inspect-vite-source").expect("tempdir");
+    std::fs::create_dir_all(root.path().join("src")).expect("src dir");
+    std::fs::create_dir_all(root.path().join("my dir")).expect("spaced dir");
+    std::fs::write(root.path().join("src/app.css"), "").expect("app.css");
+    std::fs::write(root.path().join("my dir/app.css"), "").expect("spaced css");
+    let page = "http://127.0.0.1:7421/";
+    // Vite serves a transformed source file at its source path.
+    assert_eq!(
+        asset_file(page, "/src/app.css", root.path()).as_deref(),
+        Some("src/app.css")
+    );
+    assert_eq!(
+        asset_file(
+            page,
+            "http://127.0.0.1:7421/src/app.css?direct",
+            root.path()
+        )
+        .as_deref(),
+        Some("src/app.css")
+    );
+    // `/@fs/` carries an absolute path; the file is root-relative when it is under the root.
+    let fs_url = format!("{page}@fs{}", root.path().join("src/app.css").display());
+    assert_eq!(
+        asset_file(page, &fs_url, root.path()).as_deref(),
+        Some("src/app.css")
+    );
+    // Percent-encoded spaces decode before the file is checked.
+    assert_eq!(
+        asset_file(page, "/my%20dir/app.css", root.path()).as_deref(),
+        Some("my dir/app.css")
+    );
+    // A Next static chunk is not a source file: the entry keeps its URL.
+    assert_eq!(
+        asset_file(page, "/_next/static/css/x.css", root.path()),
+        None
+    );
+    // `@fs` outside the root stays unmapped.
+    let outside = TempDir::new("inspect-vite-outside").expect("tempdir");
+    std::fs::write(outside.path().join("x.css"), "").expect("outside css");
+    let outside_url = format!("{page}@fs{}", outside.path().join("x.css").display());
+    assert_eq!(asset_file(page, &outside_url, root.path()), None);
+}
+
+#[test]
+fn component_refs_are_root_relative_file_line_col() {
+    assert_eq!(
+        component_ref("src/App.tsx:12:5"),
+        Some(("src/App.tsx".to_owned(), 12, 5))
+    );
+    assert_eq!(
+        component_ref("./src/pages/Hero.vue:3:1"),
+        Some(("src/pages/Hero.vue".to_owned(), 3, 1))
+    );
+    // Malformed or out-of-contract values fall back to the document/CSS entries.
+    assert_eq!(component_ref("src/App.tsx"), None);
+    assert_eq!(component_ref("src/App.tsx:0:1"), None);
+    assert_eq!(component_ref("src/App.tsx:3:0"), None);
+    assert_eq!(component_ref("/abs/App.tsx:3:1"), None);
+    assert_eq!(component_ref("../outside/App.tsx:3:1"), None);
+    assert_eq!(component_ref(":3:1"), None);
+    assert_eq!(component_ref("src/App.tsx:three:1"), None);
 }
 
 #[test]

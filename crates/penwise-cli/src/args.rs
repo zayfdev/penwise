@@ -9,10 +9,11 @@ use crate::error::Error;
 pub enum Command {
     /// No arguments (the desktop entry) or `open`: the app window, with browser arguments after `--`.
     Open(Vec<String>),
-    /// `link [dir] [--yes]`.
+    /// `link [dir] [--yes] [--no-adapter]`.
     Link {
         dir: PathBuf,
         yes: bool,
+        no_adapter: bool,
     },
     /// `unlink [dir]`.
     Unlink {
@@ -27,7 +28,8 @@ pub enum Command {
 pub const USAGE: &str =
     "usage: penwise                      open the Penwise window (starts the server if needed)
        penwise open [browser args…]    the same, with extra arguments for the browser
-       penwise link [dir] [--yes]      link a project folder (default: the current folder)
+       penwise link [dir] [--yes] [--no-adapter]
+                                       link a project folder (default: the current folder)
        penwise unlink [dir]            drop the link and its registry entry
        penwise status                  linked projects and whether their dev servers answer";
 
@@ -53,10 +55,12 @@ pub fn parse(args: &[String]) -> Result<Command, Error> {
 /// `link [dir] [--yes]`, options anywhere.
 fn parse_link(rest: &[String]) -> Result<Command, Error> {
     let mut yes = false;
+    let mut no_adapter = false;
     let mut dir = None;
     for arg in rest {
         match arg.as_str() {
             "--yes" | "-y" => yes = true,
+            "--no-adapter" => no_adapter = true,
             option if option.starts_with('-') => return Err(unknown(option)),
             folder => {
                 if dir.replace(PathBuf::from(folder)).is_some() {
@@ -68,6 +72,7 @@ fn parse_link(rest: &[String]) -> Result<Command, Error> {
     Ok(Command::Link {
         dir: dir.unwrap_or_else(|| PathBuf::from(".")),
         yes,
+        no_adapter,
     })
 }
 

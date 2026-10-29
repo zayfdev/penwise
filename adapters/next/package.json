@@ -1,0 +1,27 @@
+{
+  "name": "@penwise/next",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "description": "Dev-only Next.js adapter that adds Penwise source attributes (data-pw-src) for webpack and Turbopack.",
+  "main": "./index.cjs",
+  "exports": {
+    ".": {
+      "import": "./index.mjs",
+      "require": "./index.cjs"
+    },
+    "./loader": "./loader.cjs",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.cjs",
+    "index.mjs",
+    "loader.cjs"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.cjs"
+  }
+}

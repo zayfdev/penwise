@@ -8,7 +8,7 @@ gate_lock := "flock /tmp/penwise-gate.lock"
 check:
     {{gate_lock}} just _check
 
-_check: fmt-check clippy test wasm-build wasm-test jni-symbols web-check sizes deny
+_check: fmt-check clippy test wasm-build wasm-test jni-symbols web-check adapters-check sizes deny
 
 fmt-check:
     cargo fmt --all --check
@@ -91,6 +91,11 @@ web-check:
 # Browser end to end: real server binary + headless Chromium.
 web-e2e:
     {{gate_lock}} sh -c 'cargo build -p penwise-server && cd web && npm run wasm && npm run e2e'
+
+# Framework adapters (adapters/): transform fixtures per framework, plus a real Vite dev-server test.
+adapters-check:
+    cd adapters/vite && npm install --package-lock=false --no-audit --no-fund && npm test
+    cd adapters/next && npm install --package-lock=false --no-audit --no-fund && npm test
 
 # PC mirror server on :7420 (PENWISE_PORT, PENWISE_WEB, PENWISE_DATA).
 serve: web
