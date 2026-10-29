@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installs Penwise for this user: release server and `penwise` CLI in ~/.local/bin, viewer in
+# Installs Penwise for this user: release server, `penwise` CLI and `penwise-mcp` in ~/.local/bin, viewer in
 # ~/.local/share/penwise-app/web, a systemd user service that runs the server from login on, and a "Penwise"
 # launcher (own app window) that runs `penwise`.
 # Re-run after pulling changes; it rebuilds and restarts the service. Data stays in ~/.local/share/penwise.
@@ -13,7 +13,7 @@ share="$HOME/.local/share"
 app="$share/penwise-app"
 units="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 
-cargo build --release -p penwise-server -p penwise-cli
+cargo build --release -p penwise-server -p penwise-cli -p penwise-mcp
 (cd web && npm run wasm && npm run build)
 
 mkdir -p "$bin" "$app" "$units" "$share/applications" "$share/icons/hicolor/scalable/apps"
@@ -22,6 +22,9 @@ mv "$bin/penwise-server.new" "$bin/penwise-server"
 # The launcher is the CLI itself: `penwise` with no arguments opens the app window (and starts the service).
 install -m 755 target/release/penwise "$bin/penwise.new"
 mv "$bin/penwise.new" "$bin/penwise"
+# The agent-facing MCP server; agents point at this absolute path (docs/mcp.md).
+install -m 755 target/release/penwise-mcp "$bin/penwise-mcp.new"
+mv "$bin/penwise-mcp.new" "$bin/penwise-mcp"
 install -m 644 desktop/penwise.service "$units/penwise.service"
 # The menu entry names the launcher by absolute path: desktop sessions do not always have ~/.local/bin on PATH.
 exec_path="$bin/penwise"

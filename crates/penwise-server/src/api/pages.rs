@@ -90,7 +90,7 @@ async fn create(
 
 /// The requested notebook, else the current page's, else the first live one; a library without any notebook
 /// gets a default one (created in `author`'s batch, ahead of the page).
-async fn pick_notebook(
+pub(crate) async fn pick_notebook(
     app: &AppState,
     catalog: &Catalog,
     requested: Option<&str>,
@@ -187,5 +187,11 @@ async fn select(
 ) -> Result<Json<Value>, ApiError> {
     let page = page_of(&app, Some(&id)).await?;
     app.storage.set_current_page(page).await?;
+    // Design harness M3 (hunt #17): the tablet and PC follow a page switch made over HTTP, like the one a
+    // client makes with `ClientMsg::SwitchPage`.
+    (app.announce_page)(page);
     Ok(Json(json!({ "active": page.to_string() })))
 }
+
+#[cfg(test)]
+mod tests;

@@ -237,6 +237,41 @@ impl Storage {
             .await?
     }
 
+    /// The op-log seq `agent` last read marks up to (design-harness C2); `None` before its first call.
+    ///
+    /// # Errors
+    /// `Sqlite`.
+    pub async fn agent_checkpoint(&self, agent: String) -> Result<Option<u64>, StorageError> {
+        self.read(move |conn| read::agent_checkpoint(conn, &agent))
+            .await
+    }
+
+    /// Records `agent`'s read checkpoint; every `GET /marks` call advances it.
+    ///
+    /// # Errors
+    /// `Closed`, `Sqlite`.
+    pub async fn set_agent_checkpoint(&self, agent: String, seq: u64) -> Result<(), StorageError> {
+        let at_ms = self.now_ms();
+        self.call(|reply| writer::Command::SetAgentCheckpoint {
+            agent,
+            seq,
+            at_ms,
+            reply,
+        })
+        .await?
+    }
+
+    /// `(id, updated_seq)` of every item row of `page`; the seq tells the agent what changed since a checkpoint.
+    ///
+    /// # Errors
+    /// `Sqlite`.
+    pub async fn item_seqs(
+        &self,
+        page: PageId,
+    ) -> Result<Vec<(penwise_core::item::ItemId, u64)>, StorageError> {
+        self.read(move |conn| read::item_seqs(conn, page)).await
+    }
+
     /// Restores `page` to its state at `to_seq` by appending compensating ops from the server device in one
     /// batch (design §3.5). Returns what was appended (empty when nothing differs) and the `skipped` items
     /// whose history before the log floor is gone and that changed since `to_seq`.

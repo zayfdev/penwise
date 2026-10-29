@@ -12,6 +12,7 @@ mod ollama;
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::Router;
 use axum::extract::{Query, State};
@@ -44,6 +45,29 @@ static RECOGNITION: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 pub(crate) struct PageText {
     pub text: String,
     pub cached: bool,
+}
+
+/// Why a deadline-bounded transcription returned nothing.
+#[derive(Debug)]
+pub(crate) enum Unavailable {
+    /// The model did not answer within the deadline.
+    Timeout,
+    /// The model is unreachable or replied with an error.
+    Failed(String),
+}
+
+/// Transcribes `png` within `wait`, for callers that must answer an agent quickly (the mark bundle). The page
+/// path uses [`page_text`] instead, which may wait for a slow CPU model.
+pub(crate) async fn transcribe_deadline(
+    url: &str,
+    png: Vec<u8>,
+    wait: Duration,
+) -> Result<String, Unavailable> {
+    match tokio::time::timeout(wait, ollama::transcribe(url, png)).await {
+        Err(_) => Err(Unavailable::Timeout),
+        Ok(Err(message)) => Err(Unavailable::Failed(message)),
+        Ok(Ok(text)) => Ok(text),
+    }
 }
 
 /// Renders `scale` to use: pages are read at a scale that keeps small handwriting legible without huge images.

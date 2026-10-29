@@ -3,19 +3,21 @@
 //! JSON-RPC 2.0 over stdin/stdout, MCP `initialize` / `tools/list` / `tools/call`. It talks to the Penwise server
 //! over plain HTTP on the loopback interface, so it needs no TLS stack and no async runtime.
 //!
-//! Tools: `penwise_page_png` (render the page), `penwise_page_status` (stroke count).
+//! Tools: `penwise_page_png` (render the page), `penwise_page_status` (stroke count), and the design-harness
+//! tools in [`design`] (mark bundles, frames, project list).
 #![allow(
     clippy::print_stdout,
     clippy::print_stderr,
     reason = "stdout is the MCP transport; diagnostics go to stderr"
 )]
 
-use std::fmt::Write as _;
 use std::io::{BufRead, Write};
 
 const SERVER_NAME: &str = "penwise";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const DEFAULT_PROTOCOL: &str = "2024-11-05";
+mod base64;
+mod design;
 mod endpoint;
 mod pictures;
 mod tools;
@@ -86,7 +88,7 @@ fn initialize(request: &serde_json::Value) -> serde_json::Value {
         "protocolVersion": version,
         "capabilities": { "tools": { "listChanged": false } },
         "serverInfo": { "name": SERVER_NAME, "version": SERVER_VERSION },
-        "instructions": "Penwise: the user's pen tablet page. Use penwise_page_png to look at what they drew.",
+        "instructions": "Penwise: the user's pen tablet page. Use penwise_page_png to look at what they drew; on linked projects use penwise_marks to read marks on a frame (kind, colour, handwriting, element, source lines, crops).",
     })
 }
 
@@ -98,6 +100,9 @@ fn call_tool(
         .pointer("/params/name")
         .and_then(serde_json::Value::as_str)
         .unwrap_or("");
+    if let Some(result) = design::tool(name, request, endpoint) {
+        return result;
+    }
     if matches!(
         name,
         "penwise_place_image"
@@ -121,7 +126,7 @@ fn call_tool(
             Ok(serde_json::json!({
                 "content": [
                     { "type": "text", "text": format!("Penwise page, {} PNG bytes at scale {scale}.", png.len()) },
-                    { "type": "image", "mimeType": "image/png", "data": base64(&png) }
+                    { "type": "image", "mimeType": "image/png", "data": base64::encode(&png) }
                 ]
             }))
         }
@@ -217,7 +222,7 @@ pub(crate) fn get_text(
 }
 
 /// `POST path` with the call's `arguments` as JSON, returned as a text content block.
-fn post_arguments(
+pub(crate) fn post_arguments(
     request: &serde_json::Value,
     endpoint: &Endpoint,
     path: &str,
@@ -226,7 +231,7 @@ fn post_arguments(
 }
 
 /// `POST path` with an explicit body, returned as a text content block.
-fn post_text(
+pub(crate) fn post_text(
     endpoint: &Endpoint,
     path: &str,
     body: &str,
@@ -262,31 +267,6 @@ pub(crate) fn text_content(text: &str) -> serde_json::Value {
 
 pub(crate) fn error(code: i32, message: &str) -> serde_json::Value {
     serde_json::json!({ "code": code, "message": message })
-}
-
-/// Standard base64 (RFC 4648, with padding) for the image content block.
-fn base64(data: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
-    for chunk in data.chunks(3) {
-        let b = [
-            chunk[0],
-            *chunk.get(1).unwrap_or(&0),
-            *chunk.get(2).unwrap_or(&0),
-        ];
-        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
-        for shift in [18, 12, 6, 0] {
-            let _ = write!(out, "{}", ALPHABET[((n >> shift) & 0x3F) as usize] as char);
-        }
-        if chunk.len() < 3 {
-            let pad = 3 - chunk.len();
-            out.truncate(out.len() - pad);
-            for _ in 0..pad {
-                out.push('=');
-            }
-        }
-    }
-    out
 }
 
 #[cfg(test)]

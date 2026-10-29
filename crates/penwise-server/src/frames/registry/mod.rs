@@ -172,6 +172,16 @@ impl Registry {
         store::list(&self.data_dir).await
     }
 
+    /// The URL a browser on this machine opens `project` at (`http://<host>:<port>`, the host being this
+    /// machine's loopback when the server listens on every interface).
+    pub(crate) fn url(&self, project: &Project) -> String {
+        let host = match self.host.as_str() {
+            "" | "0.0.0.0" | "::" | "[::]" => "127.0.0.1",
+            host => host,
+        };
+        format!("http://{host}:{}", project.port)
+    }
+
     /// One registered project.
     pub(crate) async fn get(&self, id: &str) -> Result<Option<Project>, ApiError> {
         store::get(&self.data_dir, id).await

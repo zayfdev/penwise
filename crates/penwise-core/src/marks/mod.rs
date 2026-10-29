@@ -20,6 +20,10 @@
 //! stroke falls back to its [`Binding::anchor`] (the page position it was drawn at) with scroll 0 and no states.
 
 mod binding;
+mod classify;
+mod classify_arrow;
+mod classify_shapes;
+mod colour;
 mod group;
 mod layout;
 mod mark;
@@ -27,6 +31,8 @@ mod place;
 mod view;
 
 pub use binding::{Binding, BindingMode, MAX_KEY_LEN, MAX_STATE_LEN};
+pub use classify::{MarkKind, MarkShape, classify, classify_with_rect};
+pub use colour::{ColourMeaning, colour_meaning};
 pub use group::{BoundStroke, GROUP_DISTANCE_PX, GROUP_GAP_MS, add_bound_stroke, prune_marks};
 pub use layout::{FrameLayout, FrameLayoutUpdate, FrameLayouts, FrameRect};
 pub use mark::{MAX_MARK_STROKES, MarkItem, MarkStatus, mark_of, set_mark_status};

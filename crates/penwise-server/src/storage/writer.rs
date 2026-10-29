@@ -37,6 +37,12 @@ pub(crate) enum Command {
         page: PageId,
         reply: oneshot::Sender<Result<(), StorageError>>,
     },
+    SetAgentCheckpoint {
+        agent: String,
+        seq: u64,
+        at_ms: u64,
+        reply: oneshot::Sender<Result<(), StorageError>>,
+    },
     Restore {
         page: PageId,
         to_seq: u64,
@@ -45,6 +51,21 @@ pub(crate) enum Command {
     Compact {
         reply: oneshot::Sender<Result<compact::Step, StorageError>>,
     },
+}
+
+/// Upserts one agent's read checkpoint (server-local metadata beside the op log).
+fn set_agent_checkpoint(
+    conn: &Connection,
+    agent: &str,
+    seq: u64,
+    at_ms: u64,
+) -> Result<(), StorageError> {
+    conn.execute(
+        "INSERT INTO agent_checkpoints (agent, seq, updated_ms) VALUES (?1, ?2, ?3)
+         ON CONFLICT(agent) DO UPDATE SET seq = excluded.seq, updated_ms = excluded.updated_ms",
+        params![agent, to_i64(seq), to_i64(at_ms)],
+    )?;
+    Ok(())
 }
 
 /// State of the writer thread.
@@ -154,6 +175,14 @@ impl Writer {
             }
             Command::SetCurrentPage { page, reply } => {
                 let _ = reply.send(meta_put(&self.conn, "current_page", &page.0));
+            }
+            Command::SetAgentCheckpoint {
+                agent,
+                seq,
+                at_ms,
+                reply,
+            } => {
+                let _ = reply.send(set_agent_checkpoint(&self.conn, &agent, seq, at_ms));
             }
             Command::Restore {
                 page,

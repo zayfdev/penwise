@@ -760,7 +760,16 @@
   }
 
   // The Android WebView has no parent window: the host calls this directly (or window.postMessage).
-  window.PenwiseBridge = { receive: receive };
+  // The server's headless page also uses the resolvers (`resolveKey`, `selectorOf`, `stateOf`) to answer an
+  // agent's mark bundle (design-harness §7.2 C2) without re-implementing the key format.
+  window.PenwiseBridge = {
+    receive: receive,
+    resolveKey: resolveKey,
+    selectorOf: selectorOf,
+    stateOf: function () {
+      return state;
+    }
+  };
 
   window.addEventListener(
     "message",

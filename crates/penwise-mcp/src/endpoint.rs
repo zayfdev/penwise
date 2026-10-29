@@ -67,8 +67,10 @@ impl Endpoint {
     ) -> Result<Vec<u8>, String> {
         let mut stream = TcpStream::connect((self.host.as_str(), self.port))
             .map_err(|e| format!("connect: {e}"))?;
+        // A mark bundle opens a headless page and may read handwriting (the server caps OCR at ~20 s), so the
+        // client waits longer than a plain page render.
         stream
-            .set_read_timeout(Some(Duration::from_secs(30)))
+            .set_read_timeout(Some(Duration::from_secs(60)))
             .map_err(|e| e.to_string())?;
         let mut request = format!(
             "{method} {path} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n",

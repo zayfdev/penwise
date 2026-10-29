@@ -157,11 +157,71 @@ const TOOLS: &str = r##"{
     },
     {
       "name": "penwise_switch_page",
-      "description": "Make a page the active one (what other tools address by default).",
+      "description": "Make a page the active one for the HTTP tools and tell the tablet and browser windows to follow.",
       "inputSchema": {
         "type": "object",
         "properties": { "page": { "type": "string" } },
         "required": ["page"]
+      }
+    },
+    {
+      "name": "penwise_projects",
+      "description": "Linked design projects: id, name, root, kind (static or proxy), dev origin, port, notebook. Use the id in the frame and mark tools.",
+      "inputSchema": { "type": "object", "properties": {} }
+    },
+    {
+      "name": "penwise_frame_open",
+      "description": "Open a project route as a live frame on a page. Without `page`, the project's \"<name> review\" notebook page is used (created if missing) and the frame goes right of the existing ones.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project": { "type": "string", "description": "Project id from penwise_projects." },
+          "route": { "type": "string", "description": "Same-origin path on the project, e.g. \"/\" or \"/work?tag=one\"." },
+          "preset": { "type": "string", "enum": ["phone", "tablet", "desktop", "custom"], "description": "Frame size preset (phone 390×844, tablet 834×1194, desktop 1440×900)." },
+          "page": { "type": "string", "description": "Page id; defaults to the project's review page." }
+        },
+        "required": ["project", "route", "preset"]
+      }
+    },
+    {
+      "name": "penwise_frame_snapshot",
+      "description": "PNG of a frame's live page at its size preset; `ink` includes the owner's marks (default true).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "frame": { "type": "string", "description": "Frame item id." },
+          "ink": { "type": "boolean", "description": "Include the owner's ink (default true)." }
+        },
+        "required": ["frame"]
+      }
+    },
+    {
+      "name": "penwise_marks",
+      "description": "Mark bundles for what the owner drew on a frame: kind guess (from/to elements for arrows), colour meaning, OCR text, the element (selector, role, text, styles, rect, source file:line rules) and crop images. Advances the agent's checkpoint.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project": { "type": "string", "description": "Only marks on this project's frames." },
+          "page": { "type": "string", "description": "Only marks on this page." },
+          "frame": { "type": "string", "description": "Only marks on this frame." },
+          "status": { "type": "string", "enum": ["new", "seen", "done", "reopened", "all"], "description": "Status filter; the default is new plus reopened." },
+          "since": { "type": "string", "description": "\"last\" (default) = created or changed since this agent's previous check; \"none\" = no checkpoint filter." },
+          "agent": { "type": "string", "description": "Checkpoint name, so several agents each see their own new marks (default \"agent\")." },
+          "images": { "type": "string", "enum": ["none", "with_ink", "all"], "description": "Image blocks to return: with_ink (default), all (with_ink + context), or none." }
+        }
+      }
+    },
+    {
+      "name": "penwise_mark_status",
+      "description": "Set a mark's status: seen after reading it, done after the edit landed, reopened when it needs another look.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "description": "Mark id from penwise_marks." },
+          "status": { "type": "string", "enum": ["seen", "done", "reopened", "new"] },
+          "note": { "type": "string", "description": "Optional note for the owner." }
+        },
+        "required": ["id", "status"]
       }
     }
   ]

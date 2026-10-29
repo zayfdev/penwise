@@ -7,21 +7,23 @@ loopback HTTP, so start the server first:
 cd ~/workspace/penwise && just serve        # :7420
 ```
 
-Then point the agent at the binary (the server's data directory must be a v4 library: run
+Then point the agent at the installed binary (the server's data directory must be a v4 library: run
 `penwise-server migrate --db <path>` once on a pre-rewrite one):
 
 ```json
 {
   "mcpServers": {
     "penwise": {
-      "command": "/home/user/workspace/penwise/target/debug/penwise-mcp",
+      "command": "/home/user/.local/bin/penwise-mcp",
       "env": { "PENWISE_PORT": "7420" }
     }
   }
 }
 ```
 
-Build it with `cargo build -p penwise-mcp` (or `just mcp` to run it by hand).
+`scripts/install-desktop.sh` builds the release binary and installs it to `~/.local/bin/penwise-mcp`.
+From source: `cargo build -p penwise-mcp` (or `just mcp` to run it by hand); the debug build lives at
+`target/debug/penwise-mcp` if you want to point the config there instead.
 
 ## Tools
 
@@ -36,11 +38,16 @@ Build it with `cargo build -p penwise-mcp` (or `just mcp` to run it by hand).
 | `penwise_create_notebook` | `{title}` | `{"notebook":{…},"meta":{…}}` |
 | `penwise_page_text` | `{page?, refresh?}` | `{"page":…,"text":"…","cached":bool}` — handwriting as text |
 | `penwise_search` | `{query}` | `{"query":…,"hits":[{page,title,snippet}]}` over pages already read |
-| `penwise_switch_page` | `{page}` | `{"active":"<page id>"}` |
+| `penwise_switch_page` | `{page}` | `{"active":"<page id>"}` — also broadcasts `SwitchPage` so tablet and browser follow |
 | `penwise_place_image` | `{path? \| asset?, x, y, w?, h?, label?, page?}` | the placed picture `{id, asset, x, y, w, h, label}` |
 | `penwise_list_images` | `{page?}` | `{"page":"<page id>","images":[…]}` |
 | `penwise_remove_image` | `{id, page?}` | `{"removed":1}` |
 | `penwise_page_annotations` | `{page?}` | `{"elements":[{selector, strokes, rect, text}],"unanchored":n}` |
+| `penwise_projects` | — | `[{id, name, root, kind, origin?, static?, port, notebook}]` — linked design projects |
+| `penwise_frame_open` | `{project, route, preset, page?}` | `{"page":"<page id>","frame":"<item id>"}` — a live page as a frame (default page: the project's `<name> review`, created if missing) |
+| `penwise_frame_snapshot` | `{frame, ink?}` | PNG image content of the frame at its preset; `ink` includes the owner's marks (default true) |
+| `penwise_marks` | `{project?, page?, frame?, status?, since?, agent?, images?}` | mark bundles (§7.2) as a text block, plus `with_ink` and `context` image blocks per mark |
+| `penwise_mark_status` | `{id, status: seen\|done\|reopened\|new, note?}` | `{"id":…,"status":…}` |
 
 The MCP server finds the access token itself: `PENWISE_TOKEN`, else `~/.local/share/penwise/token` (where the
 server writes it). Set `PENWISE_TOKEN` explicitly if the server uses a different data directory.
@@ -53,6 +60,28 @@ server writes it). Set `PENWISE_TOKEN` explicitly if the server uses a different
 separate `agent` layer (ordinary stroke items authored by the server device), so they sync to the tablet and
 browser, render in the PNG, persist with the page, and clear as a set. Promoting a mark to ink on the tablet
 (`Update{layer}`) takes it out of the set `penwise_clear_agent_marks` removes.
+
+## Design harness
+
+`penwise_projects` → `penwise_frame_open` puts a linked project's route on a canvas page as a frame; the owner
+draws on the frame; `penwise_marks` returns each mark as a bundle (spec §7.2): the kind guess (`circle`, `arrow`
+with `from`/`to` elements, `cross`, `wavy`, `box_new`, `strike`, `underline`, `free`, with a confidence), the
+colour meaning (`problem` red, `idea` blue, `good` green), OCR text of the ink, the element (`selector`, `role`,
+`text`, `styles`, `rect`, and `source` `file:line` entries including the matching CSS rules) and three crop URLs.
+
+`penwise_marks` returns the bundle JSON as one text block, then one image content block per mark for `with_ink`
+(default) and `context` (`images: "all"`); `images: "none"` skips the pictures when only the facts are needed.
+`since: "last"` (the default) returns marks created or changed after this agent's previous call, so repeated
+checks do not repeat themselves. The checkpoint is stored per `agent` name (default `"agent"`), because two
+agents — a terminal session and a review session — each need their own "since my last check". A call with no
+`status` returns `new` plus `reopened` marks.
+
+`penwise_mark_status` moves a mark along: `seen` after reading it, `done` once the edit landed (done marks hide
+on the tablet and PC window), `reopened` when the owner questions a finished edit. Status changes are ordinary
+synced ops, so they undo like any other edit.
+
+`penwise_switch_page` selects a page for the HTTP tools *and* tells every connected tablet and browser to follow
+(`ServerMsg::SwitchPage`), so the owner's screen changes with the agent's.
 
 ## Endpoints the MCP server uses
 
@@ -68,11 +97,22 @@ browser, render in the PNG, persist with the page, and clear as a set. Promoting
 | `GET/POST/PATCH/DELETE /pages…`, `POST /pages/<id>/select`, `POST /notebooks`, `PATCH/DELETE /notebooks/<id>` | Page and notebook catalog (ops from the server device) |
 | `GET /pages/<id>/history` | Op batches of the page, newest first (`last_seq` is a restore target) |
 | `POST /pages/<id>/restore?to_seq=N` | Compensating ops back to the page as of seq `N` (404 unknown page / never-logged seq, 410 below the retained log) |
+| `GET /projects` | Linked projects: id, name, root, kind, origin/static dir, port, notebook |
+| `POST /frames/open` | `{project, route, preset, page?}` → `{"page","frame"}`: a frame on the project's review page, right of the existing ones |
+| `GET /frames/<id>/snapshot.png?ink=…` | The frame's page at its preset, with or without the owner's ink |
+| `GET /marks?project=&page=&frame=&status=&since=last&agent=…` | Mark bundles plus the agent's `checkpoint`; `since=last` is that agent's previous call |
+| `POST /marks/<id>/status` | `{"status"}` — a synced, undoable status edit |
+| `GET /marks/<id>/image/<with_ink\|without_ink\|context>.png` | The bundle's crops |
 | `GET /` | Static viewer files from `PENWISE_WEB` (`web/dist`, see `docs/draw.md`) |
 | `WS /sync` | Binary postcard sync protocol (tablet, browser): `docs/rewrite-design.md` §4 |
 
 ## Verified
 
-- Handshake (`initialize`), `tools/list`, and both `tools/call`s answered over stdin/stdout.
+- Handshake (`initialize`), `tools/list`, and `tools/call`s answered over stdin/stdout.
 - `penwise_page_png` returned a valid base64 PNG (magic bytes checked) matching `GET /page.png`.
 - `penwise_page_status` returned the live stroke count.
+- `crates/penwise-mcp/tests/tools.rs` drives every documented tool against an in-process server.
+- `crates/penwise-mcp/tests/design.rs` links a static project, opens a frame with `penwise_frame_open`, adds a
+  mark through the sync protocol, reads it back with `penwise_marks` (kind, colour, element source lines, three
+  crop URLs, base64 PNG blocks), moves it to `seen` with `penwise_mark_status` and fetches the frame with
+  `penwise_frame_snapshot`. It skips when Chromium is not installed (the bundle needs the inspect browser).

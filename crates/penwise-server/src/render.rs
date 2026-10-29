@@ -216,6 +216,33 @@ pub(crate) fn ink_stroke_ids(view: &PageView) -> BTreeSet<ItemId> {
         .collect()
 }
 
+/// `scene` with only its live ink-layer strokes and the masks that cut them: what a frame or mark crop draws.
+/// Frames draw a placeholder box, pictures and text draw nothing an agent asked to see.
+pub(crate) fn ink_only(scene: &Scene) -> Result<Scene, RenderError> {
+    let kept: BTreeSet<ItemId> = scene
+        .live_ids()
+        .into_iter()
+        .filter(|id| {
+            scene.get(*id).is_some_and(|item| {
+                item.layer == Layer::Ink && matches!(item.kind, ItemKind::Stroke(_))
+            })
+        })
+        .collect();
+    let picked = scene
+        .live_ids()
+        .into_iter()
+        .filter_map(|id| scene.get(id))
+        .filter(|item| match &item.kind {
+            ItemKind::Stroke(_) => true,
+            ItemKind::Erase(erase) => kept.contains(&erase.target),
+            _ => false,
+        });
+    Ok(Scene::from_items(
+        scene.kind(),
+        picked.map(|item| (item.clone(), false)),
+    )?)
+}
+
 /// The page's live ink-layer strokes and their precise-erase masks, nothing else.
 fn strokes_only(view: &PageView) -> Result<Scene, RenderError> {
     let kept = ink_stroke_ids(view);

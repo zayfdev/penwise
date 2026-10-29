@@ -16,8 +16,12 @@ raster = ["dep:tiny-skia"]
 i_overlay.workspace = true
 libm.workspace = true
 rstar.workspace = true
+serde.workspace = true
 thiserror.workspace = true
 tiny-skia = { workspace = true, optional = true }
+
+[dev-dependencies]
+serde_json.workspace = true
 
 # Wasm-only dev-dep keeps native/Android dependency graphs clean (core-determinism.md §4).
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]

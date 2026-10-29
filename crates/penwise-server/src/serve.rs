@@ -153,6 +153,11 @@ pub async fn serve(
         addr.ip().to_string(),
         config.project_port_base,
     ));
+    let announce_page: crate::api::PageAnnouncer = {
+        let hub = Arc::clone(&hub);
+        let by = storage.server_device();
+        Arc::new(move |page| hub.announce_switch_page(page, by))
+    };
     let app = AppState {
         storage: storage.clone(),
         token,
@@ -168,6 +173,8 @@ pub async fn serve(
         ocr_url: Arc::new(config.ocr_url),
         inspect: Arc::clone(&inspect),
         projects: Arc::clone(&projects),
+        announce_page,
+        images: Arc::new(crate::agent::ImageCache::default()),
     };
     let router = Router::new()
         .merge(api::router(app))

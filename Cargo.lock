@@ -996,6 +996,8 @@ dependencies = [
  "i_overlay",
  "libm",
  "rstar",
+ "serde",
+ "serde_json",
  "thiserror",
  "tiny-skia",
  "wasm-bindgen-test",
@@ -1036,9 +1038,11 @@ name = "penwise-mcp"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "penwise-core",
  "penwise-proto",
  "penwise-server",
  "penwise-testkit",
+ "reqwest",
  "serde",
  "serde_json",
  "tiny-skia",

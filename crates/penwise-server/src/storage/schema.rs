@@ -121,6 +121,16 @@ CREATE TABLE IF NOT EXISTS projects (
 ) STRICT;
 ";
 
+/// Agent checkpoints (design-harness spec §7.1, C2): the op-log seq each agent last read marks up to.
+/// Server-local, never synced. Additive within v4 (`IF NOT EXISTS`), like the project registry.
+const AGENT_CHECKPOINTS_DDL: &str = "
+CREATE TABLE IF NOT EXISTS agent_checkpoints (
+  agent TEXT PRIMARY KEY,
+  seq INTEGER NOT NULL,
+  updated_ms INTEGER NOT NULL
+) STRICT;
+";
+
 /// Creates the v4 tables inside `tx` (no version bump).
 ///
 /// # Errors
@@ -129,6 +139,7 @@ pub fn create_v4(tx: &Transaction<'_>) -> Result<(), StorageError> {
     tx.execute_batch(V4_DDL)?;
     tx.execute_batch(PURGED_DDL)?;
     tx.execute_batch(PROJECTS_DDL)?;
+    tx.execute_batch(AGENT_CHECKPOINTS_DDL)?;
     Ok(())
 }
 
@@ -142,6 +153,7 @@ pub fn ensure_current(conn: &mut Connection) -> Result<(), StorageError> {
         SCHEMA_VERSION => {
             conn.execute_batch(PURGED_DDL)?;
             conn.execute_batch(PROJECTS_DDL)?;
+            conn.execute_batch(AGENT_CHECKPOINTS_DDL)?;
             Ok(())
         }
         0 => {

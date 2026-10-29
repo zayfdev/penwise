@@ -1,6 +1,7 @@
 //! Session tests: a real [`Hub`] and session task over channels, an in-memory store, no sockets.
 
 mod adapter;
+mod announce;
 mod cursor;
 mod delivery;
 mod fake;

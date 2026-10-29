@@ -30,6 +30,8 @@ pub(crate) struct Rig {
     pub assets: Arc<Assets>,
     /// Handwriting model endpoint handed to handlers (empty = none reachable).
     pub ocr_url: String,
+    /// Pages announced through `announce_page` (`POST /pages/<id>/select`), in call order.
+    pub announced: Arc<std::sync::Mutex<Vec<PageId>>>,
     now: Arc<AtomicU64>,
     ids: IdGen,
     device: DeviceId,
@@ -53,6 +55,7 @@ impl Rig {
             storage,
             assets,
             ocr_url: String::new(),
+            announced: Arc::default(),
             now,
             ids,
             device,
@@ -93,17 +96,32 @@ impl Rig {
             ocr_url: Arc::new(self.ocr_url.clone()),
             inspect: Arc::new(crate::inspect::Inspect::new()),
             projects,
+            announce_page: {
+                let announced = Arc::clone(&self.announced);
+                Arc::new(move |page| {
+                    announced
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .push(page);
+                })
+            },
+            images: Arc::new(crate::agent::ImageCache::default()),
         }
     }
 
     /// Serves `routes` (no auth layer) on 127.0.0.1:0; returns the base URL. The peer address is available, so
     /// handlers that care about loopback behave as in production.
     pub(crate) async fn serve(&self, routes: axum::Router<AppState>) -> String {
+        self.serve_app(routes, self.app()).await
+    }
+
+    /// [`Rig::serve`] with a caller-built state (shared registry and browser, or an observed announcer).
+    pub(crate) async fn serve_app(&self, routes: axum::Router<AppState>, app: AppState) -> String {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind");
         let addr = listener.local_addr().expect("addr");
-        let router = routes.with_state(self.app());
+        let router = routes.with_state(app);
         tokio::spawn(async move {
             let router = router.into_make_service_with_connect_info::<std::net::SocketAddr>();
             axum::serve(listener, router).await

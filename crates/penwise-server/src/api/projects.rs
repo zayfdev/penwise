@@ -30,12 +30,13 @@ use crate::storage::random::random_u128;
 
 /// The project routes. Unlike the rest of the API they accept a same-machine request without the token, so
 /// `penwise link` works from a local terminal without copying the token around (the rule of `/pair/local`).
-pub(super) fn routes(token: Arc<String>) -> Router<AppState> {
+pub(crate) fn routes(token: Arc<String>) -> Router<AppState> {
     Router::new()
         .route("/projects", get(list).post(link))
         .route("/projects/{id}", delete(remove))
         .route("/pages/{id}/frames", post(frame_create))
         .merge(super::project_marks::routes())
+        .merge(crate::agent::routes())
         .layer(middleware::from_fn_with_state(token, require))
 }
 

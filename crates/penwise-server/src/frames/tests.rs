@@ -183,7 +183,8 @@ async fn static_port_serves_injected_pages_and_plain_assets() {
     );
     assert_eq!(
         index.headers.get(header::CACHE_CONTROL).unwrap(),
-        "no-store"
+        "no-cache",
+        "Chromium keeps the document for source mapping; no validators means it still refetches"
     );
     let html = String::from_utf8(index.body).unwrap();
     assert!(html.contains(BRIDGE_TAG), "{html}");

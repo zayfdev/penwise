@@ -16,10 +16,12 @@ serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+penwise-core = { path = "../penwise-core" }
 penwise-proto = { path = "../penwise-proto" }
 penwise-server = { path = "../penwise-server" }
 penwise-testkit = { path = "../penwise-testkit" }
 axum.workspace = true
+reqwest.workspace = true
 tiny-skia.workspace = true
 tokio.workspace = true
 

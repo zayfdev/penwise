@@ -98,7 +98,10 @@ impl Site {
         (
             [
                 (header::CONTENT_TYPE, content_type),
-                (header::CACHE_CONTROL, "no-store"),
+                // Not `no-store`: Chromium then drops the document resource, and `Page.getResourceContent`
+                // (the HTML half of the `file:line` source mapping) cannot read it back. No validators are
+                // sent, so every load still reaches this handler, and live reload is unaffected.
+                (header::CACHE_CONTROL, "no-cache"),
             ],
             body,
         )

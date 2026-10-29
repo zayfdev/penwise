@@ -224,3 +224,35 @@ pub(crate) fn resolve_alias(
 pub(crate) fn current_page(conn: &Connection) -> Result<Option<PageId>, StorageError> {
     Ok(meta_get(conn, "current_page")?.and_then(|b| PageId::from_slice(&b)))
 }
+
+/// The op-log seq `agent` last read marks up to (`None` before its first call).
+pub(crate) fn agent_checkpoint(
+    conn: &Connection,
+    agent: &str,
+) -> Result<Option<u64>, StorageError> {
+    let seq: Option<i64> = conn
+        .query_row(
+            "SELECT seq FROM agent_checkpoints WHERE agent = ?1",
+            [agent],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(seq.map(to_u64))
+}
+
+/// `(id, updated_seq)` of every item row of `page` (tombstones included; callers intersect with the live scene).
+pub(crate) fn item_seqs(
+    conn: &Connection,
+    page: PageId,
+) -> Result<Vec<(ItemId, u64)>, StorageError> {
+    let mut stmt = conn.prepare("SELECT id, updated_seq FROM items WHERE page = ?1")?;
+    let rows = stmt.query_map([&page.0[..]], |r| {
+        Ok((r.get::<_, [u8; 16]>(0)?, r.get::<_, i64>(1)?))
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        let (id, seq) = row?;
+        out.push((ItemId(id), to_u64(seq)));
+    }
+    Ok(out)
+}

@@ -12,10 +12,10 @@ mod author;
 mod error;
 mod marks;
 mod notebooks;
-mod pages;
+pub(crate) mod pages;
 mod pair;
 mod project_marks;
-mod projects;
+pub(crate) mod projects;
 mod resolve;
 mod restore;
 mod status;
@@ -30,6 +30,8 @@ use axum::http::Uri;
 use axum::middleware;
 use axum::response::Response;
 use axum::routing::{get, post};
+
+use penwise_proto::PageId;
 
 use crate::assets::Assets;
 use crate::pairing::Pairing;
@@ -58,11 +60,19 @@ pub struct AppState {
     pub assets: Arc<Assets>,
     /// Base URL of the handwriting model (`ServerConfig::ocr_url`).
     pub ocr_url: Arc<String>,
-    /// The headless browser behind `/inspect/*` and source mapping.
+    /// The headless browser behind `/inspect/*`, source mapping and the agent bundle.
     pub(crate) inspect: Arc<crate::inspect::Inspect>,
     /// Linked projects and their live ports.
     pub(crate) projects: Arc<crate::frames::registry::Registry>,
+    /// Broadcasts a page switch to the connected devices (`POST /pages/<id>/select` and the agent's
+    /// `penwise_switch_page`).
+    pub(crate) announce_page: PageAnnouncer,
+    /// Mark crops built by `GET /marks`, served by `GET /marks/<id>/image/<kind>.png`.
+    pub(crate) images: Arc<crate::agent::ImageCache>,
 }
+
+/// Tells every sync session to switch to a page.
+pub(crate) type PageAnnouncer = Arc<dyn Fn(PageId) + Send + Sync>;
 
 /// The HTTP router (without `/sync`, which `serve` merges).
 pub fn router(app: AppState) -> Router {

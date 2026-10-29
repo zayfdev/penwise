@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use penwise_proto::PageId;
 use penwise_proto::message::{HANDSHAKE_TIMEOUT_MS, IDLE_TIMEOUT_MS, PING_INTERVAL_MS};
+use penwise_proto::{DeviceId, PageId, ServerMsg, encode_server};
 use tokio::sync::{broadcast, watch};
 
 use super::limiter::HandshakeLimiter;
@@ -117,6 +117,25 @@ impl<S: SyncStore> Hub<S> {
     pub(super) fn publish_live(&self, event: LiveEvent) {
         // No receivers is normal (nobody else connected).
         let _ = self.live.send(event);
+    }
+
+    /// Broadcasts a server-authored frame to every session, with no originating session (the HTTP API is not
+    /// one). Used for `SwitchPage` after `POST /pages/<id>/select`, so the tablet and PC follow the agent.
+    pub fn announce(&self, page: Option<PageId>, msg: &ServerMsg) {
+        match encode_server(msg) {
+            Ok(frame) => self.publish_live(LiveEvent {
+                origin: 0,
+                page,
+                frame: frame.into(),
+            }),
+            Err(error) => tracing::debug!(%error, "live frame not encodable; dropped"),
+        }
+    }
+
+    /// `SwitchPage` from the HTTP API: every connected device moves to `page` (`by` is the server device, so
+    /// no session mistakes it for its own switch).
+    pub fn announce_switch_page(&self, page: PageId, by: DeviceId) {
+        self.announce(None, &ServerMsg::SwitchPage { page, by });
     }
 
     pub(super) fn handshake_allowed(&self, peer: Option<IpAddr>) -> bool {
