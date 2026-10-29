@@ -269,6 +269,34 @@ impl Inspect {
         element::info_for(page, node).await
     }
 
+    /// Evaluates `expression` in the page's main frame and returns its JSON value. Debug/test helper: the
+    /// bridge and frame tests drive the page with it.
+    ///
+    /// # Errors
+    /// The browser could not evaluate it, or the expression threw.
+    pub async fn eval(&self, page: &Page, expression: &str) -> Result<Value, Error> {
+        if expression.trim().is_empty() {
+            return Err(Error::Invalid("expression is empty".to_owned()));
+        }
+        let evaluated = page
+            .command(
+                "Runtime.evaluate",
+                json!({
+                    "expression": expression,
+                    "returnByValue": true,
+                    "awaitPromise": true,
+                }),
+            )
+            .await?;
+        if evaluated.get("exceptionDetails").is_some() {
+            let reason = evaluated["exceptionDetails"]["text"]
+                .as_str()
+                .unwrap_or("unknown error");
+            return Err(Error::Cdp(format!("page script failed: {reason}")));
+        }
+        Ok(evaluated["result"]["value"].clone())
+    }
+
     /// Graceful shutdown: closes Chromium and waits for the child. Called by the server before it exits.
     pub async fn shutdown(&self) {
         self.browser.shutdown().await;

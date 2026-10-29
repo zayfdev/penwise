@@ -44,6 +44,8 @@ pub struct ServerConfig {
     pub urls: Vec<String>,
     /// Base URL of the local vision model (Ollama) that reads handwriting.
     pub ocr_url: String,
+    /// First port for linked projects (`PENWISE_PROJECT_PORT`, else [`DEFAULT_PORT_BASE`]).
+    pub project_port_base: u16,
 }
 
 impl ServerConfig {
@@ -61,6 +63,11 @@ impl ServerConfig {
             urls: Vec::new(),
             ocr_url: std::env::var("PENWISE_OCR_URL")
                 .unwrap_or_else(|_| DEFAULT_OCR_URL.to_owned()),
+            project_port_base: std::env::var("PENWISE_PROJECT_PORT")
+                .ok()
+                .and_then(|port| port.parse().ok())
+                .filter(|port: &u16| *port != 0)
+                .unwrap_or(crate::frames::registry::DEFAULT_PORT_BASE),
         }
     }
 }
@@ -77,13 +84,15 @@ pub struct ServerHandle {
     pub pairing: Arc<Pairing>,
     task: JoinHandle<()>,
     inspect: Arc<Inspect>,
+    projects: Arc<crate::frames::registry::Registry>,
 }
 
 impl ServerHandle {
-    /// Closes every session (`Error{ShuttingDown}`), stops accepting, closes Chromium and waits for the listener
-    /// to finish.
+    /// Closes every session (`Error{ShuttingDown}`), stops accepting, closes Chromium, stops the project ports and
+    /// waits for the listener to finish.
     pub async fn shutdown(mut self) {
         self.inspect.shutdown().await;
+        self.projects.shutdown().await;
         self.hub.shutdown();
         self.task.abort();
         let _ = (&mut self.task).await;
@@ -96,8 +105,8 @@ impl ServerHandle {
 }
 
 impl Drop for ServerHandle {
-    /// Safety net for a handle dropped without [`ServerHandle::shutdown`] (ctrl-c in `main`): the listener stops
-    /// and Chromium is killed synchronously, so it cannot outlive the server.
+    /// Safety net for a handle dropped without [`ServerHandle::shutdown`] (ctrl-c in `main`): the listener stops,
+    /// Chromium is killed synchronously and the project ports close, so nothing outlives the server.
     fn drop(&mut self) {
         self.hub.shutdown();
         self.task.abort();
@@ -136,9 +145,17 @@ pub async fn serve(
     let hub = Hub::new(storage.clone(), sync_config);
     let pairing = Arc::new(Pairing::new());
     let inspect = Arc::new(Inspect::new());
+    let token = Arc::new(sync_config_token);
+    let projects = Arc::new(crate::frames::registry::Registry::new(
+        storage.clone(),
+        Arc::new(config.data_dir.clone()),
+        Arc::clone(&token),
+        addr.ip().to_string(),
+        config.project_port_base,
+    ));
     let app = AppState {
         storage: storage.clone(),
-        token: Arc::new(sync_config_token),
+        token,
         assets: Assets::load(config.data_dir.join("assets")),
         data_dir: Arc::new(config.data_dir),
         web: Arc::new(config.web_dir),
@@ -150,6 +167,7 @@ pub async fn serve(
         }),
         ocr_url: Arc::new(config.ocr_url),
         inspect: Arc::clone(&inspect),
+        projects: Arc::clone(&projects),
     };
     let router = Router::new()
         .merge(api::router(app))
@@ -160,6 +178,8 @@ pub async fn serve(
             tracing::warn!(%error, "server stopped");
         }
     });
+    // Design harness M1: linked projects listen on their own ports from the moment the server does.
+    projects.start_all().await;
     Ok(ServerHandle {
         addr,
         storage,
@@ -167,6 +187,7 @@ pub async fn serve(
         pairing,
         task,
         inspect,
+        projects,
     })
 }
 

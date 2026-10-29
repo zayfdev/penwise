@@ -102,7 +102,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-const USAGE: &str = "usage: penwise-server            serve (env: PENWISE_PORT, PENWISE_HOST, PENWISE_DATA, PENWISE_WEB,\n                                              PENWISE_PROJECTS)\n       \
+const USAGE: &str = "usage: penwise-server            serve (env: PENWISE_PORT, PENWISE_HOST, PENWISE_DATA, PENWISE_WEB,\n                                              PENWISE_PROJECTS, PENWISE_PROJECT_PORT)\n       \
                      penwise-server migrate --db <path> [--dry-run]";
 
 /// Ctrl-c or SIGTERM (systemd stop). Either way `ServerHandle::drop` runs: the listener stops and Chromium is

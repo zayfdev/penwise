@@ -106,6 +106,21 @@ CREATE TABLE IF NOT EXISTS purged_items (
 ) STRICT;
 ";
 
+/// Linked projects (design-harness spec §6.1): server-local registry rows, never synced. Additive within v4
+/// (`IF NOT EXISTS`), created by every open so a v4 database made before the table existed gains it. `target`
+/// is the static folder or the dev origin; `root` is unique so re-linking a folder returns the same project.
+const PROJECTS_DDL: &str = "
+CREATE TABLE IF NOT EXISTS projects (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  root TEXT NOT NULL UNIQUE,
+  target TEXT NOT NULL,
+  port INTEGER NOT NULL,
+  notebook TEXT,
+  created_ms INTEGER NOT NULL
+) STRICT;
+";
+
 /// Creates the v4 tables inside `tx` (no version bump).
 ///
 /// # Errors
@@ -113,6 +128,7 @@ CREATE TABLE IF NOT EXISTS purged_items (
 pub fn create_v4(tx: &Transaction<'_>) -> Result<(), StorageError> {
     tx.execute_batch(V4_DDL)?;
     tx.execute_batch(PURGED_DDL)?;
+    tx.execute_batch(PROJECTS_DDL)?;
     Ok(())
 }
 
@@ -125,6 +141,7 @@ pub fn ensure_current(conn: &mut Connection) -> Result<(), StorageError> {
     match user_version(conn)? {
         SCHEMA_VERSION => {
             conn.execute_batch(PURGED_DDL)?;
+            conn.execute_batch(PROJECTS_DDL)?;
             Ok(())
         }
         0 => {

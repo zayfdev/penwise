@@ -74,7 +74,8 @@ fn tags_round_trip() {
     }
     assert_eq!(ItemKindTag::from_code(4), Some(ItemKindTag::Text));
     assert_eq!(ItemKindTag::from_code(5), Some(ItemKindTag::Image));
-    assert_eq!(ItemKindTag::from_code(6), None);
+    assert_eq!(ItemKindTag::from_code(6), Some(ItemKindTag::Frame));
+    assert_eq!(ItemKindTag::from_code(7), None);
     assert_eq!(Layer::from_code(3), None);
     assert_eq!(
         stroke(Preset::Ballpoint, None).kind.tag(),

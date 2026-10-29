@@ -2,7 +2,7 @@
 //! asset store beside it.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
 
 use penwise_core::edit::Edit;
 use penwise_core::item::{ItemId, Layer};
@@ -19,6 +19,10 @@ use crate::pairing::Pairing;
 use crate::storage::{PageView, Storage, StorageConfig};
 
 pub(crate) const T0: u64 = 1_800_000_000_000;
+
+/// Each rig gets its own project-port range, so parallel tests cannot grab a port another test just released.
+/// The ranges start at 17,421: tests never bind the production 7421+ ports.
+static NEXT_PORT_BASE: AtomicU16 = AtomicU16::new(17_421);
 
 pub(crate) struct Rig {
     pub dir: TempDir,
@@ -59,6 +63,25 @@ impl Rig {
 
     /// The handler state over this rig's storage and data directory.
     pub(crate) fn app(&self) -> AppState {
+        self.app_with_projects(self.projects())
+    }
+
+    /// This rig's data directory and a fresh registry (tests that link projects share one).
+    pub(crate) fn projects(&self) -> Arc<crate::frames::registry::Registry> {
+        Arc::new(crate::frames::registry::Registry::new(
+            self.storage.clone(),
+            Arc::new(self.dir.path().to_path_buf()),
+            Arc::new(String::new()),
+            "127.0.0.1".to_owned(),
+            NEXT_PORT_BASE.fetch_add(16, Ordering::Relaxed),
+        ))
+    }
+
+    /// The handler state with a caller-owned registry (so a test can see what a link started).
+    pub(crate) fn app_with_projects(
+        &self,
+        projects: Arc<crate::frames::registry::Registry>,
+    ) -> AppState {
         AppState {
             storage: self.storage.clone(),
             token: Arc::new(String::new()),
@@ -69,17 +92,22 @@ impl Rig {
             assets: Arc::clone(&self.assets),
             ocr_url: Arc::new(self.ocr_url.clone()),
             inspect: Arc::new(crate::inspect::Inspect::new()),
+            projects,
         }
     }
 
-    /// Serves `routes` (no auth layer) on 127.0.0.1:0; returns the base URL.
+    /// Serves `routes` (no auth layer) on 127.0.0.1:0; returns the base URL. The peer address is available, so
+    /// handlers that care about loopback behave as in production.
     pub(crate) async fn serve(&self, routes: axum::Router<AppState>) -> String {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind");
         let addr = listener.local_addr().expect("addr");
         let router = routes.with_state(self.app());
-        tokio::spawn(async move { axum::serve(listener, router).await });
+        tokio::spawn(async move {
+            let router = router.into_make_service_with_connect_info::<std::net::SocketAddr>();
+            axum::serve(listener, router).await
+        });
         format!("http://{addr}")
     }
 

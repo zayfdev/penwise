@@ -103,7 +103,8 @@ pub fn item_floats(scene: &Scene, id: ItemId) -> Option<Vec<f32>> {
             }
             parts.push(part(kind::IMAGE, p));
         }
-        ItemGeometry::Erase { .. } => return None,
+        // A frame is a live view the tint layer places itself, not drawable ink; masks are parts of their target.
+        ItemGeometry::Frame { .. } | ItemGeometry::Erase { .. } => return None,
     }
     for mask in scene.masks(id) {
         if let Some(ItemGeometry::Erase { path, radius }) = scene.geometry(mask)

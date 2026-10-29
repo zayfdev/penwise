@@ -1,0 +1,22 @@
+[package]
+name = "penwise-cli"
+description = "`penwise`: link project folders, open the desktop window, report the registry."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "penwise"
+path = "src/main.rs"
+
+[dependencies]
+# Loopback JSON only; no TLS stack (the project ports and the API are plain HTTP on this machine).
+reqwest = { workspace = true, features = ["blocking"] }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

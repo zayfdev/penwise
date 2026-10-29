@@ -8,6 +8,44 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ItemId(pub [u8; 16]);
 
+const HEX: [u8; 16] = *b"0123456789abcdef";
+
+impl ItemId {
+    /// Lowercase hex of the 16 bytes (32 characters): the textual id the clients exchange in JSON.
+    #[must_use]
+    pub fn to_hex(self) -> String {
+        let mut out = String::with_capacity(32);
+        for byte in self.0 {
+            out.push(char::from(HEX[usize::from(byte >> 4)]));
+            out.push(char::from(HEX[usize::from(byte & 0xF)]));
+        }
+        out
+    }
+
+    /// Inverse of [`ItemId::to_hex`]; `None` unless `text` is exactly 32 hex characters.
+    #[must_use]
+    pub fn from_hex(text: &str) -> Option<Self> {
+        let bytes = text.as_bytes();
+        if bytes.len() != 32 {
+            return None;
+        }
+        let mut out = [0_u8; 16];
+        for (slot, pair) in out.iter_mut().zip(bytes.chunks_exact(2)) {
+            *slot = (nibble(pair[0])? << 4) | nibble(pair[1])?;
+        }
+        Some(Self(out))
+    }
+}
+
+fn nibble(c: u8) -> Option<u8> {
+    match c {
+        b'0'..=b'9' => Some(c - b'0'),
+        b'a'..=b'f' => Some(c - b'a' + 10),
+        b'A'..=b'F' => Some(c - b'A' + 10),
+        _ => None,
+    }
+}
+
 /// Supplies fresh item ids for edits that create items (precise-erase pieces and masks, duplicates, fills).
 /// Production callers wrap a ULID generator; tests use a counter. Every call must return an id never used
 /// on the page before. Core calls it in a documented, deterministic order (see each operation).

@@ -48,6 +48,7 @@ fun Toolbar(
     onClear: () -> Unit,
     onSync: () -> Unit,
     onHome: () -> Unit,
+    onAddFrame: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -95,6 +96,7 @@ fun Toolbar(
                 )
                 ToolButton(ToolIcons.Sync, stringResource(R.string.tool_sync), false, onSync, caption = true)
                 ToolButton(ToolIcons.Home, stringResource(R.string.tool_home), false, onHome, caption = true)
+                ToolButton(ToolIcons.Frame, stringResource(R.string.tool_add_frame), false, onAddFrame, caption = true)
             }
             Section(stringResource(R.string.drawer_view, zoomPercent)) {
                 ToolButton(ToolIcons.Fit, stringResource(R.string.tool_fit_page), false, onFit, caption = true)

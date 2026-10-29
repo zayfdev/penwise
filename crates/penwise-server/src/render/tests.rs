@@ -2,7 +2,9 @@
 
 use penwise_core::brush::BrushParams;
 use penwise_core::edit::Edit;
-use penwise_core::item::{Affine, ImageItem, Item, ItemKind, Layer, LayerSet};
+use penwise_core::item::{
+    Affine, FramePreset, FrameSpec, ImageItem, Item, ItemKind, Layer, LayerSet,
+};
 use penwise_core::raster::render_scene;
 use penwise_proto::notebook::BACKGROUND_SPACING_PX;
 use penwise_proto::{Background, PageKind};
@@ -98,6 +100,44 @@ async fn a_ruled_page_draws_its_lines_and_a_blank_one_stays_white() {
             .data()
             .chunks_exact(4)
             .any(|p| p != [255, 255, 255, 255])
+    );
+}
+
+#[tokio::test]
+async fn a_frame_draws_a_labelled_placeholder_box() {
+    let mut rig = Rig::new();
+    let page = rig.fixed_page().await;
+    let spec = FrameSpec::new(
+        "portfolio".to_owned(),
+        "/".to_owned(),
+        FramePreset::Phone,
+        None,
+        None,
+        100.0,
+        100.0,
+    )
+    .expect("spec");
+    let item = spec.item(rig.item_id(), Layer::Ink, 0);
+    rig.edit(page, Edit::Add(item)).await;
+    let png = decode(&page_png(&rig.view(page).await, &rig.assets, 1.0).expect("render"));
+
+    // The label strip runs along the top edge; the body below it, the paper outside.
+    let label = png.pixel(200, 108).expect("pixel");
+    let body = png.pixel(200, 400).expect("pixel");
+    let outside = png.pixel(50, 50).expect("pixel");
+    assert_eq!(
+        (body.red(), body.green(), body.blue()),
+        (243, 244, 247),
+        "the frame body is the placeholder panel"
+    );
+    assert!(
+        label.red() < 100 && label.blue() > label.red(),
+        "the label strip is the dark band: {label:?}"
+    );
+    assert_eq!(
+        (outside.red(), outside.green(), outside.blue()),
+        (255, 255, 255),
+        "nothing is drawn outside the frame"
     );
 }
 

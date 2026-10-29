@@ -14,6 +14,7 @@ mod marks;
 mod notebooks;
 mod pages;
 mod pair;
+mod projects;
 mod resolve;
 mod restore;
 mod status;
@@ -58,6 +59,8 @@ pub struct AppState {
     pub ocr_url: Arc<String>,
     /// The headless browser behind `/inspect/*` and source mapping.
     pub(crate) inspect: Arc<crate::inspect::Inspect>,
+    /// Linked projects and their live ports.
+    pub(crate) projects: Arc<crate::frames::registry::Registry>,
 }
 
 /// The HTTP router (without `/sync`, which `serve` merges).
@@ -83,6 +86,8 @@ pub fn router(app: AppState) -> Router {
         .route("/pair", post(pair::exchange))
         .route("/pair/local", get(pair::local))
         .merge(protected)
+        // Projects may be linked by a same-machine tool without the token (the rule of `GET /pair/local`).
+        .merge(projects::routes(Arc::clone(&app.token)))
         .fallback(get(file))
         .with_state(app)
 }

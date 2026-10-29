@@ -32,8 +32,15 @@ fn field_codes_are_dense_and_round_trip() {
         assert_eq!(usize::from(field.code()), i);
         assert_eq!(Field::from_code(field.code()), Some(field));
     }
-    assert_eq!(Field::from_code(13), None);
+    assert_eq!(Field::from_code(15), None);
     assert_eq!(Field::FontSize.code(), 12);
+    assert_eq!(Field::FramePreset.code(), 13);
+    assert_eq!(Field::FrameRoute.code(), 14);
+    assert!(
+        Field::FramePreset.applies_to(ItemKindTag::Frame)
+            && Field::FrameRoute.applies_to(ItemKindTag::Frame)
+            && !Field::FrameRoute.applies_to(ItemKindTag::Text)
+    );
 }
 
 #[test]

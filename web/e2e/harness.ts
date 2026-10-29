@@ -30,7 +30,9 @@ export function useHarness() {
     h.server = await startServer();
     h.browser = await chromium.launch({
       executablePath: process.env.CHROME ?? "/usr/bin/chromium",
-      args: ["--no-sandbox"],
+      // No GPU: several gates may run at once next to the desktop browser, and GPU Chromiums can exhaust the
+      // NVIDIA driver's address space (froze the desktop on 2026-10-28, Xid 56).
+      args: ["--no-sandbox", "--disable-gpu"],
     });
     h.scratch = await h.browser.newPage();
   });

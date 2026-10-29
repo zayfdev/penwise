@@ -11,8 +11,10 @@
 //! [`COOKIE`] set by [`ENTER_PATH`], the `X-Penwise-Token` header, or — for same-machine tools — a loopback peer
 //! with a loopback `Host` (the rule of `GET /pair/local`). Nothing else is served without it.
 
+mod bridge;
 mod inject;
 mod proxy;
+pub mod registry;
 mod static_site;
 
 #[cfg(test)]
@@ -50,7 +52,7 @@ const RELOAD_MESSAGE: &str = "{\"t\":\"pw:reload\"}";
 /// One month, so a tablet keeps working across launches.
 const COOKIE_MAX_AGE: u32 = 30 * 24 * 60 * 60;
 
-const BRIDGE_JS: &str = include_str!("bridge.js");
+use bridge::BRIDGE_JS;
 
 /// What a project port serves.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,7 +106,8 @@ impl ProjectConfig {
     }
 }
 
-/// One `PENWISE_PROJECTS` element. M1 replaces this with the real registry (CLI-owned).
+/// One `PENWISE_PROJECTS` element. The registry ([`registry`]) is the real one; this env override stays for
+/// development and tests.
 #[derive(Debug, Deserialize)]
 struct ProjectEntry {
     #[serde(default)]
@@ -217,6 +220,12 @@ impl ProjectServer {
         self.task.abort();
         let _ = self.task.await;
         drop(self.site);
+    }
+
+    /// Stops the listener without awaiting (server `Drop` and registry teardown).
+    pub fn abort(mut self) {
+        self.task.abort();
+        self.site = None;
     }
 }
 

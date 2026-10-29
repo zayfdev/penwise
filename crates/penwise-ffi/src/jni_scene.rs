@@ -227,3 +227,16 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneItemText<'local>(
         Ok(env.new_string(text)?)
     })
 }
+
+/// Every live frame as the C1 JSON array (`scene_handle/frames.rs`).
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_penwise_core_Native_sceneFrames<'local>(
+    mut env: EnvUnowned<'local>,
+    _this: JObject<'local>,
+    handle: jlong,
+) -> JString<'local> {
+    guarded(&mut env, |env| {
+        let json = handle_ref::<SceneHandle>(handle)?.frames_json();
+        Ok(env.new_string(json)?)
+    })
+}

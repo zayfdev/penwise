@@ -5,7 +5,7 @@
 #![allow(unsafe_code)] // `#[unsafe(no_mangle)]` entry points.
 
 use jni::EnvUnowned;
-use jni::objects::{JByteArray, JFloatArray, JIntArray, JObject};
+use jni::objects::{JByteArray, JFloatArray, JIntArray, JObject, JString};
 use jni::sys::{jboolean, jfloat, jint, jlong};
 use penwise_core::Seed;
 use penwise_core::brush::Color;
@@ -15,6 +15,7 @@ use crate::error::SyncError;
 use crate::jni_scene::layers_of;
 use crate::jni_util::{
     bytes_in, bytes_out, floats_in, guarded, handle_mut, handle_ref, ids_in, ints_in, item_in,
+    string_in,
 };
 use crate::scene_handle::{
     SceneHandle, ShapeSpec, StrokeSpec, encode_edits, handle_from_code, pairs, shape_brush,
@@ -280,6 +281,86 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneSetLayer<'local>(
         let ids = item_list(&bytes_in(env, &ids)?)?;
         let scene = handle_mut::<SceneHandle>(handle)?;
         let edits = scene.set_layer(&ids, layer)?;
+        scene.commit_into(
+            handle_mut::<SyncCore>(core)?,
+            &edits,
+            now_ms.cast_unsigned(),
+        )?;
+        bytes_out(env, &encode_edits(&edits))
+    })
+}
+
+/// Places a frame from `{project,route,preset,cssW?,cssH?,x,y}` (C1); returns the edit blob.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_penwise_core_Native_sceneAddFrame<'local>(
+    mut env: EnvUnowned<'local>,
+    _this: JObject<'local>,
+    handle: jlong,
+    json: JString<'local>,
+    core: jlong,
+    now_ms: jlong,
+) -> JByteArray<'local> {
+    guarded(&mut env, |env| {
+        let json = string_in(env, &json)?;
+        let scene = handle_mut::<SceneHandle>(handle)?;
+        let edits = scene.add_frame(&json, now_ms.cast_unsigned())?;
+        scene.commit_into(
+            handle_mut::<SyncCore>(core)?,
+            &edits,
+            now_ms.cast_unsigned(),
+        )?;
+        bytes_out(env, &encode_edits(&edits))
+    })
+}
+
+/// Switches a frame's preset and CSS size; `cssW`/`cssH` only matter for `custom`.
+#[unsafe(no_mangle)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the JNI signature is fixed by `Native.sceneSetFramePreset`"
+)]
+pub extern "system" fn Java_dev_penwise_core_Native_sceneSetFramePreset<'local>(
+    mut env: EnvUnowned<'local>,
+    _this: JObject<'local>,
+    handle: jlong,
+    id: JByteArray<'local>,
+    preset: JString<'local>,
+    css_w: jint,
+    css_h: jint,
+    core: jlong,
+    now_ms: jlong,
+) -> JByteArray<'local> {
+    guarded(&mut env, |env| {
+        let preset = string_in(env, &preset)?;
+        let id = item_in(env, &id)?;
+        let (css_w, css_h) = (css_w.max(0).cast_unsigned(), css_h.max(0).cast_unsigned());
+        let scene = handle_mut::<SceneHandle>(handle)?;
+        let edits = scene.set_frame_preset(id, &preset, css_w, css_h)?;
+        scene.commit_into(
+            handle_mut::<SyncCore>(core)?,
+            &edits,
+            now_ms.cast_unsigned(),
+        )?;
+        bytes_out(env, &encode_edits(&edits))
+    })
+}
+
+/// Points a frame at another route; returns the edit blob.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_penwise_core_Native_sceneSetFrameRoute<'local>(
+    mut env: EnvUnowned<'local>,
+    _this: JObject<'local>,
+    handle: jlong,
+    id: JByteArray<'local>,
+    route: JString<'local>,
+    core: jlong,
+    now_ms: jlong,
+) -> JByteArray<'local> {
+    guarded(&mut env, |env| {
+        let route = string_in(env, &route)?;
+        let id = item_in(env, &id)?;
+        let scene = handle_mut::<SceneHandle>(handle)?;
+        let edits = scene.set_frame_route(id, &route)?;
         scene.commit_into(
             handle_mut::<SyncCore>(core)?,
             &edits,

@@ -13,8 +13,13 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 penwise-core = { path = "../penwise-core" }
 penwise-proto = { path = "../penwise-proto" }
+serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 wasm-bindgen.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test.workspace = true

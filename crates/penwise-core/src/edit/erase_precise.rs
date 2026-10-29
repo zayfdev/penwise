@@ -54,7 +54,7 @@ pub fn erase_precise(
                     edits.extend(fill_cut_edits(item, polygons, path, radius));
                 }
             }
-            ItemKind::Text(_) | ItemKind::Image(_) | ItemKind::Erase(_) => {}
+            ItemKind::Text(_) | ItemKind::Image(_) | ItemKind::Frame(_) | ItemKind::Erase(_) => {}
         }
     }
     edits

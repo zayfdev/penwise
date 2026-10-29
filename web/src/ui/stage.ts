@@ -15,6 +15,8 @@ export interface StageDeps {
   setView(view: ViewTransform): void;
   /** The stage changed size. */
   resized(viewport: Viewport, dpr: number): void;
+  /** The last pointer type seen anywhere on the window (`pen`/`mouse`/`touch`): frame input routing. */
+  pointer(type: string): void;
 }
 
 /** Wires `stage`'s events. */
@@ -23,7 +25,13 @@ export function attachStage(stage: HTMLElement, deps: StageDeps): void {
 
   const rectOf = () => stage.getBoundingClientRect();
 
+  const notePointer = (event: PointerEvent) => deps.pointer(event.pointerType);
+  window.addEventListener("pointerdown", notePointer, true);
+  window.addEventListener("pointermove", notePointer, true);
+
   stage.addEventListener("pointerdown", (event) => {
+    // Frame chips are controls, not canvas: their clicks must not start a stroke.
+    if (event.target instanceof Element && event.target.closest("#frame-chips") !== null) return;
     if (event.pointerType === "touch") {
       panning = { id: event.pointerId, x: event.clientX, y: event.clientY };
       stage.setPointerCapture(event.pointerId);

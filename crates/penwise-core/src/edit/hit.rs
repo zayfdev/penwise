@@ -68,7 +68,8 @@ pub fn item_hit(scene: &Scene, id: ItemId, p: [f32; 2], tol: f32) -> bool {
                 })
         }
         (ItemKind::Text(_), ItemGeometry::Text { corners, .. })
-        | (ItemKind::Image(_), ItemGeometry::Image { corners }) => {
+        | (ItemKind::Image(_), ItemGeometry::Image { corners })
+        | (ItemKind::Frame(_), ItemGeometry::Frame { corners }) => {
             ring_contains(corners, p) || point_ring_dist(p, corners) <= tol
         }
         _ => false,

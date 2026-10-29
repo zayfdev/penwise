@@ -27,6 +27,11 @@ sealed interface FrameMessage {
         val docHeight: Int,
     ) : FrameMessage
 
+    /** `pw:route`, when the page's own location changes through its links (`pushState`/`popstate`). */
+    data class Route(
+        val route: String,
+    ) : FrameMessage
+
     /** `pw:hit`, the answer to a `pw:hit?`: what element is under a point. */
     data class Hit(
         val id: Int,
@@ -56,6 +61,7 @@ internal object FrameMessages {
         when (message.optString(TYPE)) {
             "pw:hello" -> hello(message)
             "pw:scroll" -> scroll(message)
+            "pw:route" -> route(message)
             "pw:hit" -> hit(message)
             else -> null
         }
@@ -76,6 +82,8 @@ internal object FrameMessages {
             docWidth = message.optInt("docW"),
             docHeight = message.optInt("docH"),
         )
+
+    private fun route(message: JSONObject) = FrameMessage.Route(message.optString("route", "/"))
 
     private fun hit(message: JSONObject) =
         FrameMessage.Hit(

@@ -1,7 +1,14 @@
 # Full gate: a change is done only when this passes.
 default: check
 
-check: fmt-check clippy test wasm-build wasm-test jni-symbols web-check sizes deny
+# Heavy gates take one machine-wide lock, so parallel agents run them one at a time (CPU, RAM and the GPU
+# driver: concurrent browser-test Chromiums froze the desktop on 2026-10-28).
+gate_lock := "flock /tmp/penwise-gate.lock"
+
+check:
+    {{gate_lock}} just _check
+
+_check: fmt-check clippy test wasm-build wasm-test jni-symbols web-check sizes deny
 
 fmt-check:
     cargo fmt --all --check
@@ -49,10 +56,10 @@ export ANDROID_HOME := env_var_or_default("ANDROID_HOME", home_directory() / "An
 
 # ANDROID_HOME defaults to the usual SDK location so a bare `just android` works.
 android:
-    cd android && ANDROID_HOME=${ANDROID_HOME:-$HOME/Android/Sdk} ./gradlew :app:assembleDebug
+    cd android && ANDROID_HOME=${ANDROID_HOME:-$HOME/Android/Sdk} {{gate_lock}} ./gradlew :app:assembleDebug
 
 android-check:
-    cd android && ANDROID_HOME=${ANDROID_HOME:-$HOME/Android/Sdk} ./gradlew :app:lintDebug ktlintCheck detekt :app:testDebugUnitTest
+    cd android && ANDROID_HOME=${ANDROID_HOME:-$HOME/Android/Sdk} {{gate_lock}} ./gradlew :app:lintDebug ktlintCheck detekt :app:testDebugUnitTest
 
 install:
     cd android && ANDROID_HOME=${ANDROID_HOME:-$HOME/Android/Sdk} ./gradlew :app:installDebug
@@ -83,7 +90,7 @@ web-check:
 
 # Browser end to end: real server binary + headless Chromium.
 web-e2e:
-    cargo build -p penwise-server && cd web && npm run wasm && npm run e2e
+    {{gate_lock}} sh -c 'cargo build -p penwise-server && cd web && npm run wasm && npm run e2e'
 
 # PC mirror server on :7420 (PENWISE_PORT, PENWISE_WEB, PENWISE_DATA).
 serve: web

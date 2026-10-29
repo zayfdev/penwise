@@ -4,7 +4,8 @@
 //! Strokes and shapes go through the same renderers as [`super::render_strokes`]; fills are filled polygons
 //! (even-odd, so holes cut); images are drawn from an [`AssetSource`]; erase items cut their target
 //! (destination-out on the target alone, so ink drawn later over the area stays). Text is not drawn: layout and
-//! shaping belong to the host.
+//! shaping belong to the host. A frame is drawn as a labelled placeholder box (M1); its live page is the host's
+//! layer, and real snapshots arrive in M3.
 
 use std::collections::BTreeMap;
 
@@ -23,6 +24,11 @@ use crate::item::{
 
 /// Most pixels a rendered region may have (2²⁸, as [`CoverageBuffer`]).
 const MAX_PIXELS: f64 = 268_435_456.0;
+
+/// Frame placeholder palette (M1): body, label strip, border.
+const FRAME_BODY: (u8, u8, u8) = (0xF3, 0xF4, 0xF7);
+const FRAME_LABEL: (u8, u8, u8) = (0x3B, 0x4A, 0x6B);
+const FRAME_BORDER: (u8, u8, u8) = (0xB6, 0xBB, 0xC6);
 
 /// Decoded pictures by asset hash ([`crate::item::ImageItem::asset`]).
 pub trait AssetSource {
@@ -255,8 +261,40 @@ impl ItemPainter<'_> {
                 self.draw_image(target, item);
                 Ok(())
             }
+            ItemGeometry::Frame { corners } => {
+                self.draw_frame(target, corners);
+                Ok(())
+            }
             ItemGeometry::Erase { .. } | ItemGeometry::Text { .. } => Ok(()),
         }
+    }
+
+    /// The M1 frame placeholder: a light panel, a darker label strip along the top edge and a thin border. The
+    /// live page is the host's layer (the tablet `WebView`, the PC `iframe`); a raster has no page to paint, so
+    /// this box marks where the frame sits and which project it shows. Real snapshots come in M3.
+    fn draw_frame(&self, target: &mut Pixmap, corners: &[[f32; 2]; 4]) {
+        let p = corners.map(|c| self.viewport.map(c[0], c[1]));
+        fill_quad(target, &p, FRAME_BODY);
+        let [tl, tr, _, bl] = p;
+        let top = [tr[0] - tl[0], tr[1] - tl[1]];
+        let left = [bl[0] - tl[0], bl[1] - tl[1]];
+        let top_len = libm::hypotf(top[0], top[1]);
+        let left_len = libm::hypotf(left[0], left[1]);
+        if top_len < 1.0 || left_len < 1.0 {
+            return;
+        }
+        // A label strip along the top edge, at most a third of the box (a small frame keeps its body visible).
+        let strip = crate::float::min((left_len * 0.08).clamp(3.0, 28.0), left_len * 0.34);
+        let normal = [top[1] / top_len, -top[0] / top_len];
+        let inward = [-normal[0], -normal[1]];
+        let strip_quad = [
+            tl,
+            tr,
+            [tr[0] + inward[0] * strip, tr[1] + inward[1] * strip],
+            [tl[0] + inward[0] * strip, tl[1] + inward[1] * strip],
+        ];
+        fill_quad(target, &strip_quad, FRAME_LABEL);
+        stroke_quad(target, &p, FRAME_BORDER, 1.0);
     }
 
     fn draw_image(&self, target: &mut Pixmap, item: &Item) {
@@ -299,6 +337,50 @@ impl ItemPainter<'_> {
             none,
         );
     }
+}
+
+/// Closes `corners` into a path in target pixels.
+fn quad_path(corners: &[[f32; 2]; 4]) -> Option<::tiny_skia::Path> {
+    let [first, rest @ ..] = corners;
+    let mut builder = PathBuilder::new();
+    builder.move_to(first[0], first[1]);
+    for p in rest {
+        builder.line_to(p[0], p[1]);
+    }
+    builder.close();
+    builder.finish()
+}
+
+/// Fills a target-pixel quad with an opaque `rgb`.
+fn fill_quad(target: &mut Pixmap, corners: &[[f32; 2]; 4], rgb: (u8, u8, u8)) {
+    let Some(path) = quad_path(corners) else {
+        return;
+    };
+    let mut paint = Paint::default();
+    paint.set_color(::tiny_skia::Color::from_rgba8(rgb.0, rgb.1, rgb.2, 255));
+    paint.anti_alias = true;
+    target.fill_path(
+        &path,
+        &paint,
+        FillRule::Winding,
+        Transform::identity(),
+        None,
+    );
+}
+
+/// Strokes a target-pixel quad with an opaque `rgb` line `width` pixels wide.
+fn stroke_quad(target: &mut Pixmap, corners: &[[f32; 2]; 4], rgb: (u8, u8, u8), width: f32) {
+    let Some(path) = quad_path(corners) else {
+        return;
+    };
+    let mut paint = Paint::default();
+    paint.set_color(::tiny_skia::Color::from_rgba8(rgb.0, rgb.1, rgb.2, 255));
+    paint.anti_alias = true;
+    let stroke = Stroke {
+        width,
+        ..Stroke::default()
+    };
+    target.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
 }
 
 /// Fills each polygon (outer ring plus holes, even-odd) with `paint`.

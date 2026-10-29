@@ -13,8 +13,8 @@ use crate::codec::params_fields::{invalid, write_f32s};
 use crate::codec::stroke::{decode_params, decode_samples, encode_params, encode_samples};
 use crate::codec::varint::{Reader, write_uv32};
 use crate::item::{
-    EraseItem, FillItem, ImageItem, ItemKind, ItemKindTag, SampleParam, SampleRange, ShapeItem,
-    StrokeItem, TextItem, Trim,
+    EraseItem, FillItem, FrameItem, FramePreset, ImageItem, ItemKind, ItemKindTag, SampleParam,
+    SampleRange, ShapeItem, StrokeItem, TextItem, Trim,
 };
 use crate::sample::{GridSample, Sample};
 use crate::smoothing::{HISTORY_LEN, HistoryPoint, PositionState, PressureState, SmootherState};
@@ -56,6 +56,13 @@ pub(super) fn encode_kind(kind: &ItemKind, out: &mut Vec<u8>) {
             out.extend_from_slice(&image.asset);
             write_f32s(out, &[image.w, image.h]);
         }
+        ItemKind::Frame(frame) => {
+            out.push(frame.preset.code());
+            write_uv32(out, frame.css_w);
+            write_uv32(out, frame.css_h);
+            write_str(out, &frame.project);
+            write_str(out, &frame.route);
+        }
     }
 }
 
@@ -93,6 +100,20 @@ pub(super) fn decode_kind(r: &mut Reader<'_>, tag: ItemKindTag) -> Result<ItemKi
             }
             let [w, h] = read_pair(r, "image.size")?;
             ItemKind::Image(ImageItem { asset, w, h })
+        }
+        ItemKindTag::Frame => {
+            let preset = FramePreset::from_code(r.u8()?).ok_or(invalid("frame.preset"))?;
+            let css_w = r.uv32()?;
+            let css_h = r.uv32()?;
+            let project = read_str(r)?;
+            let route = read_str(r)?;
+            ItemKind::Frame(FrameItem {
+                project,
+                route,
+                preset,
+                css_w,
+                css_h,
+            })
         }
     })
 }

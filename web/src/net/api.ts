@@ -4,6 +4,8 @@
  * JSON from the server and are checked before use (no trust in shapes).
  */
 
+import { type Project, readProjects } from "../frames/model";
+
 /** Page templates offered by "new page" and their `/pages` bodies. */
 export type PageTemplate = "blank" | "ruled" | "grid" | "dots" | "infinite";
 
@@ -75,6 +77,11 @@ export class Api {
   async createNotebook(title: string): Promise<string> {
     const json = await this.json("POST", "/notebooks", { title });
     return text(record(record(json).notebook).id);
+  }
+
+  /** `GET /projects` — linked projects, their live ports and kind (frame URLs come from here). */
+  async projects(): Promise<Project[]> {
+    return readProjects(await this.json("GET", "/projects"));
   }
 
   /** `GET /text?page=…` — the page's handwriting as text (`refresh` re-reads it with the vision model). */

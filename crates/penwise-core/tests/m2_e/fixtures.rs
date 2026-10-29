@@ -1,8 +1,9 @@
 //! Valid items of every kind for the slice e codec and undo tests.
 
 use penwise_core::item::{
-    Affine, ArrowHead, EraseItem, FillItem, ImageItem, Item, ItemId, ItemKind, Layer, Paint,
-    Polygon, SampleParam, SampleRange, ShapeItem, ShapeKind, StrokeItem, TextItem, Trim,
+    Affine, ArrowHead, EraseItem, FillItem, FrameItem, FramePreset, ImageItem, Item, ItemId,
+    ItemKind, Layer, Paint, Polygon, SampleParam, SampleRange, ShapeItem, ShapeKind, StrokeItem,
+    TextItem, Trim,
 };
 use penwise_core::smoothing::{HistoryPoint, PositionState, PressureState, SmootherState};
 use penwise_core::{Color, Preset, Sample};
@@ -259,6 +260,23 @@ pub fn image(id: ItemId, z: i64) -> Item {
     it
 }
 
+/// A phone-sized frame moved up the page (`css_w × css_h` = 390 × 844 page units).
+pub fn frame(id: ItemId, z: i64) -> Item {
+    let mut it = item(
+        id,
+        z,
+        ItemKind::Frame(FrameItem {
+            project: "portfolio".to_owned(),
+            route: "/work?tab=2".to_owned(),
+            preset: FramePreset::Phone,
+            css_w: 390,
+            css_h: 844,
+        }),
+    );
+    it.transform = Affine::translate(100.75, -40.0);
+    it
+}
+
 /// Every shape kind.
 pub fn shape_kinds() -> Vec<ShapeKind> {
     vec![
@@ -289,6 +307,7 @@ pub fn every_kind() -> Vec<Item> {
         text(id(6), 7, vec![id(1), id(2)]),
         text(id(7), 8, Vec::new()),
         image(id(9), -5),
+        frame(id(10), 1 << 20),
     ];
     let mut agent = stroke(id(8), 9, 0.0);
     agent.layer = Layer::Agent;

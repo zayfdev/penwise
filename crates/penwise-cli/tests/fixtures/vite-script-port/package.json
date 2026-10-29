@@ -1,0 +1,1 @@
+{"name":"vite-script-port","private":true,"scripts":{"dev":"vite --port 5200"},"devDependencies":{"vite":"^6.0.0"}}

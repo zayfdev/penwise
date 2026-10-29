@@ -268,7 +268,7 @@ impl SceneHandle {
         self.local(edits)
     }
 
-    fn next_z(&self) -> Result<i64, SyncError> {
+    pub(super) fn next_z(&self) -> Result<i64, SyncError> {
         self.scene
             .next_z()
             .ok_or(SyncError::BadArgument("page z range exhausted"))

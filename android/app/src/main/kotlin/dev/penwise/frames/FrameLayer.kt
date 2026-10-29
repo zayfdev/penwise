@@ -46,6 +46,12 @@ internal class FrameLayer(
     /** Called on the UI thread whenever a page reports a new scroll offset (the ink layer reads it for area marks). */
     var onScroll: ((String, FrameScroll) -> Unit)? = null
 
+    /**
+     * Called on the UI thread when the user's own navigation inside a page (a link click) lands on another route, at
+     * most once per settled navigation: the frame item's `route` follows, without a reload.
+     */
+    var onRoute: ((String, String) -> Unit)? = null
+
     /** Places the frames through [viewport]; from the UI thread. */
     fun bind(viewport: ViewportState) {
         if (this.viewport === viewport) return
@@ -56,20 +62,31 @@ internal class FrameLayer(
     }
 
     /**
-     * Opens [specs] and closes the frames no longer listed; a frame that stays keeps its WebView and its page state
-     * (its scroll position included).
+     * Shows [specs]: a new frame's WebView is opened, a frame whose URL changed is loaded again (or adopted when the
+     * page already shows that route), a resized frame is re-laid out, a moved one is translated, and a frame that is
+     * gone is destroyed. A frame that stays keeps its WebView and its page state (its scroll position included).
      */
     fun setFrames(specs: List<FrameSpec>) {
-        val wanted = specs.mapTo(HashSet()) { it.id }
-        for (id in entries.keys.filter { it !in wanted }) entries.remove(id)?.let { release(it) }
-        for (spec in specs) {
-            if (entries[spec.id]?.spec == spec) continue
-            entries.remove(spec.id)?.let { release(it) }
+        val plan = FrameDiff.plan(entries.values.map { it.spec }, specs)
+        if (plan.isEmpty) return
+        for (id in plan.close) entries.remove(id)?.let { release(it) }
+        for (spec in plan.open) {
             val view = open(spec)
             entries[spec.id] = Entry(spec, view)
             addView(view)
         }
+        for (spec in plan.load) entries[spec.id]?.let { load(it, spec) }
+        for (spec in plan.resize) entries[spec.id]?.let { resize(it, spec) }
+        for (spec in plan.move) entries[spec.id]?.let { it.spec = spec }
         sync()
+    }
+
+    /** Loads one frame's page again (the chip's reload); its scroll position comes back through the bridge. */
+    fun reload(id: String) {
+        val entry = entries[id] ?: return
+        entry.reportedRoute = entry.spec.route
+        entry.quietUntil = SystemClock.uptimeMillis() + LOAD_QUIET_MS
+        entry.view.reload()
     }
 
     /** Destroys the WebViews (page leave); opening a frame again creates a fresh one. */
@@ -84,6 +101,11 @@ internal class FrameLayer(
 
     /** Takes one page's WebView down; its content is gone, so a frame that comes back loads again. */
     private fun release(entry: Entry) {
+        // A frame deleted under the finger: the page gets a cancel, never a click into a destroyed view.
+        if (active === entry) cancelFrame()
+        entry.routeRunnable?.let(::removeCallbacks)
+        entry.routeRunnable = null
+        entry.pendingRoute = null
         removeView(entry.view)
         entry.view.destroy()
     }
@@ -157,7 +179,7 @@ internal class FrameLayer(
     private fun sync() {
         val view = viewport?.transform ?: ViewTransform.IDENTITY
         for (entry in entries.values) {
-            val placement = FrameGeometry.place(rect(entry.spec), view)
+            val placement = FrameGeometry.place(rect(entry.spec), view, density)
             entry.placement = placement
             entry.view.translationX = placement.left
             entry.view.translationY = placement.top
@@ -166,8 +188,9 @@ internal class FrameLayer(
         }
     }
 
+    /** The item's page box (C1): `css_w × css_h` page units, whatever the display density. */
     private fun rect(spec: FrameSpec): FrameRect =
-        FrameRect(spec.x, spec.y, spec.cssWidth * density, spec.cssHeight * density)
+        FrameRect(spec.x, spec.y, spec.cssWidth.toFloat(), spec.cssHeight.toFloat())
 
     private fun placements(): List<FramePlacement> = entries.values.map { it.placement }
 
@@ -209,11 +232,23 @@ internal class FrameLayer(
      * [dispatch]'s synthesised touches, never by the window's own dispatch (the ink surface is above it).
      */
     private class Entry(
-        val spec: FrameSpec,
+        var spec: FrameSpec,
         val view: WebView,
     ) {
         var placement = FramePlacement(0f, 0f, 0f, 0f, 1f)
         var scroll = FrameScroll.NONE
+
+        /** The URL this WebView was last told to load; what [FrameUrls.origin] compares before a reload. */
+        var loadedUrl: String = spec.url
+
+        /** The route the page itself last reported (or was sent to): a spec that matches it needs no reload. */
+        var reportedRoute: String = spec.route
+
+        /** Programmatic loads ignore the route messages of the document they replace. */
+        var quietUntil: Long = 0L
+
+        var pendingRoute: String? = null
+        var routeRunnable: Runnable? = null
     }
 
     private enum class Mode {
@@ -260,7 +295,40 @@ internal class FrameLayer(
         return view
     }
 
-    /** A bridge message: logged, and the scroll offset kept on the entry for the ink layer (M2's area marks). */
+    /**
+     * Points [entry] at [spec]: a page that already shows the spec's route (the user clicked a link; the item follows)
+     * adopts it without a reload, anything else (another project, another host, a route typed by the user) loads.
+     */
+    private fun load(
+        entry: Entry,
+        spec: FrameSpec,
+    ) {
+        val adopted =
+            entry.reportedRoute == spec.route && FrameUrls.origin(entry.loadedUrl) == FrameUrls.origin(spec.url)
+        entry.spec = spec
+        if (adopted) {
+            entry.loadedUrl = spec.url
+            return
+        }
+        entry.loadedUrl = spec.url
+        entry.reportedRoute = spec.route
+        entry.quietUntil = SystemClock.uptimeMillis() + LOAD_QUIET_MS
+        entry.view.loadUrl(spec.url)
+    }
+
+    /** A preset switch: the page keeps its document and reflows at the new width (its breakpoints see the preset). */
+    private fun resize(
+        entry: Entry,
+        spec: FrameSpec,
+    ) {
+        entry.spec = spec
+        entry.view.layoutParams = LayoutParams((spec.cssWidth * density).toInt(), (spec.cssHeight * density).toInt())
+    }
+
+    /**
+     * A bridge message: logged, and the scroll offset kept on the entry for the ink layer (M2's area marks). A page's
+     * own navigation updates its item's route, once the clicking stops.
+     */
     private fun deliver(
         frameId: String,
         message: FrameMessage,
@@ -272,6 +340,7 @@ internal class FrameLayer(
                 is FrameMessage.Hello -> {
                     // The document size is known before the first scroll: the readout and M2's area marks want it now.
                     entry.scroll = FrameScroll(entry.scroll.x, entry.scroll.y, message.docWidth, message.docHeight)
+                    FrameRoutes.ofUrl(message.url)?.let { entry.reportedRoute = it }
                     onScroll?.invoke(frameId, entry.scroll)
                     Log.i(
                         TAG,
@@ -286,11 +355,40 @@ internal class FrameLayer(
                     onScroll?.invoke(frameId, entry.scroll)
                 }
 
+                is FrameMessage.Route -> {
+                    queueRoute(entry, message.route)
+                }
+
                 is FrameMessage.Hit -> {
                     Log.i(TAG, "$frameId hit ${message.key} '${message.selector}' ${message.rect}")
                 }
             }
         }
+    }
+
+    /**
+     * The page navigated by itself. Its item follows when the user stops: a menu that pushes several routes while it
+     * settles must not queue an op each, and the page is already there, so the item update reloads nothing.
+     */
+    private fun queueRoute(
+        entry: Entry,
+        route: String,
+    ) {
+        val normalized = FrameRoutes.normalize(route) ?: return
+        // Already known (a repeated report of the same navigation) or ignored: nothing to tell the view model.
+        if (SystemClock.uptimeMillis() < entry.quietUntil) return
+        if (normalized == entry.reportedRoute || normalized == entry.spec.route) return
+        entry.reportedRoute = normalized
+        entry.pendingRoute = normalized
+        val runnable = entry.routeRunnable ?: Runnable { commitRoute(entry) }.also { entry.routeRunnable = it }
+        removeCallbacks(runnable)
+        postDelayed(runnable, ROUTE_DEBOUNCE_MS)
+    }
+
+    private fun commitRoute(entry: Entry) {
+        val route = entry.pendingRoute ?: return
+        entry.pendingRoute = null
+        onRoute?.invoke(entry.spec.id, route)
     }
 
     /** The page's pointer types in this event: palms and canceled pointers never count. */
@@ -307,5 +405,11 @@ internal class FrameLayer(
 
     private companion object {
         const val TAG = "PenwiseFrames"
+
+        /** How long a route report is held so a flurry of link clicks becomes one item update. */
+        const val ROUTE_DEBOUNCE_MS = 500L
+
+        /** Route reports right after a programmatic load describe the document being replaced. */
+        const val LOAD_QUIET_MS = 1_500L
     }
 }

@@ -4,7 +4,7 @@
 
 use super::EditError;
 use crate::brush::{BrushParams, Color};
-use crate::item::{Affine, Item, ItemKindTag, Layer, Paint, Polygon, ShapeKind};
+use crate::item::{Affine, FrameSize, Item, ItemKindTag, Layer, Paint, Polygon, ShapeKind};
 
 mod fields;
 
@@ -38,11 +38,15 @@ pub enum Field {
     TextBox,
     /// Text `font_size`. Code 12.
     FontSize,
+    /// Frame `preset` + CSS size (they change together). Code 13.
+    FramePreset,
+    /// Frame `route`. Code 14.
+    FrameRoute,
 }
 
 impl Field {
     /// Every field in code order.
-    pub const ALL: [Field; 13] = [
+    pub const ALL: [Field; 15] = [
         Field::Deleted,
         Field::Layer,
         Field::Z,
@@ -56,6 +60,8 @@ impl Field {
         Field::Text,
         Field::TextBox,
         Field::FontSize,
+        Field::FramePreset,
+        Field::FrameRoute,
     ];
 
     /// Frozen code (see variant docs).
@@ -83,6 +89,7 @@ impl Field {
             Self::Paint => matches!(tag, ItemKindTag::Fill | ItemKindTag::Text),
             Self::Polygons => tag == ItemKindTag::Fill,
             Self::Text | Self::TextBox | Self::FontSize => tag == ItemKindTag::Text,
+            Self::FramePreset | Self::FrameRoute => tag == ItemKindTag::Frame,
         }
     }
 }
@@ -104,6 +111,9 @@ pub struct ItemPatch {
     pub text: Option<String>,
     pub text_box: Option<[f32; 2]>,
     pub font_size: Option<f32>,
+    /// `Some(size)`: the frame's preset and CSS size (one register).
+    pub frame_preset: Option<FrameSize>,
+    pub frame_route: Option<String>,
 }
 
 impl ItemPatch {
@@ -166,6 +176,8 @@ impl ItemPatch {
             Field::Text => self.text.is_some(),
             Field::TextBox => self.text_box.is_some(),
             Field::FontSize => self.font_size.is_some(),
+            Field::FramePreset => self.frame_preset.is_some(),
+            Field::FrameRoute => self.frame_route.is_some(),
         }
     }
 
@@ -185,6 +197,8 @@ impl ItemPatch {
             Field::Text => self.text.clone_from(&from.text),
             Field::TextBox => self.text_box = from.text_box,
             Field::FontSize => self.font_size = from.font_size,
+            Field::FramePreset => self.frame_preset = from.frame_preset,
+            Field::FrameRoute => self.frame_route.clone_from(&from.frame_route),
         }
     }
 

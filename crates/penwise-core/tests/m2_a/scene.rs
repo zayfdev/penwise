@@ -2,8 +2,8 @@
 
 use penwise_core::edit::{Edit, EditError, Field, ItemPatch};
 use penwise_core::item::{
-    Affine, Item, ItemId, ItemKind, Layer, LayerSet, PageKind, Polygon, SampleParam, SampleRange,
-    Scene, ShapeItem, ShapeKind, StrokeItem, Trim, Z_STEP,
+    Affine, FrameItem, FramePreset, FrameSize, Item, ItemId, ItemKind, Layer, LayerSet, PageKind,
+    Polygon, SampleParam, SampleRange, Scene, ShapeItem, ShapeKind, StrokeItem, Trim, Z_STEP,
 };
 use penwise_core::{Bounds, Preset};
 
@@ -24,6 +24,22 @@ fn shape(id: ItemId, z: i64) -> Item {
         }),
     );
     it.transform = Affine::translate(300.0, 300.0);
+    it
+}
+
+fn frame(id: ItemId, z: i64) -> Item {
+    let mut it = crate::fixtures::item(
+        id,
+        z,
+        ItemKind::Frame(FrameItem {
+            project: "portfolio".to_owned(),
+            route: "/".to_owned(),
+            preset: FramePreset::Phone,
+            css_w: 390,
+            css_h: 844,
+        }),
+    );
+    it.transform = Affine::translate(500.0, 0.0);
     it
 }
 
@@ -49,6 +65,7 @@ fn sample_scene() -> (Scene, Vec<Item>) {
             Vec::new(),
         ),
         text(id(6), 5 * Z_STEP, [0.0, 200.0], [80.0, 20.0]),
+        frame(id(7), 6 * Z_STEP),
     ];
     let mut scene = Scene::new(PageKind::Infinite);
     add_all(&mut scene, &items);
@@ -125,6 +142,18 @@ fn patch_for(field: Field) -> (ItemId, ItemPatch) {
         Field::FontSize => {
             p.font_size = Some(9.5);
             id(6)
+        }
+        Field::FramePreset => {
+            p.frame_preset = Some(FrameSize {
+                preset: FramePreset::Desktop,
+                css_w: 1440,
+                css_h: 900,
+            });
+            id(7)
+        }
+        Field::FrameRoute => {
+            p.frame_route = Some("/next".into());
+            id(7)
         }
     };
     (target, p)
@@ -476,8 +505,8 @@ fn index_stays_consistent_through_add_update_delete() {
 #[test]
 fn next_z_and_render_bands() {
     let (scene, _) = sample_scene();
-    assert_eq!(scene.top_z(), 5 * Z_STEP);
-    assert_eq!(scene.next_z(), Some(6 * Z_STEP));
+    assert_eq!(scene.top_z(), 6 * Z_STEP);
+    assert_eq!(scene.next_z(), Some(7 * Z_STEP));
     assert_eq!(Scene::new(PageKind::Infinite).top_z(), 0);
     // The fill sits in the lowest band although its z is high.
     let order = scene.render_order(LayerSet::ALL);
@@ -487,7 +516,7 @@ fn next_z_and_render_bands() {
         "erase items are not painted on their own"
     );
     assert_eq!(scene.masks(id(2)), vec![id(3)]);
-    assert_eq!(scene.len(), 6);
+    assert_eq!(scene.len(), 7);
 }
 
 #[test]

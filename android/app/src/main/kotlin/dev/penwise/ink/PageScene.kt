@@ -1,6 +1,7 @@
 package dev.penwise.ink
 
 import dev.penwise.core.Native
+import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * Told after a [PageScene] tool applied its edit to the scene *and* queued it on the sync core (one native call, one
@@ -46,6 +47,20 @@ class PageScene(
     /** Called (on whichever thread changed the scene) after a change the screen must show. */
     @Volatile
     var onChanged: (() -> Unit)? = null
+
+    private val listeners = CopyOnWriteArrayList<() -> Unit>()
+
+    /**
+     * Adds a listener told after every change of the scene's items, on the thread that made it (the pen's, the sync's,
+     * the scheduler's). Unlike [onChanged] it is a list, so the page view can follow the scene alongside the renderer.
+     */
+    fun addListener(listener: () -> Unit) {
+        listeners += listener
+    }
+
+    fun removeListener(listener: () -> Unit) {
+        listeners -= listener
+    }
 
     /** Called with a short reason when a tool's edit was refused (for example an op too large); nothing changed. */
     @Volatile
@@ -194,6 +209,28 @@ class PageScene(
         layer: Int,
     ): ByteArray = tool { Native.sceneSetLayer(it, ids, layer, syncHandle, clock()) }
 
+    // ---- frames (the design harness) ---------------------------------------------------------------------------
+
+    /** The page's frame items as JSON: `[{"id","project","route","preset","cssW","cssH","rect":[x,y,w,h]}]`. */
+    fun frames(): String = locked { Native.sceneFrames(it) }
+
+    /** Adds a frame; [json] is `{project, route, preset, cssW, cssH, x, y}` with the position in page px. */
+    fun addFrame(json: String): ByteArray = tool { Native.sceneAddFrame(it, json, syncHandle, clock()) }
+
+    /** Switches a frame's size preset (`cssW`/`cssH` matter for `custom` only). */
+    fun setFramePreset(
+        id: ByteArray,
+        preset: String,
+        cssW: Int,
+        cssH: Int,
+    ): ByteArray = tool { Native.sceneSetFramePreset(it, id, preset, cssW, cssH, syncHandle, clock()) }
+
+    /** Points a frame at another route of its project. */
+    fun setFrameRoute(
+        id: ByteArray,
+        route: String,
+    ): ByteArray = tool { Native.sceneSetFrameRoute(it, id, route, syncHandle, clock()) }
+
     // ---- commit ------------------------------------------------------------------------------------------------
 
     /**
@@ -234,6 +271,8 @@ class PageScene(
 
     private fun changed() {
         onChanged?.invoke()
+        // Copy-on-write: a listener may add or remove one while the scene is being changed from its thread.
+        for (listener in listeners) listener()
     }
 
     /**

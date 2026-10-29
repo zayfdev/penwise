@@ -11,6 +11,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FitScreen
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.HorizontalRule
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.NorthEast
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.outlined.Circle
@@ -27,6 +28,7 @@ object ToolIcons {
     val Delete = Icons.Filled.Delete
     val Sync = Icons.Filled.Sync
     val Home = Icons.Filled.Home
+    val Frame = Icons.Filled.Language
     val Fit = Icons.Filled.FitScreen
     val Add = Icons.Filled.Add
     val Rename = Icons.Filled.Edit

@@ -53,6 +53,11 @@ pub enum ItemGeometry {
     Image {
         corners: [[f32; 2]; 4],
     },
+    /// The frame's page box corners, same order as [`ItemGeometry::Text`]: `css_w × css_h` at the item's
+    /// position.
+    Frame {
+        corners: [[f32; 2]; 4],
+    },
 }
 
 impl ItemGeometry {
@@ -87,7 +92,7 @@ impl ItemGeometry {
                         acc
                     })
             }
-            Self::Text { corners, .. } | Self::Image { corners } => {
+            Self::Text { corners, .. } | Self::Image { corners } | Self::Frame { corners } => {
                 corners.iter().fold(Bounds::EMPTY, |mut acc, p| {
                     acc.include_point(p[0], p[1]);
                     acc
@@ -126,7 +131,7 @@ impl Item {
             ItemKind::Stroke(s) => s.params.blend,
             ItemKind::Shape(s) => s.brush.blend,
             ItemKind::Fill(_) => return RenderBand::Fill,
-            ItemKind::Erase(_) | ItemKind::Text(_) | ItemKind::Image(_) => {
+            ItemKind::Erase(_) | ItemKind::Text(_) | ItemKind::Image(_) | ItemKind::Frame(_) => {
                 return RenderBand::Normal;
             }
         };
@@ -192,6 +197,12 @@ impl Item {
                 ]
                 .map(|c| t.apply(c)),
             },
+            ItemKind::Frame(frame) => {
+                let [w, h] = frame.page_size();
+                ItemGeometry::Frame {
+                    corners: [[0.0, 0.0], [w, 0.0], [w, h], [0.0, h]].map(|c| t.apply(c)),
+                }
+            }
         }
     }
 }

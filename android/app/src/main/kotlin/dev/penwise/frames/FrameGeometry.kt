@@ -37,24 +37,32 @@ data class FramePlacement(
     fun toLocalY(windowY: Float): Float = (windowY - top) / scale
 }
 
-/** Page rect + canvas view → screen placement, and back; the canvas pan/zoom transforms the frames with it. */
+/**
+ * Page rect + canvas view → screen placement, and back; the canvas pan/zoom transforms the frames with it.
+ *
+ * A frame's item box is its page box in page units (`css_w × css_h` at scale 1, C1), while the WebView inside it is
+ * laid out at the preset's device px (`css_w × density`) so the page's breakpoints see the preset. [density] is what
+ * turns the canvas scale into the scale of the page's own layout pixels: the two differ by the display density.
+ */
 object FrameGeometry {
     fun place(
         rect: FrameRect,
         view: ViewTransform,
+        density: Float,
     ): FramePlacement =
         FramePlacement(
             left = view.toScreenX(rect.x),
             top = view.toScreenY(rect.y),
             width = rect.width * view.scale,
             height = rect.height * view.scale,
-            scale = view.scale,
+            scale = view.scale / density,
         )
 
     fun placeAll(
         rects: List<FrameRect>,
         view: ViewTransform,
-    ): List<FramePlacement> = rects.map { place(it, view) }
+        density: Float,
+    ): List<FramePlacement> = rects.map { place(it, view, density) }
 
     /** Index of the first placement containing the window point, or -1. */
     fun at(

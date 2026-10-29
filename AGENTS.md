@@ -70,6 +70,13 @@ source file over the limit. Generated code (`wasm-bindgen` output) is excluded a
 - `just device-check`: build + install debug APK, replay fixtures through the debug input harness, screencap, compare
   against goldens, verify the stroke arrived at the server and in the browser view.
 - Run heavy builds through `batch` (see host guidance).
+- `just check`, `just android*` and `just web-e2e` share one machine-wide lock (`/tmp/penwise-gate.lock`), so
+  parallel agents run them one at a time. Don't bypass it by calling the underlying cargo/gradle/npm steps in
+  parallel loops.
+- **Browsers:** every Chromium a test or tool starts runs headless with `--disable-gpu`, and is closed when done.
+  Never open GUI browser windows (`penwise open`, `chromium --app`, the agent browser pane) from automated
+  work. Many GPU Chromiums next to the desktop browser exhausted the NVIDIA driver (Xid 56) and froze the PC on
+  2026-10-28.
 
 ## Dependencies
 

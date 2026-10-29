@@ -1,12 +1,17 @@
 /*
  * Penwise bridge — injected into every HTML page served by a project port.
  *
- * Contract (docs/design-harness-spec.md §6.2):
+ * Contract (docs/design-harness-spec.md §6.2, C3):
  *   out: {t:"pw:hello", url, docW, docH, vw, vh}      on load
  *        {t:"pw:scroll", x, y, docW, docH}            rAF-throttled
  *        {t:"pw:hit", id, key, selector, rect}        in answer to a hit request
+ *        {t:"pw:route", route}                        when the location changes (pushState/popstate/hash)
  *   in:  {t:"pw:hit?", id, x, y}                      x/y are viewport coordinates
  *        {t:"pw:scrollTo", x, y}
+ *        {t:"pw:navigate", route}                     same-origin path; a full navigation
+ *
+ * The scroll position is saved per `location.pathname` in session storage before a reload/`pagehide` and restored
+ * after load, so the owner stays where they were when the code changes.
  *
  * The host is the PC window (window.parent, an iframe) or the Android WebView (window.PenwiseHost.post).
  * Static projects also open /__penwise/reload and reload on {t:"pw:reload"}; proxied projects get HMR from
@@ -20,11 +25,13 @@
 
   var HOST_JS = "PenwiseHost";
   var RELOAD_PATH = "/__penwise/reload";
+  var SCROLL_PREFIX = "pw:scroll:";
   var parent = window.parent && window.parent !== window ? window.parent : null;
   var host = window[HOST_JS] || null;
   var scrollFrame = 0;
   var lastScroll = "";
   var lastHello = "";
+  var lastRoute = "";
 
   function send(message) {
     try {
@@ -32,6 +39,9 @@
         host.post(JSON.stringify(message));
       } else if (parent) {
         parent.postMessage(message, "*");
+      } else {
+        // A top-level page (a debug window) has no host: report to itself so the messages stay observable.
+        window.postMessage(message, "*");
       }
     } catch (_) {
       /* the host went away */
@@ -53,6 +63,83 @@
       x: window.pageXOffset || (root && root.scrollLeft) || 0,
       y: window.pageYOffset || (root && root.scrollTop) || 0
     };
+  }
+
+  function storage() {
+    try {
+      return window.sessionStorage || null;
+    } catch (_) {
+      // Blocked storage (a strict third-party context) must not break the page.
+      return null;
+    }
+  }
+
+  // One entry per route, so a reload keeps the owner where they were and a route switch keeps its own place.
+  function scrollKey() {
+    return SCROLL_PREFIX + location.pathname;
+  }
+
+  function saveScroll() {
+    var store = storage();
+    if (!store) return;
+    var pos = scrollPos();
+    try {
+      store.setItem(scrollKey(), pos.x + "," + pos.y);
+    } catch (_) {
+      /* quota or a blocked store */
+    }
+  }
+
+  function restoreScroll() {
+    var store = storage();
+    if (!store) return;
+    var value = null;
+    try {
+      value = store.getItem(scrollKey());
+    } catch (_) {
+      return;
+    }
+    if (!value) return;
+    var parts = value.split(",");
+    var x = Number(parts[0]);
+    var y = Number(parts[1]);
+    if (!isFinite(x) || !isFinite(y)) return;
+    var current = scrollPos();
+    // The browser may already have restored the position (bfcache); do not fight it.
+    if (current.x > 1 || current.y > 1) return;
+    window.scrollTo(x, y);
+  }
+
+  function route() {
+    return location.pathname + location.search + location.hash;
+  }
+
+  // `{t:"pw:route"}` whenever the location changes under the page (SPA routing, back/forward, hash).
+  function reportRoute() {
+    var now = route();
+    if (now === lastRoute) return;
+    lastRoute = now;
+    send({ t: "pw:route", route: now });
+  }
+
+  function hookHistory() {
+    var history = window.history;
+    if (!history || history.__penwiseRouteHook) return;
+    history.__penwiseRouteHook = true;
+    var names = ["pushState", "replaceState"];
+    for (var i = 0; i < names.length; i += 1) {
+      var original = history[names[i]];
+      if (typeof original !== "function") continue;
+      history[names[i]] = (function (method) {
+        return function () {
+          var result = method.apply(this, arguments);
+          reportRoute();
+          return result;
+        };
+      })(original);
+    }
+    window.addEventListener("popstate", reportRoute, false);
+    window.addEventListener("hashchange", reportRoute, false);
   }
 
   function hello() {
@@ -168,6 +255,13 @@
     } else if (data.t === "pw:scrollTo") {
       window.scrollTo(Number(data.x) || 0, Number(data.y) || 0);
       scheduleScroll();
+    } else if (data.t === "pw:navigate") {
+      var target = typeof data.route === "string" ? data.route : "";
+      // Same-origin paths only: the bridge never turns into an open redirect.
+      if (target.charAt(0) !== "/" || target.charAt(1) === "/") return;
+      saveScroll();
+      if (target === route()) return;
+      location.assign(target);
     }
   }
 
@@ -205,7 +299,10 @@
         } catch (_) {
           return;
         }
-        if (message && message.t === "pw:reload") location.reload();
+        if (message && message.t === "pw:reload") {
+          saveScroll();
+          location.reload();
+        }
       };
       socket.onclose = function () {
         // A proxied project answers 404 here (its dev server does HMR); stop retrying after a few tries.
@@ -226,6 +323,25 @@
     }
   }
 
+  // Our own entry per route wins over the browser's guess (it also survives a live reload).
+  try {
+    if (window.history && "scrollRestoration" in window.history) {
+      window.history.scrollRestoration = "manual";
+    }
+  } catch (_) {
+    /* not supported */
+  }
+  hookHistory();
+  lastRoute = route();
+  window.addEventListener("pagehide", saveScroll, false);
+  window.addEventListener(
+    "pageshow",
+    function (event) {
+      if (event.persisted) restoreScroll();
+    },
+    false
+  );
+
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", hello, { once: true });
   } else {
@@ -234,6 +350,7 @@
   window.addEventListener(
     "load",
     function () {
+      restoreScroll();
       hello();
       scheduleScroll();
     },

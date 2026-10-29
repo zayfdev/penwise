@@ -16,6 +16,7 @@ use crate::received::{NotebookEntry, PageEntry, Received};
 mod author;
 mod dispatch;
 mod edits;
+mod frames;
 mod pen;
 mod persist;
 mod session;

@@ -392,4 +392,35 @@ internal object Native {
         core: Long,
         nowMs: Long,
     ): ByteArray
+
+    /** Every live frame as JSON: `[{id, project, route, preset, cssW, cssH, rect: [x, y, w, h]}]`, ids as 32 hex. */
+    external fun sceneFrames(handle: Long): String
+
+    /** Places a frame from `{project, route, preset, cssW?, cssH?, x, y}` on the ink layer. */
+    external fun sceneAddFrame(
+        handle: Long,
+        json: String,
+        core: Long,
+        nowMs: Long,
+    ): ByteArray
+
+    /** [preset]: phone, tablet, desktop or custom; [cssW]/[cssH] only apply to custom. */
+    @Suppress("LongParameterList")
+    external fun sceneSetFramePreset(
+        handle: Long,
+        id: ByteArray,
+        preset: String,
+        cssW: Int,
+        cssH: Int,
+        core: Long,
+        nowMs: Long,
+    ): ByteArray
+
+    external fun sceneSetFrameRoute(
+        handle: Long,
+        id: ByteArray,
+        route: String,
+        core: Long,
+        nowMs: Long,
+    ): ByteArray
 }

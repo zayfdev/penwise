@@ -49,4 +49,11 @@ class FrameMessageTest {
         assertEquals(FrameMessage.Scroll(0, 0, 0, 0), FrameMessages.parse("""{"t":"pw:scroll"}"""))
         assertEquals(FrameMessage.Hit(-1, "", "", emptyList()), FrameMessages.parse("""{"t":"pw:hit"}"""))
     }
+
+    @Test
+    fun route_carries_the_page_own_navigation() {
+        val json = """{"t":"pw:route","route":"/work?tag=web"}"""
+        assertEquals(FrameMessage.Route("/work?tag=web"), FrameMessages.parse(json))
+        assertEquals(FrameMessage.Route("/"), FrameMessages.parse("""{"t":"pw:route"}"""))
+    }
 }

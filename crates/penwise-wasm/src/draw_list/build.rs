@@ -126,7 +126,8 @@ impl DrawList {
                     self.push_box(DrawKind::Image, corners, style, aux);
                 }
             }
-            ItemGeometry::Erase { .. } => {}
+            // Frames are live views (HTML overlays the host draws itself), not ink; erase items are mask parts.
+            ItemGeometry::Frame { .. } | ItemGeometry::Erase { .. } => {}
         }
     }
 

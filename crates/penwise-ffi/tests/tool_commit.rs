@@ -97,3 +97,106 @@ fn a_failed_commit_reloads_the_scene_from_the_replica() {
         "nothing queued by the failed commit"
     );
 }
+
+/// C1 frames end to end through the headless tools: add from JSON, list as JSON, preset/route switches, undo,
+/// and the frame present in the render order (so Clear page deletes it).
+#[test]
+fn frame_tools_commit_list_and_undo() {
+    use penwise_core::item::ItemId;
+    use serde_json::{Value, json};
+
+    let (mut core, page) = core_with_page(5);
+    let queued = core.outbox().len(); // the notebook + page creation ops
+    let mut scene = SceneHandle::open(&core, page, 3).unwrap();
+    let edits = scene
+        .add_frame(
+            r#"{"project":"portfolio","route":"/","preset":"phone","x":120.5,"y":-40}"#,
+            5_000,
+        )
+        .unwrap();
+    assert_eq!(edits.len(), 1);
+    scene.commit_into(&mut core, &edits, 5_001).unwrap();
+    assert_eq!(core.item_ids(page).len(), 1);
+
+    let listed = |scene: &SceneHandle| -> Vec<Value> {
+        serde_json::from_str(&scene.frames_json()).expect("frames json")
+    };
+    let frames = listed(&scene);
+    assert_eq!(frames.len(), 1, "the frame is committed, not just applied");
+    let frame = &frames[0];
+    assert_eq!(frame["project"], "portfolio");
+    assert_eq!(frame["route"], "/");
+    assert_eq!(frame["preset"], "phone");
+    assert_eq!(frame["cssW"], 390);
+    assert_eq!(frame["cssH"], 844);
+    assert_eq!(frame["rect"], json!([120.5, -40.0, 390.0, 844.0]));
+    let id = ItemId::from_hex(frame["id"].as_str().expect("hex id")).expect("32 hex chars");
+    assert_eq!(scene.render_order(LayerSet::ALL), vec![id]);
+
+    let edits = scene.set_frame_preset(id, "desktop", 0, 0).unwrap();
+    assert_eq!(edits.len(), 1);
+    scene.commit_into(&mut core, &edits, 5_002).unwrap();
+    let frame = listed(&scene).remove(0);
+    assert_eq!(frame["preset"], "desktop");
+    assert_eq!(frame["cssW"], 1440);
+    assert_eq!(frame["cssH"], 900);
+
+    let edits = scene.set_frame_route(id, "/work").unwrap();
+    assert_eq!(edits.len(), 1);
+    scene.commit_into(&mut core, &edits, 5_003).unwrap();
+    assert_eq!(listed(&scene)[0]["route"], "/work");
+    assert_eq!(
+        core.outbox().len(),
+        queued + 3,
+        "each tool is one committed op"
+    );
+
+    // Same value, unknown id: a no-op that commits nothing.
+    assert!(scene.set_frame_route(id, "/work").unwrap().is_empty());
+    assert!(
+        scene
+            .set_frame_preset(ItemId([9; 16]), "tablet", 0, 0)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(core.outbox().len(), queued + 3);
+
+    // Bad input is an error, never a silent edit.
+    assert!(matches!(
+        scene.add_frame(
+            r#"{"project":"p","route":"/","preset":"watch","x":0,"y":0}"#,
+            5_004
+        ),
+        Err(SyncError::BadArgument("frame preset"))
+    ));
+    assert!(matches!(
+        scene.add_frame("{", 5_004),
+        Err(SyncError::BadArgument("frame json"))
+    ));
+    assert!(matches!(
+        scene.set_frame_preset(id, "custom", 0, 100),
+        Err(SyncError::Edit(
+            penwise_core::edit::EditError::InvalidValue {
+                field: "frame_size"
+            }
+        ))
+    ));
+    assert!(matches!(
+        scene.set_frame_route(id, "no-slash"),
+        Err(SyncError::Edit(
+            penwise_core::edit::EditError::InvalidValue {
+                field: "frame_route"
+            }
+        ))
+    ));
+
+    // Undo walks back route, then preset; the frame itself stays.
+    let undone = scene.undo().unwrap();
+    scene.commit_into(&mut core, &undone, 5_005).unwrap();
+    assert_eq!(listed(&scene)[0]["route"], "/");
+    let undone = scene.undo().unwrap();
+    scene.commit_into(&mut core, &undone, 5_006).unwrap();
+    let frame = listed(&scene).remove(0);
+    assert_eq!(frame["preset"], "phone");
+    assert_eq!(frame["cssW"], 390);
+}

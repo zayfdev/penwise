@@ -127,6 +127,11 @@ flowchart LR
 - Each linked project gets its **own port** on the Penwise server (`7421+`). The proxy covers the dev
   origin's root, so absolute URLs (`/main.js`, `/@vite/client`) work unchanged. A path prefix under `:7420`
   would break them.
+- The **registry** (`GET/POST /projects`, `DELETE /projects/:id`) stores rows in the server database: id,
+  name, root (unique, so re-linking is idempotent), target, port and notebook. Ports are persisted and reused
+  across restarts; a new project takes the first free port from the base (`PENWISE_PROJECT_PORT`, default
+  7421). `PENWISE_PROJECTS` stays as a development override. The routes take the sync token, or a
+  same-machine loopback request (the `/pair/local` rule) so `penwise link` needs no token.
 - Static projects (no dev server, like the portfolio) are served by Penwise itself, with file watching and
   live reload.
 - WebSockets (HMR) pass through.
@@ -137,9 +142,13 @@ flowchart LR
 ### 6.2 Bridge (injected script)
 - Reports to its parent (tablet WebView or PC iframe) over `postMessage`/JS interface:
   - scroll position and document size;
+  - the route when the page changes it itself (`pushState`/`popstate`/hash), as `{t:"pw:route", route}`;
   - rects for the element keys of visible bound marks, updated on layout change via `ResizeObserver`/`MutationObserver`, throttled to a frame;
   - the hit element under a point (for binding on pen-up);
   - interactions (clicks, opened state) for the state recipe.
+- Accepts `{t:"pw:scrollTo", x, y}` and `{t:"pw:navigate", route}` (same-origin paths only).
+- Saves the scroll position per `location.pathname` in session storage before a reload/`pagehide` and restores
+  it after load, so a live reload keeps the owner in place.
 - Applies patches (ghost/variant) and replays states on request.
 - Resolves element keys: the `data-pw-src` attribute (from an adapter) first, then a fingerprint match.
 

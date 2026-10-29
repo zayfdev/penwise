@@ -100,7 +100,11 @@ fn item_samples(
                 length += push_ring_or_line(&poly.outer, true, step, out);
             }
         }
-        Some(ItemGeometry::Text { corners, .. } | ItemGeometry::Image { corners }) => {
+        Some(
+            ItemGeometry::Text { corners, .. }
+            | ItemGeometry::Image { corners }
+            | ItemGeometry::Frame { corners },
+        ) => {
             length = arc_length(corners, true);
             out.extend_from_slice(corners);
             let mid = |i: usize| f32::midpoint(corners[0][i], corners[2][i]);

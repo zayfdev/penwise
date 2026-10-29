@@ -30,6 +30,16 @@
     <string name="tool_lasso">Lasso select</string>
     <string name="tool_delete_selection">Delete selection</string>
     <string name="tool_clear_page">Clear page</string>
+    <string name="tool_add_frame">New frame</string>
+    <string name="frame_add_title">New frame</string>
+    <string name="frame_no_projects">No linked projects yet. Run penwise link in the project folder on the PC.</string>
+    <string name="frame_project">Project</string>
+    <string name="frame_route">Route</string>
+    <string name="frame_preset">Size</string>
+    <string name="frame_add">Add</string>
+    <string name="frame_route_title">Open route</string>
+    <string name="frame_open">Open</string>
+    <string name="frame_reload">Reload</string>
     <string name="clear_page_title">Clear this page?</string>
     <string name="clear_page_message">All ink on this page is removed. Undo brings it back; the server also keeps the history.</string>
     <string name="tool_preset_color">Auto</string>

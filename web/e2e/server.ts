@@ -34,6 +34,27 @@ export function freePort(): Promise<number> {
   });
 }
 
+/** Whether `port` can be bound on loopback right now. */
+function portFree(port: number): Promise<boolean> {
+  // `Promise.withResolvers` needs lib ES2024; tsconfig targets ES2022.
+  return new Promise((resolve) => {
+    const probe = createServer();
+    probe.once("error", () => resolve(false));
+    probe.listen(port, "127.0.0.1", () => probe.close(() => resolve(true)));
+  });
+}
+
+/**
+ * Base port for the linked projects (`PENWISE_PROJECT_PORT`). Tests never bind 7421–7430 (the live service
+ * uses them), so start above 17421 and take the first free port.
+ */
+async function projectPortBase(): Promise<number> {
+  for (let port = 17421; port < 17600; port++) {
+    if (await portFree(port)) return port;
+  }
+  throw new Error("no free project port base below 17600");
+}
+
 /**
  * Spawns `target/debug/penwise-server` (or `$PENWISE_SERVER_BIN`) serving `web/dist` and waits until it
  * answers. The data dir is removed on stop; `restart` keeps it (and the port).
@@ -41,10 +62,11 @@ export function freePort(): Promise<number> {
 export async function startServer(): Promise<TestServer> {
   const bin = process.env.PENWISE_SERVER_BIN ?? join(root, "target/debug/penwise-server");
   const port = await freePort();
+  const projectBase = await projectPortBase();
   const data = mkdtempSync(join(tmpdir(), "penwise-e2e-"));
   const token = "e2e-token";
   const origin = `http://127.0.0.1:${port}`;
-  let child = spawnServer(bin, port, data, token);
+  let child = spawnServer(bin, port, data, token, projectBase);
   await waitReady(child.process, origin, token, child.log);
 
   const kill = async () => {
@@ -58,7 +80,7 @@ export async function startServer(): Promise<TestServer> {
     host: `127.0.0.1:${port}`,
     down: kill,
     async up() {
-      child = spawnServer(bin, port, data, token);
+      child = spawnServer(bin, port, data, token, projectBase);
       await waitReady(child.process, origin, token, child.log);
     },
     async stop() {
@@ -68,7 +90,7 @@ export async function startServer(): Promise<TestServer> {
   };
 }
 
-function spawnServer(bin: string, port: number, data: string, token: string) {
+function spawnServer(bin: string, port: number, data: string, token: string, projectBase: number) {
   const process_ = spawn(bin, [], {
     env: {
       ...process.env,
@@ -77,6 +99,7 @@ function spawnServer(bin: string, port: number, data: string, token: string) {
       PENWISE_DATA: data,
       PENWISE_WEB: join(root, "web/dist"),
       PENWISE_TOKEN: token,
+      PENWISE_PROJECT_PORT: String(projectBase),
     },
     stdio: ["ignore", "ignore", "pipe"],
   });

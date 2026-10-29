@@ -28,16 +28,26 @@ fn write_header(out: &mut Vec<u8>, magic: [u8; 4], version: u16) {
 
 /// Reads and checks `magic` then `version`.
 fn read_header(r: &mut Reader<'_>, magic: [u8; 4], version: u16) -> Result<(), CodecError> {
+    read_header_any(r, magic, &[version]).map(|_| ())
+}
+
+/// Reads `magic` then a version accepted in `versions`; returns the version found.
+fn read_header_any(
+    r: &mut Reader<'_>,
+    magic: [u8; 4],
+    versions: &[u16],
+) -> Result<u16, CodecError> {
     let mut found = [0_u8; 4];
     found.copy_from_slice(r.bytes(4)?);
     if found != magic {
         return Err(CodecError::BadMagic { found });
     }
     let v = r.u16_le()?;
-    if v != version {
-        return Err(CodecError::UnsupportedVersion(v));
+    if versions.contains(&v) {
+        Ok(v)
+    } else {
+        Err(CodecError::UnsupportedVersion(v))
     }
-    Ok(())
 }
 
 /// Appends the FNV-1a 64 trailer of `out[start..]` (the blob written since `start`).

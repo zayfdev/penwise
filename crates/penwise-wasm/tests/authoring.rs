@@ -495,3 +495,76 @@ fn a_log_stamp_far_ahead_is_reported_but_still_ordered_before_new_ops() {
         "the new op orders after the far-ahead stamp"
     );
 }
+
+/// `frames()` returns the C1 JSON, and add/preset/route are ordinary undoable ops.
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+fn frames_are_placed_listed_restyled_and_undone() {
+    let (mut viewer, page) = ready();
+    assert_eq!(viewer.frames(&page).unwrap(), "[]");
+
+    let id = viewer
+        .add_frame(
+            &page,
+            r#"{"project":"portfolio","route":"/","preset":"phone","x":120.5,"y":-40}"#,
+            NOW_F,
+        )
+        .unwrap();
+    assert_eq!(viewer.pending_ops(), 1, "one Add op");
+
+    let frames = |viewer: &Viewer| -> Vec<serde_json::Value> {
+        serde_json::from_str(&viewer.frames(&page).unwrap()).expect("json array")
+    };
+    let listed = frames(&viewer);
+    assert_eq!(listed.len(), 1);
+    let frame = &listed[0];
+    assert_eq!(frame["id"], serde_json::Value::String(id.clone()));
+    assert_eq!(frame["project"], "portfolio");
+    assert_eq!(frame["route"], "/");
+    assert_eq!(frame["preset"], "phone");
+    assert_eq!(frame["cssW"], 390);
+    assert_eq!(frame["cssH"], 844);
+    let rect = frame["rect"].as_array().expect("rect");
+    assert_eq!(
+        rect.iter()
+            .filter_map(serde_json::Value::as_f64)
+            .collect::<Vec<_>>(),
+        vec![120.5, -40.0, 390.0, 844.0]
+    );
+
+    viewer
+        .set_frame_preset(&id, "desktop", 1440, 900, NOW_F)
+        .unwrap();
+    assert_eq!(viewer.pending_ops(), 2, "one Update op");
+    viewer.set_frame_route(&id, "/work", NOW_F).unwrap();
+    assert_eq!(viewer.pending_ops(), 3);
+    let frame = frames(&viewer).remove(0);
+    assert_eq!(frame["preset"], "desktop");
+    assert_eq!(frame["cssW"], 1440);
+    assert_eq!(frame["route"], "/work");
+
+    // Same value or an unknown id: no op (the typed entry points, so errors stay testable natively).
+    let page_id: penwise_proto::PageId = page.parse().unwrap();
+    let item: penwise_core::item::ItemId = id.parse::<penwise_proto::ItemRef>().unwrap().into();
+    viewer.change_route(item, "/work", NOW).unwrap();
+    viewer.change_preset(item, "desktop", 0, 0, NOW).unwrap();
+    viewer
+        .change_route(penwise_core::item::ItemId([9; 16]), "/x", NOW)
+        .unwrap();
+    assert_eq!(viewer.pending_ops(), 3);
+    assert!(viewer.change_preset(item, "watch", 1, 1, NOW).is_err());
+    assert!(viewer.change_route(item, "no-slash", NOW).is_err());
+    assert!(viewer.change_preset(item, "custom", 0, 100, NOW).is_err());
+    assert!(viewer.place_frame(page_id, "{", NOW).is_err());
+
+    // Undo steps are ordinary local edits: route, then preset.
+    assert_eq!(viewer.undo(&page, NOW_F).unwrap(), 1);
+    let frame = frames(&viewer).remove(0);
+    assert_eq!(frame["route"], "/");
+    assert_eq!(frame["preset"], "desktop");
+    assert_eq!(viewer.undo(&page, NOW_F).unwrap(), 1);
+    let frame = frames(&viewer).remove(0);
+    assert_eq!(frame["preset"], "phone");
+    assert_eq!(viewer.undo(&page, NOW_F).unwrap(), 1);
+    assert_eq!(viewer.frames(&page).unwrap(), "[]", "the Add is undone");
+}

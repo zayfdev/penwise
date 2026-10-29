@@ -2,10 +2,11 @@
 //!
 //! Owner: slice e (M2).
 //!
-//! Layout v1 (conventions as in [`super::item`]):
+//! Layout v2 (conventions as in [`super::item`]; v1 blobs still decode, they just cannot carry the frame
+//! fields):
 //! ```text
 //! magic     4   b"PWED"
-//! version   u16 = 1
+//! version   u16 = 2
 //! body          tag u8: 0 Add | 1 Delete | 2 Update
 //!   Add         item body (item::encode_item_body)
 //!   Delete      id
@@ -13,9 +14,10 @@
 //!               order: Deleted u8 0/1 | Layer u8 | Z u64 | Transform f32×6 | Brush params | ShapeFill flag u8
 //!               [+ rgba] | Paint rgba + opacity f32 | Polygons count uv + polygons | ShapeKind (as in item)
 //!               | ShapeSize f32×2 | Text len uv + UTF-8 | TextBox f32×2 | FontSize f32
+//!               | FramePreset preset u8 + css_w uv + css_h uv | FrameRoute len uv + UTF-8
 //! trailer   u64 FNV-1a 64
 //! ```
-//! Mask bits beyond the known fields are `InvalidValue` (a newer writer must bump the version).
+//! Mask bits beyond the version's known fields are `InvalidValue` (a newer writer must bump the version).
 
 use super::error::CodecError;
 use super::item::fields::{
@@ -27,37 +29,67 @@ use super::item::{decode_item_body, encode_item_body};
 use super::params_fields::{invalid, write_f32s};
 use super::stroke::{decode_params, encode_params};
 use super::varint::{Reader, write_uv32};
-use super::{finish_decode, read_header, write_header, write_trailer};
+use super::{finish_decode, read_header_any, write_header, write_trailer};
 use crate::edit::{Edit, ItemPatch};
+use crate::item::{FramePreset, FrameSize};
 
 /// Edit blob magic.
 pub const EDIT_MAGIC: [u8; 4] = *b"PWED";
-/// Current edit blob layout version.
-pub const EDIT_VERSION: u16 = 1;
+/// Version this build needs for `FramePreset`/`FrameRoute` (mask bits 13 and 14). Edits that set neither are
+/// written at [`EDIT_VERSION_V1`], so blobs from before frames existed re-encode byte for byte and older
+/// readers keep working.
+pub const EDIT_VERSION: u16 = 2;
+/// The baseline version: no frame fields, mask bits `< 13`.
+pub const EDIT_VERSION_V1: u16 = 1;
 
 const TAG_ADD: u8 = 0;
 const TAG_DELETE: u8 = 1;
 const TAG_UPDATE: u8 = 2;
 /// Number of known fields: mask bits `0..FIELD_COUNT` (bit = `Field::code`).
-const FIELD_COUNT: u32 = 13;
+const FIELD_COUNT: u32 = 15;
+/// Known fields of [`EDIT_VERSION_V1`].
+const FIELD_COUNT_V1: u32 = 13;
 
-/// Appends the v1 blob for `edit`.
+/// Appends the blob for `edit` at the smallest version that can carry it (see [`version_for`]).
 pub fn encode_edit(edit: &Edit, out: &mut Vec<u8>) {
     let start = out.len();
-    write_header(out, EDIT_MAGIC, EDIT_VERSION);
+    write_header(out, EDIT_MAGIC, version_for(edit));
     encode_edit_body(edit, out);
     write_trailer(out, start);
 }
 
-/// Decodes exactly one v1 edit blob. Patches are decoded as given (field applicability is the scene's check,
-/// not the codec's).
+/// `EDIT_VERSION` only when the patch sets a field that version 1 cannot carry; `EDIT_VERSION_V1` otherwise
+/// (`Add`/`Delete` and the pre-frame fields are all valid v1).
+fn version_for(edit: &Edit) -> u16 {
+    let Edit::Update { patch, .. } = edit else {
+        return EDIT_VERSION_V1;
+    };
+    if patch
+        .fields()
+        .iter()
+        .any(|field| field.code() >= u8::try_from(FIELD_COUNT_V1).unwrap_or(u8::MAX))
+    {
+        EDIT_VERSION
+    } else {
+        EDIT_VERSION_V1
+    }
+}
+
+/// Decodes exactly one edit blob of any supported version. Patches are decoded as given (field applicability
+/// is the scene's check, not the codec's).
 ///
 /// # Errors
-/// As [`super::item::decode_item`]; plus `InvalidValue` for an unknown edit tag or unknown mask bits.
+/// As [`super::item::decode_item`]; plus `InvalidValue` for an unknown edit tag or unknown mask bits,
+/// `UnsupportedVersion` for a version this build does not know.
 pub fn decode_edit(bytes: &[u8]) -> Result<Edit, CodecError> {
     let mut r = Reader::new(bytes);
-    read_header(&mut r, EDIT_MAGIC, EDIT_VERSION)?;
-    let body = decode_edit_body(&mut r).map(|edit| (edit, r.position()));
+    let version = read_header_any(&mut r, EDIT_MAGIC, &[EDIT_VERSION_V1, EDIT_VERSION])?;
+    let fields = if version == EDIT_VERSION_V1 {
+        FIELD_COUNT_V1
+    } else {
+        FIELD_COUNT
+    };
+    let body = decode_body(&mut r, fields).map(|edit| (edit, r.position()));
     finish_decode(bytes, body)
 }
 
@@ -85,13 +117,17 @@ pub fn encode_edit_body(edit: &Edit, out: &mut Vec<u8>) {
 /// # Errors
 /// As [`decode_edit`] minus header/trailer errors.
 pub fn decode_edit_body(reader: &mut Reader<'_>) -> Result<Edit, CodecError> {
-    let r = reader;
+    decode_body(reader, FIELD_COUNT)
+}
+
+/// [`decode_edit_body`] for a blob whose version allows `fields` mask bits.
+fn decode_body(r: &mut Reader<'_>, fields: u32) -> Result<Edit, CodecError> {
     match r.u8()? {
         TAG_ADD => Ok(Edit::Add(decode_item_body(r)?)),
         TAG_DELETE => Ok(Edit::Delete(read_id(r)?)),
         TAG_UPDATE => {
             let id = read_id(r)?;
-            let patch = decode_patch(r)?;
+            let patch = decode_patch(r, fields)?;
             Ok(Edit::Update { id, patch })
         }
         _ => Err(invalid("edit tag")),
@@ -114,6 +150,8 @@ fn field_mask(p: &ItemPatch) -> u32 {
         p.text.is_some(),
         p.text_box.is_some(),
         p.font_size.is_some(),
+        p.frame_preset.is_some(),
+        p.frame_route.is_some(),
     ];
     (0_u32..).zip(present).fold(
         0,
@@ -163,11 +201,17 @@ fn encode_patch(p: &ItemPatch, out: &mut Vec<u8>) {
     if let Some(v) = p.font_size {
         write_f32s(out, &[v]);
     }
+    if let Some(v) = &p.frame_preset {
+        write_frame_size(out, v);
+    }
+    if let Some(v) = &p.frame_route {
+        write_str(out, v);
+    }
 }
 
-fn decode_patch(r: &mut Reader<'_>) -> Result<ItemPatch, CodecError> {
+fn decode_patch(r: &mut Reader<'_>, fields: u32) -> Result<ItemPatch, CodecError> {
     let mask = r.uv32()?;
-    if mask >> FIELD_COUNT != 0 {
+    if mask >> fields != 0 {
         return Err(invalid("field mask"));
     }
     let has = |bit: u32| mask & (1 << bit) != 0;
@@ -186,5 +230,23 @@ fn decode_patch(r: &mut Reader<'_>) -> Result<ItemPatch, CodecError> {
         text: has(10).then(|| read_str(r)).transpose()?,
         text_box: has(11).then(|| read_pair(r, "text.size")).transpose()?,
         font_size: has(12).then(|| r.f32_le("text.font_size")).transpose()?,
+        frame_preset: has(13).then(|| read_frame_size(r)).transpose()?,
+        frame_route: has(14).then(|| read_str(r)).transpose()?,
+    })
+}
+
+/// `preset u8` + `css_w uv` + `css_h uv` (one register).
+fn write_frame_size(out: &mut Vec<u8>, size: &FrameSize) {
+    out.push(size.preset.code());
+    write_uv32(out, size.css_w);
+    write_uv32(out, size.css_h);
+}
+
+fn read_frame_size(r: &mut Reader<'_>) -> Result<FrameSize, CodecError> {
+    let preset = FramePreset::from_code(r.u8()?).ok_or(invalid("frame.preset"))?;
+    Ok(FrameSize {
+        preset,
+        css_w: r.uv32()?,
+        css_h: r.uv32()?,
     })
 }

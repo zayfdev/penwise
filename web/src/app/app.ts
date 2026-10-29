@@ -4,6 +4,9 @@
  */
 
 import { byId } from "../dom";
+import { AddFrameForm } from "../frames/add-form";
+import { FrameLayer } from "../frames/layer";
+import { type Frame, normalizeRoute, type Project, parseFrames, presetSize } from "../frames/model";
 import { attachHistoryKeys } from "../input/keys";
 import { PenInput } from "../input/pen";
 import { Api, fetchLocalToken } from "../net/api";
@@ -20,7 +23,7 @@ import { attachStage } from "../ui/stage";
 import { StatusPill } from "../ui/status";
 import { Toolbar } from "../ui/toolbar";
 import { Unlock } from "../ui/unlock";
-import { fitView, type Viewport } from "../view";
+import { fitView, toPage, type Viewport, type ViewTransform } from "../view";
 import { MessageKind, type Received, type Viewer, type Wasm } from "../wasm";
 import { Actions } from "./actions";
 import { choosePage, findPage, type NotebookGroup, readCatalog } from "./catalog";
@@ -32,9 +35,17 @@ import { Unsent } from "./unsent";
 /** All layers of a page (core `LayerSet` bits). */
 const ALL_LAYERS = 0b111;
 
+/** Inset of a frame added from the sidebar, CSS px from the visible top-left. */
+const FRAME_INSET_PX = 32;
+
+/** How often missing projects are refetched while a frame refers to one, ms. */
+const PROJECTS_RETRY_MS = 2_000;
+
 /** The running viewer. */
 export class App {
   private readonly viewer: Viewer;
+  private readonly frameLayer: FrameLayer;
+  private readonly frameForm: AddFrameForm;
   private readonly api: Api;
   private readonly connection: Connection;
   private readonly pageView: PageView;
@@ -61,6 +72,11 @@ export class App {
   private readonly images: ImageCache;
   private connState: ConnectionState = "closed";
   private readonly snapshots = new SnapshotTracker();
+  /** Linked projects (`GET /projects`), for frame URLs. */
+  private projects: readonly Project[] = [];
+  private projectsAt = 0;
+  /** Frames of the shown page, in paint order. */
+  private frames: readonly Frame[] = [];
 
   constructor(
     private readonly wasm: Wasm,
@@ -81,6 +97,18 @@ export class App {
     this.unsent.restoreOrIdentify(device, entropy);
     this.token = resolveToken(location.search, localStorage) ?? "";
     this.api = new Api(() => this.token);
+    this.frameLayer = new FrameLayer(
+      byId("frames", HTMLElement),
+      byId("frame-chips", HTMLElement),
+      { host: () => location.hostname, token: () => this.token },
+      {
+        preset: (frame, preset) => this.setFramePreset(frame, preset),
+        route: (frame, route) => this.setFrameRoute(frame, route),
+      },
+    );
+    this.frameForm = new AddFrameForm(byId("frames-panel", HTMLElement), {
+      add: (project, route, preset) => this.addFrame(project, route, preset),
+    });
     this.actions = new Actions(this.api, {
       created: (id) => {
         this.pendingSelect = id;
@@ -90,6 +118,7 @@ export class App {
         this.token = token;
         this.unlock.hide();
         this.connection.start();
+        void this.refreshProjects();
       },
       problem: (message) => this.status.problem(message),
     });
@@ -137,6 +166,7 @@ export class App {
         this.mode = mode;
         if (mode === "free") this.pendingSwitch.clear();
       },
+      mouseDraw: (on) => this.frameLayer.setDrawMouse(on),
     });
     this.sidebar = new Sidebar(byId("pages", HTMLElement), {
       select: (id) => this.userSelect(id),
@@ -155,9 +185,10 @@ export class App {
       view: () => this.pageView.transform,
       setView: (view) => {
         this.userMoved = true;
-        this.pageView.setView(view);
+        this.viewChanged(view);
       },
       resized: (viewport, dpr) => this.resized(viewport, dpr),
+      pointer: (type) => this.frameLayer.setPointer(type),
     });
     attachHistoryKeys(window, (redo) => this.step(redo));
     window.addEventListener("beforeunload", (event) => this.unsent.warn(event));
@@ -182,6 +213,7 @@ export class App {
     if (this.token === "")
       this.unlock.show("Enter the pairing code shown by the server or the tablet.");
     else this.connection.start();
+    void this.refreshProjects();
   }
 
   private makeConnection(): Connection {
@@ -243,6 +275,7 @@ export class App {
     if (plan.repaintCommitted) {
       this.pageView.invalidateCommitted();
       if (this.refitOnData) this.refit(false);
+      this.refreshFrames();
     }
     if (plan.repaintLive) this.pageView.invalidateLive();
     this.refreshHistory();
@@ -279,6 +312,8 @@ export class App {
     this.pageView.invalidateCommitted();
     this.pageView.invalidateLive();
     this.refreshHistory();
+    this.refreshFrames();
+    void this.refreshProjects();
   }
 
   private userSelect(page: string): void {
@@ -299,13 +334,20 @@ export class App {
     if (!page.fixed && bounds) this.refitOnData = false;
     if (page.fixed) this.refitOnData = false;
     this.userMoved = false;
-    this.pageView.setView(fitView(page, bounds, this.viewport));
+    this.viewChanged(fitView(page, bounds, this.viewport));
   }
 
   private resized(viewport: Viewport, dpr: number): void {
     this.viewport = viewport;
     this.pageView.resize(viewport, dpr);
+    this.frameLayer.setView(this.pageView.transform);
     this.refit(false);
+  }
+
+  /** A new page → CSS view: both canvases and the frames follow. */
+  private viewChanged(view: ViewTransform): void {
+    this.pageView.setView(view);
+    this.frameLayer.setView(view);
   }
 
   /** The pen committed a stroke (or undo/redo changed the page): repaint and refresh buttons. */
@@ -313,6 +355,88 @@ export class App {
     this.pageView.invalidateCommitted();
     this.refreshHistory();
     this.refreshStatus();
+    this.refreshFrames();
+  }
+
+  /** Reads the shown page's frames into the layer (`Viewer.frames`). */
+  private refreshFrames(): void {
+    const page = this.current;
+    this.frames = page === null ? [] : parseFrames(this.viewer.frames(page));
+    this.frameLayer.render(this.frames, this.projects);
+    const missing = this.frames.some(
+      (frame) => !this.projects.some((project) => project.id === frame.project),
+    );
+    if (missing && Date.now() - this.projectsAt > PROJECTS_RETRY_MS) void this.refreshProjects();
+  }
+
+  /** `GET /projects`: the iframe URLs and the sidebar's list of projects to link. */
+  private async refreshProjects(): Promise<void> {
+    this.projectsAt = Date.now();
+    let projects: readonly Project[];
+    try {
+      projects = await this.api.projects();
+    } catch {
+      // Not paired yet, or a server without projects: keep the last list; frames needing it stay unrendered.
+      return;
+    }
+    this.projects = projects;
+    this.frameForm.render(projects);
+    this.frameLayer.render(this.frames, projects);
+  }
+
+  /** Adds a frame at the visible top-left of the shown page (`Viewer.add_frame`). */
+  private addFrame(project: string, route: string, preset: string): void {
+    const page = this.current;
+    if (page === null) {
+      this.status.problem("Open a page before adding a frame.");
+      return;
+    }
+    const size = presetSize(preset) ?? presetSize("desktop");
+    if (size === null) return;
+    const [x, y] = toPage(this.pageView.transform, FRAME_INSET_PX, FRAME_INSET_PX);
+    const json = JSON.stringify({
+      project,
+      route: normalizeRoute(route),
+      preset,
+      cssW: size.cssW,
+      cssH: size.cssH,
+      x: Math.round(x),
+      y: Math.round(y),
+    });
+    try {
+      this.viewer.add_frame(page, json, Date.now());
+    } catch (error) {
+      this.status.problem(`frame not added: ${String(error)}`);
+      return;
+    }
+    this.afterFrameEdit();
+  }
+
+  private setFramePreset(frame: Frame, preset: string): void {
+    const size = presetSize(preset) ?? { cssW: frame.cssW, cssH: frame.cssH };
+    try {
+      this.viewer.set_frame_preset(frame.id, preset, size.cssW, size.cssH, Date.now());
+    } catch (error) {
+      this.status.problem(`preset not changed: ${String(error)}`);
+      return;
+    }
+    this.afterFrameEdit();
+  }
+
+  private setFrameRoute(frame: Frame, route: string): void {
+    try {
+      this.viewer.set_frame_route(frame.id, normalizeRoute(route), Date.now());
+    } catch (error) {
+      this.status.problem(`route not changed: ${String(error)}`);
+      return;
+    }
+    this.afterFrameEdit();
+  }
+
+  /** A frame edit is an ordinary undoable op: send it, then repaint the placeholder and the iframes. */
+  private afterFrameEdit(): void {
+    this.connection.flush();
+    this.afterLocalEdit();
   }
 
   private step(redo: boolean): void {

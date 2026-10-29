@@ -25,7 +25,10 @@
 //!         ring = count uv + pts
 //! Text    content (len uv + UTF-8); size f32×2; font_size f32; paint; sources count uv + ids
 //! Image   asset 32 raw bytes (SHA-256); size f32×2 (w, h)
+//! Frame   preset u8 (FramePreset::code); css_w uv; css_h uv; project (len uv + UTF-8); route (len uv + UTF-8)
 //! ```
+//! New kinds are append-only tags, so the layout version does not change when one is added: a reader of an
+//! older build rejects the unknown tag with `InvalidValue` and every older blob still decodes.
 //! Grid-stored values (erase paths, fill rings) round-trip exactly only when already on the 1/16 px grid
 //! (the producers snap them); everything else round-trips bit-exactly. Decoding validates with
 //! `Item::validate`, mapping its failure to `InvalidValue`.

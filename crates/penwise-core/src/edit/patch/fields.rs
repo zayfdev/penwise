@@ -46,6 +46,8 @@ impl ItemPatch {
             Field::FontSize => opt_eq(self.font_size.as_ref(), other.font_size.as_ref(), |a, b| {
                 a.to_bits() == b.to_bits()
             }),
+            Field::FramePreset => self.frame_preset == other.frame_preset,
+            Field::FrameRoute => self.frame_route == other.frame_route,
         }
     }
 
@@ -67,6 +69,8 @@ impl ItemPatch {
             (Field::Text, ItemKind::Text(t)) => self.text = Some(t.content.clone()),
             (Field::TextBox, ItemKind::Text(t)) => self.text_box = Some(t.size),
             (Field::FontSize, ItemKind::Text(t)) => self.font_size = Some(t.font_size),
+            (Field::FramePreset, ItemKind::Frame(f)) => self.frame_preset = Some(f.size()),
+            (Field::FrameRoute, ItemKind::Frame(f)) => self.frame_route = Some(f.route.clone()),
             _ => {}
         }
     }
@@ -103,6 +107,14 @@ impl ItemPatch {
                 set(&mut t.content, self.text.as_ref());
                 set(&mut t.size, self.text_box.as_ref());
                 set(&mut t.font_size, self.font_size.as_ref());
+            }
+            ItemKind::Frame(f) => {
+                if let Some(size) = self.frame_preset {
+                    f.preset = size.preset;
+                    f.css_w = size.css_w;
+                    f.css_h = size.css_h;
+                }
+                set(&mut f.route, self.frame_route.as_ref());
             }
             ItemKind::Erase(_) | ItemKind::Image(_) => {}
         }

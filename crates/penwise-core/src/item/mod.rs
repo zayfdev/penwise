@@ -10,6 +10,7 @@
 mod affine;
 mod erase;
 mod fill;
+mod frame;
 mod geometry;
 mod id;
 mod image;
@@ -25,6 +26,10 @@ mod validate;
 pub use affine::Affine;
 pub use erase::EraseItem;
 pub use fill::{FillItem, Polygon};
+pub use frame::{
+    FrameItem, FramePreset, FrameSize, FrameSpec, MAX_FRAME_SIDE, MAX_PROJECT_LEN, MAX_ROUTE_LEN,
+    add_frame,
+};
 pub use geometry::{DeriveContext, ItemGeometry, RenderBand, RenderKey};
 pub use id::{IdSource, ItemId};
 pub use image::ImageItem;
@@ -61,7 +66,7 @@ pub struct Item {
     pub kind: ItemKind,
 }
 
-/// Kind-specific data (PLAN "Data model": stroke, erase, shape, fill, text, image).
+/// Kind-specific data (PLAN "Data model": stroke, erase, shape, fill, text, image; design harness: frame).
 #[derive(Debug, Clone, PartialEq)]
 pub enum ItemKind {
     /// Pen stroke: brush params + seed + raw samples (+ visible-range [`Trim`] for precise-erase pieces).
@@ -76,6 +81,8 @@ pub enum ItemKind {
     Text(TextItem),
     /// Placed picture (asset hash + box).
     Image(ImageItem),
+    /// Live web page of a linked project at a size preset (design harness).
+    Frame(FrameItem),
 }
 
 /// Stable kind tags (frozen: stored in the item codec; append only).
@@ -87,10 +94,11 @@ pub enum ItemKindTag {
     Fill,
     Text,
     Image,
+    Frame,
 }
 
 impl ItemKindTag {
-    /// Byte tag: `Stroke = 0, Erase = 1, Shape = 2, Fill = 3, Text = 4, Image = 5`.
+    /// Byte tag: `Stroke = 0, Erase = 1, Shape = 2, Fill = 3, Text = 4, Image = 5, Frame = 6`.
     #[must_use]
     pub fn code(self) -> u8 {
         match self {
@@ -100,6 +108,7 @@ impl ItemKindTag {
             Self::Fill => 3,
             Self::Text => 4,
             Self::Image => 5,
+            Self::Frame => 6,
         }
     }
 
@@ -113,6 +122,7 @@ impl ItemKindTag {
             3 => Some(Self::Fill),
             4 => Some(Self::Text),
             5 => Some(Self::Image),
+            6 => Some(Self::Frame),
             _ => None,
         }
     }
@@ -129,6 +139,7 @@ impl ItemKind {
             Self::Fill(_) => ItemKindTag::Fill,
             Self::Text(_) => ItemKindTag::Text,
             Self::Image(_) => ItemKindTag::Image,
+            Self::Frame(_) => ItemKindTag::Frame,
         }
     }
 }

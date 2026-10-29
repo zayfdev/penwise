@@ -9,6 +9,7 @@ const HTTP_ROUTES = [
   "/pair.png",
   "/pages",
   "/notebooks",
+  "/projects",
   "/text",
   "/search",
   "/page.png",

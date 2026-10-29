@@ -21,8 +21,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import dev.penwise.frames.FrameHold
-import dev.penwise.frames.FrameSpec
 import dev.penwise.home.HomeActions
 import dev.penwise.home.HomeScreen
 import dev.penwise.ink.PageViewModel
@@ -38,15 +36,8 @@ import kotlinx.coroutines.launch
 private const val INFO_REFRESH_MS = 1_000L
 private const val PENDING_REFRESH_MS = 2_000L
 
-/** The phone preset of the harness (§12.4), the default size of the debug frame. */
-private const val PHONE_WIDTH = 390
-private const val PHONE_HEIGHT = 844
-
 class MainActivity : ComponentActivity() {
     private val page: PageViewModel by viewModels()
-
-    /** Live pages under the ink (M0: one, from the debug launch intent; M1 makes them synced items). */
-    private val frames = FrameHold()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
@@ -57,7 +48,6 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState == null) handleLaunch(intent)
         setContent {
             val pages by page.pages.collectAsState()
-            val frameSpecs by frames.frames.collectAsState()
             val status by page.status.collectAsState()
             val held by page.syncUi.serverChanged.collectAsState()
             val scope = rememberCoroutineScope()
@@ -133,7 +123,6 @@ class MainActivity : ComponentActivity() {
                     onSync = { showSync = true },
                     syncStatus = status,
                     pending = waiting,
-                    frameSpecs = frameSpecs,
                 )
             }
         }
@@ -145,25 +134,7 @@ class MainActivity : ComponentActivity() {
             Log.i("PenwiseFixture", "replay requested: $path")
             page.requestReplay(path)
         }
-        handleDebugFrame(intent)
         handlePairing(intent)
-    }
-
-    /**
-     * Debug-only live page on the canvas: `am start … --es frame_url http://127.0.0.1:17421/ --ei frame_w 390
-     * --ei frame_h 844` puts one frame at page position (100, 100) at that CSS size, held in memory. The URL is reached
-     * through `adb reverse tcp:17421 tcp:17421` from a project port of the Penwise server.
-     */
-    private fun handleDebugFrame(intent: Intent?) {
-        val url = intent?.getStringExtra("frame_url") ?: return
-        val spec =
-            FrameSpec.debug(
-                url,
-                intent.getIntExtra("frame_w", PHONE_WIDTH),
-                intent.getIntExtra("frame_h", PHONE_HEIGHT),
-            )
-        Log.i("PenwiseFrames", "debug frame ${spec.url} at ${spec.x},${spec.y} ${spec.cssWidth}x${spec.cssHeight} px")
-        frames.add(spec)
     }
 
     /** `penwise://pair?code=…&url=…`: exchange the code for a token and point sync at that server. */
@@ -191,7 +162,6 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        handleDebugFrame(intent)
         handlePairing(intent)
     }
 }

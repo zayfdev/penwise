@@ -35,7 +35,9 @@ impl Item {
     /// - extent: the local data box and its page image under the transform lie within `±2²⁰` px (the
     ///   codec's position limit), and a stroke's page half-width (`size_max ×`
     ///   [`Affine::width_scale`]) is at most `2²⁰`.
-    /// - image: `w`, `h` in `(0, 2²⁰]`.
+    /// - image: `w`, `h` in `(0, 2²⁰]`;
+    /// - frame: `project` non-empty and ≤ 64 bytes, `route` starts with `/` and is ≤ 2048 bytes, `css_w`/
+    ///   `css_h` in `1 ..= 2²⁰`.
     ///
     /// # Errors
     /// [`EditError::InvalidValue`] naming the first offending field (fields checked in the order above;
@@ -72,6 +74,7 @@ impl Item {
                     .all(|v| *v > 0.0 && *v <= POSITION_LIMIT_PX),
                 "image_size",
             ),
+            ItemKind::Frame(f) => f.check(),
             ItemKind::Text(t) => {
                 let font_ok = t.font_size.is_finite() && t.font_size > 0.0;
                 check(font_ok && t.font_size <= POSITION_LIMIT_PX, "font_size")?;
@@ -126,6 +129,11 @@ fn local_box(kind: &ItemKind) -> Bounds {
         ItemKind::Image(i) => {
             b.include_point(0.0, 0.0);
             b.include_point(i.w, i.h);
+        }
+        ItemKind::Frame(f) => {
+            let [w, h] = f.page_size();
+            b.include_point(0.0, 0.0);
+            b.include_point(w, h);
         }
     }
     b

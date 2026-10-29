@@ -10,6 +10,8 @@ export interface ToolbarEvents {
   redo(): void;
   fit(): void;
   mode(mode: FollowMode): void;
+  /** "Draw with mouse": the mouse inks over frames instead of clicking through them. */
+  mouseDraw(on: boolean): void;
 }
 
 /** Hex `#rrggbb` → opaque `0xAARRGGBB`; black for anything else. */
@@ -58,6 +60,8 @@ export class Toolbar {
         events.mode(mode.value);
       }
     });
+    const mouseDraw = el("input", { attrs: { type: "checkbox", id: "tool-draw-mouse" } });
+    mouseDraw.addEventListener("change", () => events.mouseDraw(mouseDraw.checked));
     root.prepend(
       this.preset,
       this.color,
@@ -66,6 +70,7 @@ export class Toolbar {
       this.redoButton,
       this.button("Fit", "tool-fit", events.fit),
       mode,
+      el("label", { class: "toggle" }, [mouseDraw, "Draw with mouse"]),
     );
   }
 

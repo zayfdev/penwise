@@ -3,12 +3,13 @@
 use super::fixtures::{BLUE, RED, every_kind, id, shape_kinds, square};
 use super::item_codec::reseal;
 use penwise_core::codec::edit::{
-    EDIT_MAGIC, EDIT_VERSION, decode_edit, decode_edit_body, encode_edit, encode_edit_body,
+    EDIT_MAGIC, EDIT_VERSION, EDIT_VERSION_V1, decode_edit, decode_edit_body, encode_edit,
+    encode_edit_body,
 };
 use penwise_core::codec::item::{ITEM_MAGIC, encode_item};
 use penwise_core::codec::varint::{Reader, write_uv32};
 use penwise_core::edit::{Edit, Field, ItemPatch};
-use penwise_core::item::{Affine, Layer, Paint, Polygon, ShapeKind};
+use penwise_core::item::{Affine, FramePreset, FrameSize, Layer, Paint, Polygon, ShapeKind};
 use penwise_core::{CodecError, Preset};
 
 fn blob(edit: &Edit) -> Vec<u8> {
@@ -17,10 +18,20 @@ fn blob(edit: &Edit) -> Vec<u8> {
     out
 }
 
+/// The version [`encode_edit`] must pick for `edit` (minimal: v2 only for a frame field).
+fn expected_version(edit: &Edit) -> u16 {
+    match edit {
+        Edit::Update { patch, .. } if patch.fields().iter().any(|field| field.code() >= 13) => {
+            EDIT_VERSION
+        }
+        _ => EDIT_VERSION_V1,
+    }
+}
+
 fn assert_round_trip(edit: &Edit) {
     let bytes = blob(edit);
     assert_eq!(&bytes[..4], &EDIT_MAGIC);
-    assert_eq!(bytes[4..6], EDIT_VERSION.to_le_bytes());
+    assert_eq!(bytes[4..6], expected_version(edit).to_le_bytes());
     assert_eq!(decode_edit(&bytes).as_ref(), Ok(edit));
     assert_eq!(blob(&decode_edit(&bytes).unwrap()), bytes, "canonical");
     let mut body = Vec::new();
@@ -73,6 +84,14 @@ fn single(field: Field, variant: usize) -> ItemPatch {
         Field::Text => p.text = Some(["", "hello ✍"][variant % 2].to_owned()),
         Field::TextBox => p.text_box = Some([300.0, 0.5]),
         Field::FontSize => p.font_size = Some(11.0),
+        Field::FramePreset => {
+            p.frame_preset = Some(FrameSize {
+                preset: FramePreset::ALL[variant % FramePreset::ALL.len()],
+                css_w: 390 + u32::try_from(variant).unwrap(),
+                css_h: 800,
+            });
+        }
+        Field::FrameRoute => p.frame_route = Some(["", "/a?b=c"][variant % 2].to_owned()),
     }
     p
 }
@@ -173,13 +192,54 @@ fn unknown_tag_and_mask_bits_are_invalid() {
     let mask_at = 6 + 1 + 16;
     assert_eq!(bytes[mask_at], 0);
     let mut bad = bytes[..mask_at].to_vec();
-    bad.extend_from_slice(&[0x80, 0x40]); // bit 13
+    bad.extend_from_slice(&[0x80, 0x80, 0x02]); // bit 15 (two bits past the last field)
     bad.extend_from_slice(&bytes[mask_at + 1..]);
     assert_eq!(
         decode_edit(&reseal(bad)),
         Err(CodecError::InvalidValue {
             field: "field mask"
         })
+    );
+}
+
+#[test]
+fn blobs_use_the_minimal_version_and_older_blobs_still_decode() {
+    let plain = update(ItemPatch {
+        font_size: Some(12.0),
+        ..ItemPatch::default()
+    });
+    let bytes = blob(&plain);
+    assert_eq!(
+        bytes[4..6],
+        EDIT_VERSION_V1.to_le_bytes(),
+        "an edit without frame fields stays v1, byte-compatible with frozen fixtures"
+    );
+    assert_eq!(decode_edit(&bytes), Ok(plain));
+    assert_eq!(
+        blob(&Edit::Add(every_kind().remove(0)))[4..6],
+        EDIT_VERSION_V1.to_le_bytes()
+    );
+
+    let framed = update(single(Field::FrameRoute, 1));
+    let bytes = blob(&framed);
+    assert_eq!(bytes[4..6], EDIT_VERSION.to_le_bytes());
+    assert_eq!(decode_edit(&bytes), Ok(framed));
+
+    let mut v1_frame = bytes;
+    v1_frame[4..6].copy_from_slice(&EDIT_VERSION_V1.to_le_bytes());
+    assert_eq!(
+        decode_edit(&reseal(v1_frame)),
+        Err(CodecError::InvalidValue {
+            field: "field mask"
+        }),
+        "mask bits 13/14 did not exist in v1"
+    );
+
+    let mut unknown = blob(&Edit::Delete(id(1)));
+    unknown[4..6].copy_from_slice(&3_u16.to_le_bytes());
+    assert_eq!(
+        decode_edit(&reseal(unknown)),
+        Err(CodecError::UnsupportedVersion(3))
     );
 }
 

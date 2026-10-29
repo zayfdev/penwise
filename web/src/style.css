@@ -221,6 +221,115 @@ main {
   pointer-events: none;
 }
 
+/* Frames: between the paper canvas and the ink; click-through unless `.interact` (mouse/touch, no modifier). */
+#frames {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+
+#frames .frame {
+  position: absolute;
+  overflow: hidden;
+  background: #fff;
+  border-radius: 2px;
+  box-shadow: 0 2px 18px rgb(0 0 0 / 0.18);
+}
+
+#frames .frame iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #fff;
+  pointer-events: none;
+}
+
+#frames.interact .frame iframe {
+  pointer-events: auto;
+}
+
+#frame-chips {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.frame-chip {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.12);
+  font-size: 12px;
+  white-space: nowrap;
+  pointer-events: auto;
+}
+
+.frame-chip[hidden] {
+  display: none;
+}
+
+#frame-chips .frame-chip .name {
+  color: #555;
+}
+
+#frame-chips .frame-chip select,
+#frame-chips .frame-chip button {
+  font: inherit;
+  padding: 1px 4px;
+  border: 1px solid #cfcfd4;
+  border-radius: 4px;
+  background: #fff;
+}
+
+#frame-chips .frame-chip input {
+  width: 9rem;
+  font: inherit;
+  padding: 1px 4px;
+  border: 1px solid #cfcfd4;
+  border-radius: 4px;
+}
+
+#frames-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+}
+
+#frames-panel h2 {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #7a7a82;
+}
+
+#frames-panel .row {
+  display: flex;
+  gap: 4px;
+}
+
+#sidebar #frames-panel input,
+#sidebar #frames-panel select {
+  flex: 1;
+  min-width: 0;
+}
+
+#toolbar .toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+
 #status {
   margin-left: auto;
   padding: 4px 10px;
