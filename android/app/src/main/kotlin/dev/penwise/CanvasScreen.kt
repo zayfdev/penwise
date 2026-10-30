@@ -128,6 +128,7 @@ fun CanvasScreen(
                 pen = page.pen,
                 frames = frames,
                 onPenDown = { onDrawerOpenChange(false) },
+                onPenInput = rememberPenAwake(),
                 modifier = Modifier.fillMaxSize(),
             )
         }

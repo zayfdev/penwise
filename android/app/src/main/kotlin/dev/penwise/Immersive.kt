@@ -13,8 +13,9 @@ import androidx.core.view.WindowInsetsControllerCompat
 
 /**
  * While composed (a page is open): hide the status and navigation bars so an edge swipe only peeks them
- * (transient bars) instead of acting as Back/Home, and keep the screen awake. Restored on leaving.
+ * (transient bars) instead of acting as Back/Home. Restored on leaving.
  * Bars are hidden again whenever the window regains focus (dialogs and the transient peek drop the flag).
+ * Keeping the screen awake is separate: see [rememberPenAwake].
  */
 @Composable
 fun ImmersiveWhileOpen() {
@@ -32,11 +33,9 @@ fun ImmersiveWhileOpen() {
             }
             val onFocus = ViewTreeObserver.OnWindowFocusChangeListener { focused -> if (focused) hide() }
             hide()
-            view.keepScreenOn = true
             view.viewTreeObserver.addOnWindowFocusChangeListener(onFocus)
             onDispose {
                 view.viewTreeObserver.removeOnWindowFocusChangeListener(onFocus)
-                view.keepScreenOn = false
                 controller.show(WindowInsetsCompat.Type.systemBars())
             }
         }
