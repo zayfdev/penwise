@@ -510,3 +510,216 @@ fn an_unreachable_server_names_how_to_start_it() {
     );
     assert!(!site.join(".penwise.json").exists());
 }
+
+// ---------------------------------------------------------------- agent files: hook, skill, unlink
+
+/// `fake.run` with `PATH` set to `path_dir`, so the hook command does not depend on this machine's installation.
+fn run_with_path(fake: &Fake, path_dir: &Path, args: &[&str]) -> Output {
+    main_binary()
+        .args(args)
+        .env("PENWISE_URL", fake.url())
+        .env_remove("PENWISE_PORT")
+        .env("PATH", path_dir)
+        .output()
+        .unwrap()
+}
+
+fn files_under(dir: &Path) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        for entry in fs::read_dir(&current).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else {
+                out.push(
+                    path.strip_prefix(dir)
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned(),
+                );
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+fn settings(site: &Path) -> Value {
+    serde_json::from_str(&fs::read_to_string(site.join(".claude/settings.json")).unwrap()).unwrap()
+}
+
+fn inbox_commands(settings: &Value) -> Vec<String> {
+    settings["hooks"]["UserPromptSubmit"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|group| group["hooks"].as_array().unwrap().clone())
+        .filter_map(|hook| hook["command"].as_str().map(str::to_owned))
+        .filter(|command| command.ends_with(" inbox"))
+        .collect()
+}
+
+#[test]
+fn a_fresh_project_gets_the_hook_and_both_skills_and_unlink_removes_exactly_them() {
+    let fake = Fake::start();
+    let temp = Temp::new("agent-fresh");
+    let site = temp.project("site");
+    fs::write(site.join("index.html"), "<!doctype html>").unwrap();
+    let empty_path = temp.project("empty-path");
+    let before = files_under(&site);
+
+    let output = run_with_path(
+        &fake,
+        &empty_path,
+        &["link", site.to_str().unwrap(), "--yes"],
+    );
+    assert!(output.status.success(), "{}", stderr(&output));
+    let text = stdout(&output);
+    assert!(text.contains("Claude Code hook"), "{text}");
+    assert!(text.contains("+++"), "the diff is shown: {text}");
+
+    // `penwise` is not on this PATH, so the hook runs the binary that linked, by absolute path.
+    let commands = inbox_commands(&settings(&site));
+    assert_eq!(1, commands.len());
+    assert!(
+        commands[0].starts_with('"')
+            && commands[0].contains("penwise")
+            && commands[0].ends_with("\" inbox"),
+        "{commands:?}"
+    );
+    for agent_dir in [".claude", ".omp"] {
+        let skill =
+            fs::read_to_string(site.join(agent_dir).join("skills/penwise/SKILL.md")).unwrap();
+        assert!(skill.starts_with("---\nname: penwise\n"), "{agent_dir}");
+        assert!(skill.lines().count() < 120);
+    }
+    let record = link_file(&site);
+    assert_eq!(record["installed"]["hook"], true);
+    assert_eq!(record["installed"]["hook_file_created"], true);
+    assert_eq!(record["installed"]["claude_skill"], true);
+    assert_eq!(record["installed"]["omp_skill"], true);
+    assert_eq!(record["installed"]["mcp"], true);
+
+    let unlinked = run_with_path(&fake, &empty_path, &["unlink", site.to_str().unwrap()]);
+    assert!(unlinked.status.success(), "{}", stderr(&unlinked));
+    assert_eq!(
+        before,
+        files_under(&site),
+        "the folder is as it was before link: no hook, no skills, no MCP config, no record"
+    );
+    assert!(!site.join(".claude").exists() && !site.join(".omp").exists());
+}
+
+#[test]
+fn an_existing_settings_file_is_merged_relinking_adds_nothing_and_unlink_restores_it() {
+    let fake = Fake::start();
+    let temp = Temp::new("agent-merge");
+    let site = temp.project("site");
+    fs::write(site.join("index.html"), "<!doctype html>").unwrap();
+    // A `penwise` on PATH: the hook is the portable command.
+    let bin = temp.project("bin");
+    fs::write(bin.join("penwise"), "#!/bin/sh\n").unwrap();
+    let original = json!({
+        "model": "opus",
+        "permissions": { "allow": ["Bash(ls)"] },
+        "hooks": {
+            "Stop": [{ "hooks": [{ "type": "command", "command": "say done" }] }],
+            "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "date >> /tmp/prompts.log" }] }]
+        }
+    });
+    fs::create_dir_all(site.join(".claude")).unwrap();
+    fs::write(site.join(".claude/settings.json"), original.to_string()).unwrap();
+
+    for _ in 0..2 {
+        let output = run_with_path(&fake, &bin, &["link", site.to_str().unwrap(), "--yes"]);
+        assert!(output.status.success(), "{}", stderr(&output));
+    }
+    let merged = settings(&site);
+    assert_eq!(merged["model"], "opus");
+    assert_eq!(merged["hooks"]["Stop"], original["hooks"]["Stop"]);
+    assert_eq!(
+        merged["hooks"]["UserPromptSubmit"][0], original["hooks"]["UserPromptSubmit"][0],
+        "the owner's own hook is untouched and still first"
+    );
+    assert_eq!(
+        vec!["penwise inbox".to_owned()],
+        inbox_commands(&merged),
+        "linking twice leaves one hook"
+    );
+    let record = link_file(&site);
+    assert_eq!(record["installed"]["hook"], true);
+    assert!(
+        record["installed"].get("hook_file_created").is_none(),
+        "the file was the owner's"
+    );
+
+    let unlinked = run_with_path(&fake, &bin, &["unlink", site.to_str().unwrap()]);
+    assert!(unlinked.status.success(), "{}", stderr(&unlinked));
+    assert_eq!(
+        original,
+        settings(&site),
+        "settings.json is as the owner had it"
+    );
+    assert!(!site.join(".omp").exists());
+    assert!(!site.join(".claude/skills").exists());
+}
+
+#[test]
+fn unlink_keeps_a_skill_the_owner_edited() {
+    let fake = Fake::start();
+    let temp = Temp::new("agent-edited");
+    let site = temp.project("site");
+    fs::write(site.join("index.html"), "<!doctype html>").unwrap();
+    let empty_path = temp.project("empty-path");
+    assert!(
+        run_with_path(
+            &fake,
+            &empty_path,
+            &["link", site.to_str().unwrap(), "--yes"]
+        )
+        .status
+        .success()
+    );
+    let skill = site.join(".claude/skills/penwise/SKILL.md");
+    let mut text = fs::read_to_string(&skill).unwrap();
+    text.push_str("\nProject rule: always ask before touching /src/legacy.\n");
+    fs::write(&skill, &text).unwrap();
+
+    let output = run_with_path(&fake, &empty_path, &["unlink", site.to_str().unwrap()]);
+    assert!(output.status.success());
+    assert!(stdout(&output).contains("edited"), "{}", stdout(&output));
+    assert_eq!(text, fs::read_to_string(&skill).unwrap());
+    assert!(!site.join(".omp").exists(), "the untouched omp skill went");
+}
+
+#[test]
+fn declining_the_prompts_writes_nothing_beyond_the_link() {
+    let fake = Fake::start();
+    let temp = Temp::new("agent-decline");
+    let site = temp.project("site");
+    fs::write(site.join("index.html"), "<!doctype html>").unwrap();
+    let mut child = main_binary()
+        .args(["link", site.to_str().unwrap()])
+        .env("PENWISE_URL", fake.url())
+        .env_remove("PENWISE_PORT")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    // register: y; MCP config: n; hook: n; skill: n.
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"y\nn\nn\nn\n")
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(
+        vec![".penwise.json".to_owned(), "index.html".to_owned()],
+        files_under(&site)
+    );
+    assert!(link_file(&site).get("installed").is_none());
+}

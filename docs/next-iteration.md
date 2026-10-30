@@ -21,7 +21,7 @@ picture surface are all in the current code.
 - **Fill bucket has no UI** on the tablet or in the browser: the algorithm is in `penwise-core` (`fill/`) but
   `penwise-ffi` and `penwise-wasm` do not expose it.
 - **No scan button / auto-scan.** Recognition runs only when something reads `GET /text` (viewer ☰ panel, MCP
-  `penwise_page_text`).
+  `notes {page}`).
 - **No mDNS discovery.** The server does not advertise itself; the tablet is pointed at a URL or pairs by code/QR.
 
 ## Browser (`docs/draw.md`)
@@ -36,7 +36,7 @@ picture surface are all in the current code.
 - **Eraser and shape live previews are not sent to other devices.** The live channel carries only freehand
   `StrokeDelta` / `StrokeCancel` (`penwise-proto/src/live.rs`); other devices see an erase or shape when it commits.
 
-## Design harness (`docs/design-harness.md`)
+## Design harness v1 (`docs/design-harness.md`)
 
 - **No Astro adapter.** Astro is detected by `penwise link`, but its marks carry no component source; source
   entries fall back to URLs.
@@ -46,9 +46,6 @@ picture surface are all in the current code.
   dev origin serves no document. Vite CSS still maps `/src/x.css` and `/@fs/…` to files.
 - **Vue and Svelte templates map only plain HTML elements.** A component tag (`<Card>`) gets no `data-pw-src`;
   resolution infers the nearest ancestor with the attribute.
-- **`penwise_frame_open` does not switch the owner's page.** It creates the frame on the project's review page
-  and returns the page id; the tablet stays where it was until the agent calls `penwise_switch_page` or the
-  owner selects the page.
 - **No `penwise dev`.** The owner starts the dev server. `penwise status` reports whether it answers.
 - **Dev server down shows no last snapshot.** The proxy answers 502 with `dev server <origin> unreachable`;
   the frame keeps its marks but has no page.
@@ -57,6 +54,31 @@ picture surface are all in the current code.
 - **No orphaned/ambiguous flags in bundles.** A deleted element is `element: null`; the agent must say so.
 - **Patches cannot run JavaScript.** Ghosts and variants are CSS plus DOM ops, not branches or worktrees.
 - **Live public sites are out of scope.** The proxy dials a local dev origin only.
+
+## Design harness v2 (`docs/design-harness-v2-spec.md`)
+
+- **The scroll link is unverified on the device.** Full-length frames follow the page's own scroll (spec §3.2,
+  contract §5), but how it feels on the Tab S9 and the PC window (marks swimming, the bitmap fallback during a
+  pan) has only been checked in tests, not on hardware. Do this in the one device session the spec plans.
+- **Fixed and sticky elements appear once in a snapshot**, at their position at scroll 0; the live window shows
+  the truth. Reveal-on-scroll content is hidden in a snapshot until scrolled, and lazy images are loaded by a
+  pre-roll, so a still can differ from the live page.
+- **Infinite feeds fall back to `extent: viewport`.** A document that grows past 30 000 CSS px within a few
+  seconds of load is switched to a viewport-sized frame by the server (with a note in the still), so such a
+  page cannot be unrolled.
+- **Deferring the agent's camera move cannot tell the tablet from the agent on the web viewer.** The camera
+  holds an agent move back for 10 seconds after the owner drew (spec §5), but on the web viewer it has no way to
+  tell whose input it saw, so the deferral can misfire.
+- **"Use this" chips overlap the toolbar at fit view.** In focus view the variant chips sit under the top toolbar.
+- **omp has the skill, not the hook.** `penwise link` writes `.omp/skills/penwise/SKILL.md`, but omp has no
+  documented prompt hook, so a sent round reaches an omp session only when the owner says "look". The skill
+  frontmatter (`name`, `description`) is the common layout; omp's own loader was not confirmed.
+- **`penwise inbox` runs on a prompt, not on Send.** The Claude Code hook fires when the owner submits a prompt;
+  it does not wake an idle session.
+- **A frame taller than 40 Mpx is snapshotted scaled down.** History pictures keep the frame's full box size,
+  but their pixels are fewer; a very long page is also stored at no more than 9000 px a side.
+- **Rounds read only the project's own notebook.** Marks on a frame placed on a page outside the project's
+  notebook are not counted in rounds, `look` or the inbox.
 
 ## Security
 

@@ -192,8 +192,8 @@ harness details in `docs/design-harness-spec.md` and `docs/next-iteration.md`):
 - **Design harness v1 (separate track, M0–M5) — done.** Linked projects served or proxied with HMR, bridge, CDP
   source mapping; marks bound to elements or areas, per preset and page state; agent bundles with kind, colour,
   OCR, element and source lines; ghosts, variants and the owner's pick; Vite/SvelteKit and Next adapters that add
-  `data-pw-src`; `penwise link` writes the MCP config. Guide: `docs/design-harness.md`; agent prompt:
-  `docs/agent-prompt.md`; deviations: spec §13.
+  `data-pw-src`; `penwise link` writes the MCP config. Guide: `docs/design-harness.md`; deviations: spec §13. v2 (rounds,
+  the four-tool MCP, the `penwise` skill and inbox hook): `docs/design-harness-v2-spec.md`.
 
 ## Build process
 

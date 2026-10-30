@@ -20,6 +20,12 @@ struct Op<'a> {
 /// A unified diff (headers included) for `path`, or headers only when the texts are equal.
 #[must_use]
 pub fn unified(path: &Path, before: &str, after: &str) -> String {
+    unified_labelled(path, before, after, "penwise adapter")
+}
+
+/// [`unified`] with the label the `+++` header carries (what is proposing the change).
+#[must_use]
+pub fn unified_labelled(path: &Path, before: &str, after: &str, label: &str) -> String {
     let old: Vec<&str> = before.lines().collect();
     let new: Vec<&str> = after.lines().collect();
     let ops = walk(&old, &new);
@@ -29,11 +35,7 @@ pub fn unified(path: &Path, before: &str, after: &str) -> String {
         .filter(|(_, op)| op.tag != ' ')
         .map(|(index, _)| index)
         .collect();
-    let mut out = format!(
-        "--- {}\n+++ {} (penwise adapter)\n",
-        path.display(),
-        path.display()
-    );
+    let mut out = format!("--- {}\n+++ {} ({label})\n", path.display(), path.display());
     for hunk in hunks(&changed, ops.len()) {
         let slice = &ops[hunk.clone()];
         let old_start = slice.iter().find(|op| op.tag != '+').map_or(0, |op| op.old);

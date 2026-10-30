@@ -37,7 +37,7 @@ is a JSON-RPC error. A call may wait up to 180 s (a look opens headless pages; a
 The MCP server finds the access token itself: `PENWISE_TOKEN`, else `~/.local/share/penwise/token` (where the
 server writes it). Set `PENWISE_TOKEN` explicitly if the server uses a different data directory.
 
-The v1 surface (22 tools) is gone, with no compatibility layer. Its schemas cost about 2.6k tokens on every
+The v1 tool surface is gone, with no compatibility layer. Its schemas cost about 2.6k tokens on every
 request and a round took eight or more calls with two images per mark; the four tools below do a round in four.
 
 ## A round in four calls

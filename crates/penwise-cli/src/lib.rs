@@ -14,11 +14,14 @@ pub mod client;
 pub mod detect;
 pub mod diff;
 pub mod error;
+pub mod hook;
 pub mod inbox;
 pub mod launcher;
 pub mod link;
 pub mod mcp_config;
+pub mod offer;
 pub mod project_file;
+pub mod skill;
 pub mod status;
 pub mod unlink;
 

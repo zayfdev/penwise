@@ -103,6 +103,43 @@ pub fn merged(path: &Path, project: &str, schema: bool) -> Result<String, Error>
     Ok(text)
 }
 
+/// What removing the `penwise` server entry leaves.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Removal {
+    /// No `penwise` entry there.
+    Nothing,
+    /// The file without the entry.
+    Rewritten(String),
+    /// Nothing but what `link` itself adds is left (`$schema`, an empty `mcpServers`): the file can go.
+    Empty,
+}
+
+/// `text` without the `penwise` server; an `mcpServers` map it empties is dropped, other keys and servers stay.
+///
+/// # Errors
+/// `text` is not a JSON object.
+pub fn removed(text: &str, path: &Path) -> Result<Removal, Error> {
+    let mut root: Value = serde_json::from_str(text)?;
+    let object = root
+        .as_object_mut()
+        .ok_or_else(|| Error::Config(format!("{} is not a JSON object", path.display())))?;
+    let Some(Value::Object(servers)) = object.get_mut("mcpServers") else {
+        return Ok(Removal::Nothing);
+    };
+    if servers.remove(SERVER).is_none() {
+        return Ok(Removal::Nothing);
+    }
+    if servers.is_empty() {
+        object.remove("mcpServers");
+    }
+    if object.keys().all(|key| key == "$schema") {
+        return Ok(Removal::Empty);
+    }
+    let mut out = serde_json::to_string_pretty(&root)?;
+    out.push('\n');
+    Ok(Removal::Rewritten(out))
+}
+
 /// Writes both files for `project`, creating `.omp/` when needed. Returns what was written, in print order.
 ///
 /// # Errors

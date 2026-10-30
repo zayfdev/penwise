@@ -95,15 +95,15 @@ up on release.
 
 ## 5. Agent interface — MCP v2
 
-Four tools replace the 23 v1 tools **[owner]**. No compat layer; v1 tools are deleted. The 23 schemas cost about
-2.6k tokens today (measured from `tools/list`); the bigger costs were the number of calls per round (8+) and two
+Four tools replace the v1 tools **[owner]**. No compat layer; v1 tools are deleted. The v1 schemas cost about
+2.6k tokens (measured from `tools/list`); the bigger costs were the number of calls per round (8+) and two
 images per mark.
 
 | Tool | Arguments | Returns |
 |---|---|---|
 | `look` | `{mark?, frame?, images?: "overview"\|"none"}` | Compact text: project, board, frames, round, marks, picks. One **overview image** per touched frame: the region around the marks, numbered, long side ≤ 1280 px. `{mark}` returns that one mark's full bundle (v1 §7.2) with crops. Returned marks move `new → seen` automatically. |
 | `show` | exactly one of `frame {route, preset?=desktop, extent?=full}`, `ghost {frame, patch \| clear}`, `variants {frame, options:[{label, patch}] 2–4 \| clear}`, `sketch {strokes, near?}`, `image {path, x?, y?, label?}`, `focus {frame \| page}` | What was created (ids) and failed patch ops. `frame` reuses an existing frame with the same route and preset. |
-| `resolve` | `{marks?: [{id, status: done\|reopened\|seen, note?}], round?: true}` | New statuses; with `round: true` (or when no open mark remains) the round closes as in §4. |
+| `resolve` | `{marks?: [{id, status: done\|reopened\|seen, note?}], round?: n \| true}` | New statuses. `round: n` (the number `look` shows) closes round *n* as in §4; `round: true` means the latest *sent* round and is refused when none is waiting, so an open round is only closed by its number. The round also closes when no open mark remains in the sent round. |
 | `notes` | `{query?, page?, png?}` | Plain notes: list pages, handwriting as text, search, or a page PNG. |
 
 - **Camera on `show`:** the owner's device moves to the result unless the owner drew in the last 10 s; then it
@@ -122,8 +122,9 @@ images per mark.
   - `.claude/skills/penwise/SKILL.md`: the loop, the mark vocabulary, the four tools.
 - The hook runs when the owner submits a prompt, so the owner types anything ("go", "check") and the round is
   already in context. It does not wake an idle session. **[default]**
-- **omp:** same skill text; hook wiring if omp has a prompt hook (to research in V5), else skill only.
-- `docs/agent-prompt.md` is replaced by the skill.
+- **omp:** the same skill text at `.omp/skills/penwise/SKILL.md`. omp has no documented prompt hook (researched
+  in V5: `--hook`/extension flags exist, but no prompt-submit event is documented), so there is no omp hook.
+- `docs/agent-prompt.md` is gone; the skill replaces it (source `crates/penwise-cli/assets/SKILL.md`).
 
 ## 7. Retired in v2
 
@@ -132,8 +133,8 @@ images per mark.
 | Chrome extension (`extension/`, `docs/extension.md`) | Static screenshot capture onto a page; live frames supersede it. The DB holds 3 anchors, all test data (`example.com`). |
 | Grabber (`scripts/grab.mjs`, `just grab`) | Cut components into static tiles; frames + snapshots supersede it. |
 | Anchors (`penwise-server/src/anchors/`, `/pages/:id/anchors`, `penwise_page_annotations`) | Only served the two above. Its tables (`page_anchors`, `page_anchors_seen`) are lazy sidecars outside the numbered schema, so no migration: the code goes and the clean start drops the tables. |
-| 23 v1 MCP tools | Replaced by §5. |
-| `docs/agent-prompt.md` | Replaced by the skill (§6). |
+| The v1 MCP tools | Replaced by §5. |
+| `docs/agent-prompt.md` | Deleted; replaced by the skill (§6). |
 
 Pictures on the canvas (`/assets`, image items) stay: history snapshots are image items.
 

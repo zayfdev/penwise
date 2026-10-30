@@ -1,5 +1,5 @@
 //! `penwise link [dir]`: detect the project, offer the adapter, register it, write `.penwise.json` and the
-//! agent's MCP config (design-harness spec §8).
+//! agent's MCP config, the prompt hook and the skill (design-harness spec §8, v2 §6).
 
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
@@ -9,7 +9,7 @@ use crate::client::{self, Client, Register};
 use crate::detect::{Detected, detect};
 use crate::error::Error;
 use crate::mcp_config::Targets;
-use crate::project_file::Link;
+use crate::project_file::{Installed, Link};
 
 /// What `link` was asked to do.
 #[derive(Debug)]
@@ -49,9 +49,15 @@ pub fn run(options: &Options) -> Result<(), Error> {
         origin: detected.origin(),
     };
     let project = client.register(&request)?;
-    let file = save(&detected, &project.id, adapter.as_deref())?;
+    // What an earlier link already wrote stays recorded, so unlink still knows about it.
+    let mut installed = Link::load(&detected.root)
+        .map(|link| link.installed)
+        .unwrap_or_default();
+    installed.mcp |= offer_mcp(&detected.root, &project.id, options.yes);
+    crate::offer::hook(&detected.root, options.yes, &mut installed);
+    crate::offer::skills(&detected.root, options.yes, &mut installed);
+    let file = save(&detected, &project.id, adapter.as_deref(), installed)?;
     report(&project, &file);
-    offer_mcp(&detected.root, &project.id, options.yes);
     Ok(())
 }
 
@@ -94,8 +100,9 @@ fn offer_adapter(detected: &Detected, options: &Options) -> Result<Option<String
 
 /// Offers the two agent config files (Claude Code's `.mcp.json`, omp's `.omp/mcp.json`) and writes them.
 ///
-/// A write failure is reported but does not undo the link: the project is registered either way.
-fn offer_mcp(root: &Path, project: &str, yes: bool) {
+/// A write failure is reported but does not undo the link: the project is registered either way. Returns whether
+/// the files were written.
+fn offer_mcp(root: &Path, project: &str, yes: bool) -> bool {
     let targets = Targets::of(root);
     println!(
         "\nMCP config for agents (penwise → {}):",
@@ -107,20 +114,29 @@ fn offer_mcp(root: &Path, project: &str, yes: bool) {
     let confirmed = yes || ask("write the MCP config? [Y/n] ", true).unwrap_or(false);
     if !confirmed {
         println!("  MCP config not written");
-        return;
+        return false;
     }
     match crate::mcp_config::write(root, project) {
         Ok(written) => {
             for (client, path) in written {
                 println!("  wrote {client}: {}", path.display());
             }
+            true
         }
-        Err(error) => println!("  could not write the MCP config: {error}"),
+        Err(error) => {
+            println!("  could not write the MCP config: {error}");
+            false
+        }
     }
 }
 
 /// Writes the link record: what was detected (the server echoes it) plus the id it assigned.
-fn save(detected: &Detected, id: &str, adapter: Option<&str>) -> Result<PathBuf, Error> {
+fn save(
+    detected: &Detected,
+    id: &str,
+    adapter: Option<&str>,
+    installed: Installed,
+) -> Result<PathBuf, Error> {
     let link = Link {
         project: id.to_owned(),
         name: detected.name.clone(),
@@ -129,6 +145,7 @@ fn save(detected: &Detected, id: &str, adapter: Option<&str>) -> Result<PathBuf,
             .map(|folder| folder.to_string_lossy().into_owned()),
         origin: detected.origin().map(str::to_owned),
         adapter: adapter.map(str::to_owned),
+        installed,
     };
     link.save(&detected.root)
 }
@@ -141,7 +158,7 @@ fn report(project: &crate::client::Project, file: &Path) {
 }
 
 /// One y/N (or Y/n) answer; an empty line, end of input, or an unreadable prompt takes `default_yes`.
-fn ask(prompt: &str, default_yes: bool) -> Result<bool, Error> {
+pub(crate) fn ask(prompt: &str, default_yes: bool) -> Result<bool, Error> {
     print!("{prompt}");
     io::stdout().flush()?;
     let mut line = String::new();

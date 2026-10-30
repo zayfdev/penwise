@@ -32,7 +32,7 @@ pub const USAGE: &str =
        penwise open [browser args…]    the same, with extra arguments for the browser
        penwise link [dir] [--yes] [--no-adapter]
                                        link a project folder (default: the current folder)
-       penwise unlink [dir]            drop the link and its registry entry
+       penwise unlink [dir]            drop the link, its registry entry and the agent files link wrote
        penwise status                  linked projects and whether their dev servers answer
        penwise inbox                   one line when a sent round waits for the agent (prompt hook)";
 

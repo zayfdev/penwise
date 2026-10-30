@@ -14,6 +14,38 @@ use crate::error::Error;
 /// The file name, in the project root.
 pub const FILE: &str = ".penwise.json";
 
+/// What `penwise link` wrote for the agents, so `unlink` removes exactly that and nothing else.
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "one flag per file `link` may have written; they are independent facts"
+)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Installed {
+    /// The `penwise` entry in `.mcp.json` and `.omp/mcp.json`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mcp: bool,
+    /// The `penwise inbox` hook in `.claude/settings.json`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hook: bool,
+    /// `link` created `.claude/settings.json` (so `unlink` may delete it once it is empty).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hook_file_created: bool,
+    /// The skill at `.claude/skills/penwise/SKILL.md`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub claude_skill: bool,
+    /// The skill at `.omp/skills/penwise/SKILL.md`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub omp_skill: bool,
+}
+
+impl Installed {
+    /// Nothing was installed.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// The contents of `.penwise.json`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Link {
@@ -30,6 +62,9 @@ pub struct Link {
     /// The framework adapter `penwise link` installed (`"vite"` or `"next"`), when it did.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub adapter: Option<String>,
+    /// The agent files `link` wrote (absent in records from before they existed).
+    #[serde(default, skip_serializing_if = "Installed::is_empty")]
+    pub installed: Installed,
 }
 
 impl Link {

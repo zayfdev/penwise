@@ -120,7 +120,7 @@ Drawn under the items, identical in the browser, the tablet and the PNG (`BACKGR
 | `grid` | squares | `#DCE3EC` |
 | `dots` | dots at intersections | `#C6CEDA` |
 
-## HTTP (token: `?token=` or `X-Penwise-Token`; `POST /pair`, `GET /pair/local` and the static viewer are public)
+## HTTP (token: `?token=` or `X-Penwise-Token`; `POST /pair`, `GET /pair/local` and the static viewer are public; the `/projects`, `/agent`, `/frames` and `/marks` routes also accept a request from this machine that carries no foreign `Origin`)
 
 | Route | Purpose |
 |---|---|
@@ -136,6 +136,16 @@ Drawn under the items, identical in the browser, the tablet and the PNG (`BACKGR
 | `GET /pages/<id>/history`, `POST /pages/<id>/restore?to_seq=` | restore |
 | `GET /text?page=&refresh=`, `GET /search?q=` | handwriting as text |
 | `GET /health?page=` | `{ok, page, strokes, pages, head_seq}` |
+| `POST /pages/<id>/focus {item?}` | every connected device switches to the page and fits the frame `item` (none = the page's content) |
+| `GET /frames/<id>/still` | the frame's still: `{version, doc, viewport, strips:[{y,h,url}], layout}` (ETag; for clients with no live view) |
+| `GET /frames/<id>/strip/<hash>.png` | one content-addressed strip of a still (cached forever) |
+| `GET /frames/<id>/hit?x=&y=` | the element under a document point (pen-down outside the live window) |
+| `GET /frames/<id>/snapshot.png?ink=` | the frame's whole box as PNG, scaled down past 40 Mpx (`X-Penwise-Doc-Height`, `X-Penwise-Scale`) |
+| `POST /projects/<id>/rounds/send {n?}` | closes the open round (`{n, marks}`); 409 if round `n` is no longer open or has no marks |
+| `GET /projects/<id>/rounds` | every round with status and mark counts |
+| `POST /projects/<id>/rounds/<n>/resolve` | freezes the round into history (picture, frame moved right, variants cleared, marks done) |
+| `GET /projects/<id>/inbox` | `{"line": "Penwise: round 3 sent — …"}` or `{"line": null}` |
+| `POST /agent/look`, `POST /agent/show`, `POST /agent/resolve` | the MCP tools' server side (`docs/mcp.md`) |
 | `GET /pair/local` | `{token}` only to a loopback peer with a loopback `Host` (the desktop launcher's viewer); else 403 |
 | `POST /pair`, `GET/POST /pair/code`, `GET /pair.png` | pairing |
 | `WS /sync` | binary sync protocol (authenticates in its handshake) |
