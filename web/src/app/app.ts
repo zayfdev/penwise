@@ -30,6 +30,7 @@ import { choosePage, findPage, type NotebookGroup, readCatalog } from "./catalog
 import { DesignControls } from "./design";
 import { type FollowMode, PendingSwitch, planReceived, SnapshotTracker } from "./follow";
 import { historyState, stepHistory } from "./history";
+import { untilAcknowledged } from "./outbox";
 import { exposeProbe } from "./probe";
 import { Projects } from "./projects";
 import { Unsent } from "./unsent";
@@ -437,6 +438,12 @@ export class App {
     const liveId = this.frames.liveState.frame;
     const live = this.frames.current.find((frame) => frame.id === liveId);
     this.frameForm.setSending(true);
+    // The last stroke belongs to the round it was drawn for: let the server have it first.
+    this.connection.flush();
+    await untilAcknowledged(() => this.viewer.pending_ops(), {
+      now: () => Date.now(),
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    });
     this.frameForm.setSendStatus(await this.actions.sendRound(live?.project ?? project));
     this.frameForm.setSending(false);
   }

@@ -25,6 +25,8 @@ internal class AgentPage(
     val open: (String) -> Unit,
     val title: (String) -> String,
     val specs: () -> List<FrameSpec>,
+    /** The core's bounds of everything on the open page (all layers), or null when it is empty. */
+    val contentBounds: () -> PageRect?,
 )
 
 /**
@@ -111,8 +113,7 @@ internal class FrameAgent(
         val spec = wanted.item?.let { id -> list.firstOrNull { it.id == id } }
         when {
             spec != null -> control.layer?.fitFrame(spec.id) ?: viewport.fitRect(boxOf(spec), FitMode.FIT_WIDTH)
-            list.isNotEmpty() -> viewport.fitRect(union(list), FitMode.FIT_ALL)
-            else -> viewport.reset()
+            else -> page.contentBounds()?.let { viewport.fitRect(it, FitMode.FIT_ALL) } ?: viewport.reset()
         }
     }
 
@@ -125,14 +126,6 @@ internal class FrameAgent(
     }
 
     private fun boxOf(spec: FrameSpec) = PageRect(spec.x, spec.y, spec.cssWidth.toFloat(), spec.boxHeight.toFloat())
-
-    private fun union(list: List<FrameSpec>): PageRect {
-        val left = list.minOf { it.x }
-        val top = list.minOf { it.y }
-        val right = list.maxOf { it.x + it.cssWidth }
-        val bottom = list.maxOf { it.y + it.boxHeight }
-        return PageRect(left, top, right - left, bottom - top)
-    }
 
     private companion object {
         const val FALLBACK_MS = 2_500L

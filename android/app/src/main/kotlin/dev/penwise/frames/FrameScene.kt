@@ -32,8 +32,11 @@ data class SceneFrame(
 
 /**
  * The core's frame list (`sceneFrames`), parsed:
- * `[{"id","project","route","preset","cssW","cssH","rect":[x,y,w,h],"patch":{…}|null,"label","group","chosen"}]`,
- * in paint order. Pure JSON through `org.json`, no Android types, so the parse is unit-tested.
+ * `[{"id","hex","project","route","preset","cssW","cssH","extent","docH","boxH","rect":[x,y,w,h],"patch":{…}|null,
+ * "label","group","chosen"}]`, in paint order. `hex` is the 32-hex id the HTTP routes take; `extent` is `full` or
+ * `viewport`; `docH` the server-measured document height (0 = unknown); `boxH` the box height on the board as the
+ * core computes it from the frame's layout (the client never does). Pure JSON through `org.json`, no Android types,
+ * so the parse is unit-tested.
  */
 internal object SceneFrames {
     /** The frames in [json]; empty for anything the core would not send (a malformed array, a frame without an id). */

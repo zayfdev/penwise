@@ -83,7 +83,7 @@ async fn a_trigger_clears_the_failure_and_leaves_an_unpolled_frame_stale() {
     inner.with_slot(frame, |slot| slot.polled = None);
     triggers::fire(Arc::clone(&inner), frame, Instant::now()).await;
     assert!(inner.recent_failure(frame).is_none());
-    assert!(inner.with_slot(frame, |slot| slot.stale));
+    assert!(inner.is_stale(frame));
     assert_eq!(captures(&site), 1, "no eager capture for an unpolled frame");
 
     // A polled frame is shot by its trigger.
@@ -238,4 +238,101 @@ fn widths_snap_up_to_a_bucket() {
     assert_eq!((small.width(), small.height()), (2, 1));
     let pixel = small.pixel(1, 0).expect("pixel");
     assert_eq!((pixel.red(), pixel.green(), pixel.blue()), (200, 100, 50));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_poll_never_waits_for_the_capture_it_starts() {
+    let site = site("sticky-header").await;
+    let frame = orphan_frame(&site).await;
+    let stills = &site.app.stills;
+
+    // Cold: the answer is immediate and says when to ask again; the capture runs on its own.
+    let first = stills.current(frame).expect_err("no still yet");
+    assert!(
+        matches!(first, super::super::StillError::Pending { retry_after: 2 }),
+        "{first}"
+    );
+    let response = reqwest::get(site.url(frame, "still")).await.expect("get");
+    assert_eq!(response.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(response.headers()["retry-after"], "2");
+
+    // The background capture (which fails here: the project is not linked) ran once for all those polls, and
+    // its failure is what the next poll hears.
+    let started = Instant::now();
+    loop {
+        match stills.current(frame) {
+            Err(super::super::StillError::Unavailable { .. }) => break,
+            Err(super::super::StillError::Pending { .. }) => {}
+            other => panic!("unexpected {other:?}"),
+        }
+        assert!(started.elapsed() < Duration::from_secs(90), "no result");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(captures(&site), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn growing_a_document_moves_the_lanes_below_it_down() {
+    use super::super::lanes::{LANE_GAP, restack};
+    let mut site = site("sticky-header").await;
+    let mut lane = |route: &str, y: f32| {
+        let spec = penwise_core::item::FrameSpec::new(
+            "prj_sites".to_owned(),
+            route.to_owned(),
+            FramePreset::Desktop,
+            None,
+            None,
+            0.0,
+            y,
+        )
+        .expect("spec");
+        let id: ItemId = site.rig.item_id();
+        (id, penwise_core::item::add_frame(&spec, id, Layer::Ink, 1))
+    };
+    // Three lanes of 900 px boxes, 200 apart: tops at 0, 1100, 2200.
+    let (a, add_a) = lane("/", 0.0);
+    let (b, add_b) = lane("/b", 1100.0);
+    let (c, add_c) = lane("/c", 2200.0);
+    // B's history picture sits at its top edge.
+    let picture = Item {
+        id: site.rig.item_id(),
+        layer: Layer::Ink,
+        z: 2,
+        transform: Affine::translate(-500.0, 1100.0),
+        kind: ItemKind::Image(penwise_core::item::ImageItem {
+            asset: [0; 32],
+            w: 300.0,
+            h: 400.0,
+        }),
+    };
+    let picture_id = picture.id;
+    for edit in [add_a, add_b, add_c, Edit::Add(picture)] {
+        site.rig.edit(site.page, edit).await;
+    }
+    let view = site.rig.view(site.page).await;
+    let scene = view.replica.scene();
+
+    let tops = |edits: &[Edit]| -> std::collections::BTreeMap<ItemId, f32> {
+        edits
+            .iter()
+            .filter_map(|edit| match edit {
+                Edit::Update { id, patch } => patch.transform.map(|t| (*id, t.f)),
+                _ => None,
+            })
+            .collect()
+    };
+    // A fits (900 <= 1100 - 200): nothing moves.
+    assert!(restack(scene, a, 900).is_empty());
+    // A grows to 3000 px: B moves under it (3000 + 200), with its picture, and C under B (B's box is 900 tall).
+    let moved = tops(&restack(scene, a, 3000));
+    assert_eq!(moved.get(&b), Some(&(3000.0 + LANE_GAP)));
+    assert_eq!(moved.get(&picture_id), Some(&(3000.0 + LANE_GAP)));
+    assert_eq!(moved.get(&c), Some(&(3000.0 + LANE_GAP + 900.0 + LANE_GAP)));
+    assert!(!moved.contains_key(&a), "the grown lane stays");
+    // B grows: only C (below it) moves; A (above) stays.
+    let moved = tops(&restack(scene, b, 2000));
+    assert_eq!(moved.keys().copied().collect::<Vec<_>>(), vec![c]);
+    assert_eq!(moved.get(&c), Some(&(1100.0 + 2000.0 + LANE_GAP)));
+    // Shrinking never pulls lanes back up.
+    assert!(restack(scene, a, 100).is_empty());
 }

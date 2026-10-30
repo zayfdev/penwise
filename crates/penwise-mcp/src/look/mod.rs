@@ -1,4 +1,4 @@
-//! `look`: forwards to `GET /agent/look` and turns the answer into MCP content blocks.
+//! `look`: forwards to `POST /agent/look` (looking has effects on the server) and turns the answer into MCP content blocks.
 
 use serde_json::{Value, json};
 

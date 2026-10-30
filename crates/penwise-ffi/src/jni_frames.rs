@@ -313,6 +313,22 @@ pub extern "system" fn Java_dev_penwise_core_NativeFrames_frameLiveWindow<'local
     })
 }
 
+/// Bounds of everything on `layers` (bit set as for `sceneRenderOrder`) as `[min_x, min_y, max_x, max_y]`; empty
+/// for an empty page.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_penwise_core_NativeFrames_sceneContentBounds<'local>(
+    mut env: EnvUnowned<'local>,
+    _this: JObject<'local>,
+    handle: jlong,
+    layers: jint,
+) -> JFloatArray<'local> {
+    guarded(&mut env, |env| {
+        let bounds =
+            handle_ref::<SceneHandle>(handle)?.content_bounds(crate::jni_scene::layers_of(layers));
+        floats_out(env, bounds.as_ref().map_or(&[][..], |b| &b[..]))
+    })
+}
+
 /// The document point of frame `frame_id` under board point `(x, y)`, `[x, y]`; empty for an unknown frame.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_penwise_core_NativeFrames_frameDocPoint<'local>(

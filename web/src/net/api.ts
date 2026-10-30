@@ -59,6 +59,12 @@ export function pageBody(
   return body;
 }
 
+/** `Retry-After` in seconds as ms; 2 s when absent or not a number, clamped to 1..60 s. */
+export function retryAfterMs(header: string | null): number {
+  const seconds = header === null ? Number.NaN : Number.parseInt(header, 10);
+  return Math.min(60, Math.max(1, Number.isFinite(seconds) ? seconds : 2)) * 1000;
+}
+
 /** Token-authenticated client. */
 export class Api {
   constructor(
@@ -137,6 +143,9 @@ export class Api {
     if (etag !== null) headers["If-None-Match"] = etag;
     const response = await this.fetchFn(`/frames/${hex}/still`, { headers });
     if (response.status === 304) return { kind: "unchanged" };
+    if (response.status === 503) {
+      return { kind: "retry", afterMs: retryAfterMs(response.headers.get("Retry-After")) };
+    }
     if (!response.ok) return { kind: "none" };
     const still = parseStill(await response.json());
     return still === null

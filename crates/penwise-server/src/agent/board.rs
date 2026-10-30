@@ -1,10 +1,21 @@
-//! A project's board (spec v2 §2): its `"<name> review"` page, and the frames on it.
+//! A project's board (spec v2 §2): its `"<name> board"` page (boards made before v2 are titled `"<name> review"`
+//! and keep working), and the frames on it.
 
 use penwise_core::item::{FrameItem, FramePreset, ItemId, ItemKind, Scene};
 use penwise_proto::PageId;
 
 use crate::api::{ApiError, AppState};
 use crate::frames::registry::Project;
+
+/// The title a new board gets.
+pub(crate) fn board_title(project: &Project) -> String {
+    format!("{} board", project.name)
+}
+
+/// Whether a page titled `title` is the board of `project`: the current title, or the one v1 boards carry.
+pub(crate) fn is_board_title(project: &Project, title: &str) -> bool {
+    title == board_title(project) || title == format!("{} review", project.name)
+}
 
 /// The project's board page, `None` until a frame has been opened for it.
 ///
@@ -14,7 +25,6 @@ pub(crate) async fn board_page(
     app: &AppState,
     project: &Project,
 ) -> Result<Option<PageId>, ApiError> {
-    let title = format!("{} review", project.name);
     let catalog = app.storage.catalog().await?;
     let own = project
         .notebook
@@ -26,7 +36,7 @@ pub(crate) async fn board_page(
         if let Some(page) = catalog
             .pages(notebook)
             .iter()
-            .find(|page| !page.deleted && page.title == title)
+            .find(|page| !page.deleted && is_board_title(project, &page.title))
         {
             return Ok(Some(page.id));
         }

@@ -90,15 +90,6 @@ export class BridgeChannel {
     return this.reported;
   }
 
-  /**
-   * The stored layout as it stands at scroll zero: the same document facts (size, state, every rect), for a frame
-   * that no longer has a live page.
-   */
-  documentLayout(): Layout | null {
-    if (!this.reported) return null;
-    return { ...this.reported, scroll: [0, 0], rects: this.rectsAt([0, 0]) };
-  }
-
   private keepRects(rects: Readonly<Record<string, Rect | null>>, scroll: Point): void {
     for (const [key, rect] of Object.entries(rects)) {
       this.docRects[key] = rect && [rect[0] + scroll[0], rect[1] + scroll[1], rect[2], rect[3]];

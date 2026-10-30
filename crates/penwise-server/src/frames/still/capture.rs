@@ -13,6 +13,7 @@ use crate::agent::{FrameView, frame_item, frame_keys, frame_position};
 use crate::api::Author;
 
 use super::hitmap;
+use super::lanes;
 use super::model::{INFINITE_NOTE, Still, StripMeta, hash_of};
 use super::preroll::MAX_STILL_DOC;
 use super::strips;
@@ -187,6 +188,10 @@ async fn write_back(
             let edits = set_doc_height(scene, id, height)
                 .map_err(|error| StillError::Write(error.to_string()))?;
             for edit in edits {
+                author.item(loaded.page, edit).await.map_err(api_error)?;
+            }
+            // The box grew into the lane below: move the lanes below down, in the same batch.
+            for edit in lanes::restack(scene, id, height) {
                 author.item(loaded.page, edit).await.map_err(api_error)?;
             }
         }

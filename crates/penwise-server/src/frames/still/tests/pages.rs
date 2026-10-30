@@ -18,7 +18,7 @@ where
     let started = Instant::now();
     while !check().await {
         assert!(
-            started.elapsed() < Duration::from_secs(20),
+            started.elapsed() < Duration::from_secs(90),
             "timed out waiting for {what}"
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -236,7 +236,7 @@ async fn a_frame_nobody_polls_is_marked_stale_and_shot_on_its_next_poll() {
     }
     author.commit().await.expect("commit");
     until("the frame to be marked stale", || async {
-        inner.with_slot(frame, |slot| slot.stale)
+        inner.is_stale(frame)
     })
     .await;
     assert_eq!(
@@ -417,4 +417,131 @@ async fn a_capture_pages_hmr_socket_never_triggers_the_next_capture() {
         .expect("feed");
     assert_eq!(project_id, "prj_dev");
     dev_task.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_slow_capture_survives_a_client_that_gives_up_and_ends_in_the_cache() {
+    need_chromium!();
+    // The infinite feed takes seconds to roll through.
+    let site = site("infinite-feed").await;
+    let frame = site.frame(0.0, 0.0).await;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(1))
+        .build()
+        .expect("client");
+    let started = Instant::now();
+    let first = client
+        .get(site.url(frame, "still"))
+        .send()
+        .await
+        .expect("answered within the client's second: the poll did not wait for the capture");
+    assert!(started.elapsed() < Duration::from_secs(1));
+    assert_eq!(first.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(first.headers()["retry-after"], "2");
+    drop(first);
+    // Impatient polls while it runs start nothing new.
+    for _ in 0..3 {
+        let again = client
+            .get(site.url(frame, "still"))
+            .send()
+            .await
+            .expect("again");
+        assert_eq!(again.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
+    }
+    until("the background capture to be cached", || async {
+        site.app.stills.inner.cache().get(frame).is_some()
+    })
+    .await;
+    assert_eq!(captures(&site), 1);
+    let (still, _) = site.still(frame).await;
+    assert_eq!(still["note"], INFINITE_NOTE);
+}
+
+async fn show_frame(site: &Site, route: &str) -> Value {
+    let response = reqwest::Client::new()
+        .post(format!("{}/agent/show", site.base))
+        .json(&json!({ "project": "prj_sites", "frame": { "route": route } }))
+        .send()
+        .await
+        .expect("show");
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    response.json().await.expect("json")
+}
+
+/// The board position of `frame`.
+async fn top_of(site: &Site, frame: &str) -> f32 {
+    let id = ItemId::from_hex(frame).expect("frame id");
+    let page: PageId = site
+        .rig
+        .storage
+        .page_of_item(id)
+        .await
+        .expect("page")
+        .expect("known");
+    let view = site.rig.view(page).await;
+    view.replica.scene().get(id).expect("frame").transform.f
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn show_frame_waits_for_the_first_still_so_the_next_lane_clears_a_tall_page() {
+    need_chromium!();
+    let site = site("sticky-header").await;
+    let first = show_frame(&site, "/").await;
+    // `show` returned after the still: the document height is known, so the next lane starts below the page.
+    let second = show_frame(&site, "/index.html").await;
+    let (a, b) = (
+        top_of(&site, first["frame"].as_str().expect("frame")).await,
+        top_of(&site, second["frame"].as_str().expect("frame")).await,
+    );
+    assert_eq!(a, 0.0);
+    assert_eq!(
+        b,
+        5000.0 + 200.0,
+        "under the 5000 px page, one lane gap apart"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_page_that_grows_later_pushes_the_lane_below_it() {
+    need_chromium!();
+    let copy = penwise_testkit::TempDir::new("lane-grow").expect("tempdir");
+    let tall = |height: u32, note: &str| {
+        format!(
+            "<!doctype html><title>grow</title><body style=\"margin:0\"><div style=\"height:{height}px\"></div>{note}</body>"
+        )
+    };
+    std::fs::write(copy.path().join("index.html"), tall(1200, "")).expect("short page");
+    let site = site_at(copy.path().to_path_buf()).await;
+    site.app.stills.start();
+    let first = show_frame(&site, "/").await;
+    let second = show_frame(&site, "/index.html").await;
+    let (first, second) = (
+        first["frame"].as_str().expect("frame").to_owned(),
+        second["frame"].as_str().expect("frame").to_owned(),
+    );
+    assert_eq!(top_of(&site, &second).await, 1200.0 + 200.0);
+
+    // The page grows to 5000 px; the lane below makes room once the new still has measured it. The folder is
+    // re-written until the watcher sees it (it may not be armed yet under load).
+    let first_id = ItemId::from_hex(&first).expect("id");
+    let mut pushed = false;
+    for attempt in 0..5 {
+        std::fs::write(
+            copy.path().join("index.html"),
+            tall(5000, &format!("<!-- grown {attempt} -->")),
+        )
+        .expect("grown page");
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while Instant::now() < deadline && !pushed {
+            // Keep the frame "being looked at" so its trigger re-shoots at once.
+            let _ = reqwest::get(site.url(first_id, "still")).await;
+            pushed = top_of(&site, &second).await >= 5000.0 + 200.0;
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+        if pushed {
+            break;
+        }
+    }
+    assert!(pushed, "the second lane moved under the grown page");
+    assert_eq!(top_of(&site, &second).await, 5000.0 + 200.0);
 }

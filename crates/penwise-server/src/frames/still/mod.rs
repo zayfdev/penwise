@@ -22,6 +22,7 @@ mod cache;
 mod capture;
 mod hit;
 mod hitmap;
+mod lanes;
 mod model;
 mod preroll;
 mod routes;
@@ -36,7 +37,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use axum::body::Bytes;
 use penwise_core::item::ItemId;
@@ -47,10 +48,14 @@ use crate::storage::Storage;
 
 use blobs::{BlobStore, DISK_BUDGET, MEMORY_BUDGET};
 use cache::StillCache;
+pub(crate) use lanes::LANE_GAP;
 pub(crate) use model::Still;
 pub(crate) use preroll::{freeze_animations, preroll};
 pub(crate) use routes::routes;
 pub(crate) use strips::{Strip, capture as capture_strips};
+
+/// What a poll answering [`StillError::Pending`] is told to wait, in seconds.
+pub(crate) const PENDING_RETRY_SECS: u64 = 2;
 
 /// Why a still or a hit could not be made.
 #[derive(Debug, thiserror::Error)]
@@ -65,6 +70,9 @@ pub(crate) enum StillError {
     Storage(String),
     #[error("write: {0}")]
     Write(String),
+    /// There is no fresh still yet: its capture runs in the background, ask again in `retry_after` seconds.
+    #[error("the still is being made")]
+    Pending { retry_after: u64 },
     /// A capture failed a moment ago and is not retried until `retry_after` seconds have passed.
     #[error("{message} (not retried for {retry_after} s)")]
     Unavailable { message: String, retry_after: u64 },
@@ -165,18 +173,53 @@ impl Stills {
         }
     }
 
-    /// The frame's latest still for a client poll: the cached one, unless the frame went stale while nobody
-    /// looked (then it is captured first); captured now when there is none yet.
+    /// The frame's latest still for a client poll. It never waits for a capture: when there is no fresh still (none
+    /// yet, or the frame went stale while nobody looked) the capture starts in a background task, which a client
+    /// that goes away does not cancel, and the poll is answered [`StillError::Pending`].
     ///
     /// # Errors
-    /// The frame is unknown, its page could not be opened or shot, or a capture failed moments ago.
-    pub(crate) async fn current(&self, frame: ItemId) -> Result<Arc<Still>, StillError> {
+    /// The frame is unknown, a capture failed moments ago, or the still is not ready.
+    pub(crate) fn current(&self, frame: ItemId) -> Result<Arc<Still>, StillError> {
         let asked = Instant::now();
         let stale = self.inner.note_poll(frame);
         if !stale && let Some(still) = self.inner.cache().get(frame) {
             return Ok(still);
         }
-        self.capture_after(frame, asked).await
+        if let Some((message, retry_after)) = self.inner.recent_failure(frame) {
+            return Err(StillError::Unavailable {
+                message,
+                retry_after,
+            });
+        }
+        // One background capture per frame at a time; polls that arrive meanwhile just wait for it.
+        if self.inner.claim_background(frame) {
+            let stills = Self {
+                inner: Arc::clone(&self.inner),
+            };
+            tokio::spawn(async move {
+                if let Err(error) = stills.capture_after(frame, asked).await {
+                    tracing::warn!(frame = %frame.to_hex(), %error, "frame still not made");
+                }
+                stills.inner.release_background(frame);
+            });
+        }
+        Err(StillError::Pending {
+            retry_after: PENDING_RETRY_SECS,
+        })
+    }
+
+    /// Makes the frame's first still and waits for it at most `limit`. A capture that is still running when the
+    /// limit passes carries on in the background. `None` when it failed or did not finish in time.
+    pub(crate) async fn first_still(&self, frame: ItemId, limit: Duration) -> Option<Arc<Still>> {
+        let stills = Self {
+            inner: Arc::clone(&self.inner),
+        };
+        let asked = Instant::now();
+        let task = tokio::spawn(async move { stills.capture_after(frame, asked).await });
+        match tokio::time::timeout(limit, task).await {
+            Ok(Ok(Ok(still))) => Some(still),
+            _ => None,
+        }
     }
 
     /// Captures the frame now unless a capture that began after this call already did.
@@ -202,13 +245,16 @@ impl Stills {
                 retry_after,
             });
         }
-        inner.begin(frame);
+        let began = inner.begin(frame);
         #[cfg(test)]
         inner
             .captures
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         match capture::run(inner, frame).await {
-            Ok(still) => Ok(still),
+            Ok(still) => {
+                inner.complete(frame, began);
+                Ok(still)
+            }
             Err(StillError::UnknownFrame) => {
                 inner.forget(frame);
                 Err(StillError::UnknownFrame)

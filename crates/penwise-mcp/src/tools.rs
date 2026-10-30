@@ -127,7 +127,10 @@ const TOOLS: &str = r##"{
               "required": ["id", "status"]
             }
           },
-          "round": { "type": "integer", "minimum": 1, "description": "The round number from look." }
+          "round": {
+            "oneOf": [{ "type": "integer", "minimum": 1 }, { "const": true }],
+            "description": "The round number from look, or true for the latest sent round."
+          }
         }
       }
     },

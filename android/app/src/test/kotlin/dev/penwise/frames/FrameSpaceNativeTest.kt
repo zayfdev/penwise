@@ -60,6 +60,18 @@ class FrameSpaceNativeTest {
     }
 
     @Test
+    fun the_content_bounds_of_the_page_come_from_the_core() {
+        SceneHarness().use { harness ->
+            val scene = harness.scene
+            assertNull(scene.contentBounds())
+            scene.addFrame("""{"project":"p","route":"/","preset":"desktop","x":100,"y":200,"extent":"full"}""")
+            val id = requireNotNull(Ids.bytes(SceneFrames.parse(scene.frames()).single().id))
+            scene.setFrameLayout(id, layout(scrollY = 0f))
+            assertArrayEquals(floatArrayOf(100f, 200f, 1540f, 1100f), requireNotNull(scene.contentBounds()), 1e-3f)
+        }
+    }
+
+    @Test
     fun a_viewport_frame_keeps_its_window_at_its_box() {
         SceneHarness().use { harness ->
             val scene = harness.scene

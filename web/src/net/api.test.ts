@@ -152,6 +152,25 @@ describe("Api frame routes", () => {
     if (reply.kind === "fresh") expect(reply.etag).toBe('"s3"');
   });
 
+  it("maps 503 to a retry after the server's Retry-After", async () => {
+    const busy = (retry: string | null) =>
+      new Api(
+        () => "t",
+        fakeFetch(
+          () =>
+            new Response("capturing", {
+              status: 503,
+              headers: retry ? { "Retry-After": retry } : {},
+            }),
+        ),
+      );
+    expect(await busy("2").still(HEX, null)).toEqual({ kind: "retry", afterMs: 2_000 });
+    expect(await busy(null).still(HEX, null)).toEqual({ kind: "retry", afterMs: 2_000 });
+    expect(await busy("0").still(HEX, null)).toEqual({ kind: "retry", afterMs: 1_000 });
+    expect(await busy("600").still(HEX, null)).toEqual({ kind: "retry", afterMs: 60_000 });
+    expect(await busy("soon").still(HEX, null)).toEqual({ kind: "retry", afterMs: 2_000 });
+  });
+
   it("maps 304 to unchanged and 404 or junk to no still", async () => {
     const unchanged = new Api(
       () => "t",

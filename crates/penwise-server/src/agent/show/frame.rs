@@ -44,6 +44,8 @@ pub(super) async fn open(
             (page, frame, false)
         };
     apply_extent(app, page, frame, extent).await?;
+    // The next lane is placed under this frame's box, so its document height must be known first.
+    wait_for_height(app, page, frame).await?;
     (app.announce_focus)(page, Some(frame));
     Ok(json!({
         "page": page.to_string(),
@@ -53,6 +55,23 @@ pub(super) async fn open(
         "extent": extent.as_str(),
         "reused": reused,
     }))
+}
+
+/// How long `show frame` waits for the frame's first still.
+const FIRST_STILL_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// A frame with no measured document height yet waits for its first still (which writes `FrameDocHeight`). On
+/// timeout or failure the call goes on: the capture finishes in the background and re-stacks the lanes then.
+async fn wait_for_height(app: &AppState, page: PageId, frame: ItemId) -> Result<(), ApiError> {
+    let view = app
+        .storage
+        .page_view(page)
+        .await?
+        .ok_or_else(|| ApiError::not_found("unknown page"))?;
+    if frame_item(view.replica.scene(), frame).is_some_and(|item| item.doc_h == 0) {
+        app.stills.first_still(frame, FIRST_STILL_WAIT).await;
+    }
+    Ok(())
 }
 
 /// The frame of the board already showing `route` at `preset`.

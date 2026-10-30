@@ -37,7 +37,7 @@ impl From<StillError> for Failure {
             StillError::Storage(_) | StillError::Write(_) => {
                 (StatusCode::INTERNAL_SERVER_ERROR, None)
             }
-            StillError::Unavailable { retry_after, .. } => {
+            StillError::Unavailable { retry_after, .. } | StillError::Pending { retry_after } => {
                 (StatusCode::SERVICE_UNAVAILABLE, Some(*retry_after))
             }
             StillError::Agent(_) | StillError::Inspect(_) => (
@@ -72,15 +72,16 @@ fn frame_id(text: &str) -> Result<ItemId, Failure> {
 }
 
 /// The still's JSON, versioned by `ETag`. Clients poll it every 3 s for every visible non-live frame; an
-/// unchanged frame answers `304` with no body. A frame whose capture failed moments ago answers `503` with
-/// `Retry-After` and is not retried before that.
+/// unchanged frame answers `304` with no body. A poll never waits for a capture: with no fresh still the capture
+/// starts in the background and the answer is `503` with `Retry-After: 2`; a frame whose capture failed moments
+/// ago answers `503` with `Retry-After` and is not retried before that.
 async fn still(
     State(app): State<AppState>,
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Response, Failure> {
     let frame = frame_id(&id)?;
-    let still = app.stills.current(frame).await?;
+    let still = app.stills.current(frame)?;
     let etag = still.etag();
     let mut response = if headers
         .get(header::IF_NONE_MATCH)

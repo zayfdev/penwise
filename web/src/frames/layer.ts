@@ -116,11 +116,6 @@ export class FrameLayer {
     return this.nodes.get(frameId)?.channel.layout() ?? null;
   }
 
-  /** The frame's last live layout as it stands at scroll zero (a frame that lost its page, with no still yet). */
-  documentLayoutOf(frameId: string): Layout | null {
-    return this.nodes.get(frameId)?.channel.documentLayout() ?? null;
-  }
-
   /**
    * Records rects the bridge sent outside a `pw:layout` (the hit answer) in the frame's layout, so the
    * merged rect survives the client's next layout send and is what the core binds against.

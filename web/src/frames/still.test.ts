@@ -104,17 +104,23 @@ describe("stillLayoutJson", () => {
 });
 
 describe("stripWidth", () => {
-  it("asks for the smallest width that is not blurry on screen", () => {
-    // A 1440 px frame at 0.25 on a 1x screen needs 360 px: the 384 bucket.
-    expect(stripWidth(1440, 0.25, 1)).toBe(384);
-    expect(stripWidth(1440, 0.25, 2)).toBe(768);
-    expect(stripWidth(1440, 0.05, 1)).toBe(256);
+  it("asks only for the server's widths: 360, 720, 1440", () => {
+    // A 1440 px frame at 0.2 on a 1x screen needs 288 px: the 360 bucket.
+    expect(stripWidth(1440, 0.2, 1)).toBe(360);
+    expect(stripWidth(1440, 0.4, 1)).toBe(720);
+    expect(stripWidth(1440, 0.25, 2)).toBe(720);
+    expect(stripWidth(1440, 0.01, 1)).toBe(360);
+    for (const scale of [0.05, 0.1, 0.2, 0.3, 0.45, 0.6, 0.8, 1, 2]) {
+      expect([null, 360, 720, 1440]).toContain(stripWidth(1440, scale, 1));
+    }
   });
 
   it("asks for the full strip when a smaller one would not help", () => {
+    expect(stripWidth(1440, 0.6, 1)).toBeNull();
     expect(stripWidth(1440, 1, 1)).toBeNull();
     expect(stripWidth(1440, 2.9, 1)).toBeNull();
-    expect(stripWidth(390, 0.9, 1)).toBeNull();
+    // A phone is 390 px wide: even the 360 strip saves nothing.
+    expect(stripWidth(390, 0.5, 1)).toBeNull();
     expect(stripWidth(0, 1, 1)).toBeNull();
   });
 });

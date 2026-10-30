@@ -134,6 +134,15 @@ internal object NativeFrames {
         on: Boolean,
     ): Boolean
 
+    /**
+     * `[minX, minY, maxX, maxY]` of everything on [layers] (bit set as for [NativeScene.sceneRenderOrder]): frames at
+     * their boxes, pictures, ink. Empty for an empty page.
+     */
+    external fun sceneContentBounds(
+        handle: Long,
+        layers: Int,
+    ): FloatArray
+
     /** Frame [frameId]'s live view on the board, `[x, y, w, h]`; empty for an unknown frame. */
     external fun frameLiveWindow(
         handle: Long,

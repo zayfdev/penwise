@@ -97,7 +97,13 @@ class PageViewModel(
 
     /** Frames, marks and watched keys of the open page (the design harness); the core owns their truth. */
     internal val frameSession =
-        FrameSession(viewModelScope, catalogDispatcher, { _scene.value }, { action -> edit(action = action) })
+        FrameSession(
+            viewModelScope,
+            catalogDispatcher,
+            { _scene.value },
+            { action -> edit(action = action) },
+            { engine?.core?.outbox()?.pending ?: 0 },
+        )
 
     /** Reaches the frame layer from outside the composition (agent camera moves). */
     internal val frameControl = FrameControl()
@@ -119,6 +125,9 @@ class PageViewModel(
                         .orEmpty()
                 },
                 specs = { frameSession.specs.value },
+                contentBounds = {
+                    _scene.value?.contentBounds()?.let { PageRect(it[0], it[1], it[2] - it[0], it[3] - it[1]) }
+                },
             ),
         )
 

@@ -15,6 +15,11 @@ internal sealed interface StillReply {
     /** `304`: what the tablet has is current. */
     data object Unchanged : StillReply
 
+    /** `503` + `Retry-After`: the server is making the still; ask again after [retryAfterMs]. The old still stays. */
+    class Busy(
+        val retryAfterMs: Long,
+    ) : StillReply
+
     /** No still yet (`404`), or the server is away. */
     data object Missing : StillReply
 }
@@ -35,6 +40,10 @@ internal class StillClient(
     ): StillReply {
         val reply = http.get("/frames/$frameId/still", etag)
         return when {
+            reply != null && reply.unavailable -> {
+                StillReply.Busy(StillBackoff.retryAfterMs(reply.retryAfter))
+            }
+
             reply == null || !(reply.ok || reply.notModified) -> {
                 StillReply.Missing
             }

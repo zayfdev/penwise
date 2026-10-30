@@ -304,6 +304,10 @@ class PageScene(
     /** The element keys the frame's bound strokes need watched: a JSON array. */
     fun frameKeys(id: ByteArray): String = locked { NativeFrames.sceneFrameKeys(it, id) }
 
+    /** Bounds of everything on [layers], `[minX, minY, maxX, maxY]` (what a page-level `Focus` fits); null if empty. */
+    fun contentBounds(layers: Int = Layers.ALL): FloatArray? =
+        locked { NativeFrames.sceneContentBounds(it, layers) }.takeIf { it.size == BOUNDS_VALUES }
+
     /** Frame [id]'s live view on the board `[x, y, w, h]` (from its actual scroll); null for an unknown frame. */
     fun frameLiveWindow(id: ByteArray): FloatArray? =
         locked { NativeFrames.frameLiveWindow(it, id) }.takeIf { it.size == WINDOW_VALUES }
@@ -411,6 +415,7 @@ class PageScene(
 
         private const val COUNT_BYTES = 4
         private const val WINDOW_VALUES = 4
+        private const val BOUNDS_VALUES = 4
         private const val POINT_VALUES = 2
     }
 }

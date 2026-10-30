@@ -67,7 +67,8 @@ sealed interface FrameMessage {
 
 /**
  * The bridge wire format, page → host. Pure JSON through `org.json`, no Android types: the parse is unit-tested. The
- * host → page direction (`pw:hit?`, `pw:scrollTo`) is not needed before M2 and is not built yet.
+ * host → page direction is [FrameCommands] (`pw:watch`, `pw:hit?`, `pw:replay`, `pw:patch`); the tablet never sends
+ * `pw:scrollTo`, because it scrolls the WebView itself (`WebView.scrollTo`, see [WindowFollower]).
  */
 internal object FrameMessages {
     /** The object name the injected bridge looks for in a WebView (`window.PenwiseHost.post(json)`). */

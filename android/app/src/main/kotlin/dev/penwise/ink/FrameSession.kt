@@ -11,6 +11,7 @@ import dev.penwise.frames.FrameRoutes
 import dev.penwise.frames.FrameServer
 import dev.penwise.frames.FrameSpec
 import dev.penwise.frames.LayoutKind
+import dev.penwise.frames.OutboxWait
 import dev.penwise.frames.RoundsClient
 import dev.penwise.frames.SceneFrame
 import dev.penwise.frames.SceneFrames
@@ -52,6 +53,8 @@ internal class FrameSession(
     private val io: CoroutineDispatcher,
     private val current: () -> PageScene?,
     private val edit: ((PageScene) -> Unit) -> Unit,
+    /** Ops of the local outbox still waiting for the server's `Ack`: Send waits for them (at most 3 s). */
+    private val outbox: () -> Int = { 0 },
 ) {
     private val projection = FrameProjection()
     private var job: Job? = null
@@ -229,14 +232,9 @@ internal class FrameSession(
         val bytes = Ids.bytes(id) ?: return
         scope.launch(io) {
             try {
-                // A demoted frame's still replaces the live layout in one native step; anything else merges.
-                if (kind ==
-                    LayoutKind.DEMOTED
-                ) {
-                    scene.replaceFrameLayout(bytes, json)
-                } else {
-                    scene.setFrameLayout(bytes, json)
-                }
+                // A still (new, or taking over from the live page) replaces the layout in one native step; only the
+                // live page's reports merge into it.
+                if (kind.replaces) scene.replaceFrameLayout(bytes, json) else scene.setFrameLayout(bytes, json)
                 // The live page's window moves with the scroll it just reported; the core says where it sits now.
                 if (kind == LayoutKind.LIVE) windowAfter(scene, bytes, id, json)
             } catch (_: IllegalStateException) {
@@ -266,13 +264,15 @@ internal class FrameSession(
     }
 
     /**
-     * Sends the open round of the focused frame's project, else of the page's first frame (spec §4): a `409` means
-     * nothing new was drawn, which is only a toast.
+     * Sends the open round of the focused frame's project, else of the page's first frame (spec §4), once the local
+     * outbox is acknowledged (at most 3 s): a `409` means nothing new was drawn, which is only a toast.
      */
     fun sendRound() {
         val server = _server.value ?: return
         val project = focusedFrame?.let { projection.item(it)?.project } ?: specs.value.firstOrNull()?.project ?: return
         scope.launch(Dispatchers.IO) {
+            // The last stroke must be on the server before the round closes, or it lands in the next one.
+            OutboxWait.untilAcked(outbox)
             val message =
                 when (RoundsClient.send(server, project)) {
                     SendResult.SENT -> R.string.round_sent

@@ -84,12 +84,6 @@ describe("BridgeChannel", () => {
     expect(channel.layout()?.scroll).toEqual([0, 90]);
     // `a` was reported at scroll 40, so it sits at document y 60: at scroll 90 it is 30 px above the viewport.
     expect(channel.layout()?.rects).toEqual({ a: [10, -30, 30, 40], b: [1, 2, 3, 4] });
-    // At scroll zero the viewport rects are the document rects.
-    expect(channel.documentLayout()).toMatchObject({
-      scroll: [0, 0],
-      doc: [390, 2000],
-      rects: { a: [10, 60, 30, 40], b: [1, 92, 3, 4] },
-    });
     channel.loaded();
     channel.store({ ...LAYOUT, rects: { c: [1, 1, 1, 1] } });
     expect(channel.layout()?.rects).toEqual({ c: [1, 1, 1, 1] });

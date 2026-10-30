@@ -45,10 +45,6 @@ function rig(reply: StillReply = { kind: "none" }) {
     layer: {
       liveId: () => live,
       layoutOf: (id) => reported.get(id) ?? null,
-      documentLayoutOf: (id) => {
-        const layout = reported.get(id);
-        return layout ? { ...layout, scroll: [0, 0] } : null;
-      },
       setLive: (plan) => {
         live = plan.live;
         calls.push(`setLive ${plan.live} ${plan.warm}`);
@@ -105,25 +101,14 @@ const LAYOUT: Layout = {
 };
 
 describe("LiveCoordinator demotion", () => {
-  it("clears the layout of a frame that was live before its still existed, merging nothing into it", () => {
-    const { coordinator, calls } = rig();
-    coordinator.focusFrame("a");
-    calls.length = 0;
-    coordinator.focusFrame("b");
-    // `a` goes warm and has no live layout to keep: nothing but the clear.
-    expect(calls).toContain("clear a");
-    expect(calls.filter((c) => c.startsWith("set a"))).toEqual([]);
-  });
-
-  it("keeps the document of a page that was live before its still existed, at scroll zero", () => {
+  it("keeps the live layout of a frame that has no still yet (rects are document coords)", () => {
     const { coordinator, calls, reported } = rig();
     coordinator.focusFrame("a");
     reported.set("a", LAYOUT);
     calls.length = 0;
     coordinator.focusFrame("b");
-    // A mark below the first screen must stay inside a box that has no still to size it yet.
-    expect(calls.indexOf("clear a")).toBeGreaterThanOrEqual(0);
-    expect(calls.indexOf("set a live @0")).toBeGreaterThan(calls.indexOf("clear a"));
+    // `a` goes warm: neither cleared nor set, so a mark below the first screen keeps its box.
+    expect(calls.filter((c) => /^(clear|set) a/.test(c))).toEqual([]);
   });
 
   it("replaces it with the still's layout once it has one", async () => {

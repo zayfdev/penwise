@@ -135,3 +135,17 @@ it and never change it; a needed change goes back to the orchestrator. File:line
   `FrameView`.
 - A frame whose document grows past 30 000 CSS px within 5 s of load (infinite feed) is switched to `viewport`
   by the server with a note in the still.
+
+## 7. Seam rules (integration review, 2026-10-30)
+
+- **Demote** (a frame stops being live): with a still → the still's layout **replaces** the live one (one call);
+  without a still yet → the live layout stays (rects are document coords, so it is still correct). A new still
+  for a non-live frame **replaces** its layout. Same on tablet and web.
+- **Focus `item: None`** fits the core's content bounds of all layers (frames, pictures, ink), on both clients.
+- **Still route never blocks on a capture:** with no fresh still it starts the capture in the background and
+  answers `503` + `Retry-After: 2`; clients keep polling and honour `Retry-After`.
+- **`show frame`** returns after the new frame's first still (bounded, e.g. 20 s), so `doc_h` is known before
+  the next lane is placed; lanes re-stack below a frame whose `doc_h` grows into the lane under it.
+- **Send** waits until the client's outbox is acknowledged (at most 3 s) before posting, so the last stroke
+  belongs to the round it was drawn for.
+- **Strip widths:** clients ask `?w=` only with the server's buckets (360, 720, 1440).

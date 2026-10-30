@@ -1,13 +1,16 @@
 package dev.penwise.frames
 
-/** Where a layout the core is given comes from. */
-enum class LayoutKind {
+/** Where a layout the core is given comes from; what the core does with it (contract §7). */
+enum class LayoutKind(
+    /** The layout replaces whatever the frame had instead of merging into it. */
+    val replaces: Boolean,
+) {
     /** The live page's bridge report: it merges into the frame's layout and moves the live window. */
-    LIVE,
+    LIVE(replaces = false),
 
-    /** A still's layout for a frame that is not live: it merges, like any report. */
-    STILL,
+    /** A new still for a frame that is not live: its layout replaces the frame's, nothing of the old one is kept. */
+    STILL(replaces = true),
 
-    /** The frame just stopped being live: its still's layout replaces the live one, nothing of it is kept. */
-    DEMOTED,
+    /** The frame just stopped being live and has a still: the still's layout replaces the live one. */
+    DEMOTED(replaces = true),
 }

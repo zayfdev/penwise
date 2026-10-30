@@ -1,5 +1,6 @@
 package dev.penwise.frames
 
+import dev.penwise.ink.PageRect
 import dev.penwise.ink.PageStyle
 import dev.penwise.ink.PenActivity
 import dev.penwise.ink.ViewportState
@@ -20,6 +21,7 @@ class FrameAgentTest {
     private var current = "page"
     private val opened = ArrayList<String>()
     private var frames: List<FrameSpec> = emptyList()
+    private var bounds: PageRect? = null
     private val viewport =
         ViewportState().apply {
             setPage(PageStyle("blank", 0f, 0f, infinite = true))
@@ -37,6 +39,7 @@ class FrameAgentTest {
                     open = { opened += it },
                     title = { "Title $it" },
                     specs = { frames },
+                    contentBounds = { bounds },
                 ),
             now = { now },
         )
@@ -62,18 +65,21 @@ class FrameAgentTest {
     }
 
     @Test
-    fun an_item_that_is_no_frame_fits_the_content_of_the_page() {
+    fun an_item_that_is_no_frame_fits_everything_on_the_page_not_only_its_frames() {
         frames = listOf(frame("a", 0f, 0f), frame("b", 2000f, 0f))
+        // The core's bounds of all layers: the frames, and ink and a picture well beyond them.
+        bounds = PageRect(-600f, -400f, 9_000f, 7_000f)
         agent.offer(MoveTarget("page", "not-a-frame", ""))
-        // Both frames side by side, 3440 wide and 4000 tall, are all in view.
         val view = viewport.transform
-        assertTrue(view.toScreenX(0f) >= 0f && view.toScreenX(3440f) <= 2560f)
-        assertTrue(view.toScreenY(0f) >= 0f && view.toScreenY(4000f) <= 1600f)
+        assertTrue(view.toScreenX(-600f) >= -EPS && view.toScreenX(8_400f) <= 2560f + EPS)
+        assertTrue(view.toScreenY(-400f) >= -EPS && view.toScreenY(6_600f) <= 1600f + EPS)
+        assertEquals("the height decides: 1600 / 7000", 1600f / 7_000f, view.scale, EPS)
     }
 
     @Test
-    fun a_page_with_no_frames_resets_the_camera() {
+    fun a_page_with_nothing_on_it_resets_the_camera() {
         viewport.transformBy(2f, 0f, 0f, 100f, 100f)
+        bounds = null
         agent.offer(MoveTarget("page", null, ""))
         assertEquals(1f, viewport.transform.scale, EPS)
         assertEquals(0f, viewport.transform.tx, EPS)

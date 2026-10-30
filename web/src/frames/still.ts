@@ -11,7 +11,7 @@ export interface Strip {
   /** Document y of the strip's top edge, CSS px. */
   readonly y: number;
   readonly h: number;
-  /** Server path of the PNG, as given (`/frames/{hex}/still/{version}/{y}.png`); only a query is added. */
+  /** Server path of the PNG, as given (content-addressed: `/frames/{hex}/strip/{hash}.png`); only a query is added. */
   readonly url: string;
 }
 
@@ -123,11 +123,12 @@ export function stripsToShow(
   });
 }
 
-/** Widths a strip is requested at, px: the smallest one that is not blurry on screen (fewer distinct images). */
-const STRIP_WIDTHS = [256, 384, 512, 768, 1024, 1536, 2048];
+/** The widths the server serves strips at, px (`?w=`; contract §7). Nothing else may be asked for. */
+const STRIP_WIDTHS = [360, 720, 1440];
 
 /**
- * The `w` to ask the server for when a frame of CSS width `cssW` is shown at `scale` on a `dpr` screen, or
+ * The `w` to ask the server for: the smallest server width that is not blurry when a frame of CSS width
+ * `cssW` is shown at `scale` on a `dpr` screen, or
  * `null` for the full-size strip (a smaller strip would save under a fifth, or the screen shows it full size).
  */
 export function stripWidth(cssW: number, scale: number, dpr: number): number | null {

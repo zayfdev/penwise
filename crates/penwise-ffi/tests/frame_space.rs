@@ -353,3 +353,29 @@ fn replacing_a_layout_is_one_step_and_a_bad_one_keeps_the_old() {
     assert!(scene.replace_frame_layout(frame, "nope").is_err());
     assert_eq!(box_h(&scene, frame), 3000.0);
 }
+
+#[test]
+fn content_bounds_are_the_viewers_rule_for_the_whole_page() {
+    use penwise_core::item::LayerSet;
+    let (_core, mut scene, _page) = setup();
+    assert_eq!(scene.content_bounds(LayerSet::ALL), None, "an empty page");
+    scene
+        .add_frame(
+            r#"{"project":"site","route":"/","preset":"desktop","x":500,"y":100}"#,
+            NOW,
+        )
+        .unwrap();
+    let frame = frame_id(&frames(&scene)[0]);
+    scene
+        .set_frame_layout(
+            frame,
+            r#"{"preset":"desktop","doc":[1440,6000],"viewport":[1440,900]}"#,
+        )
+        .unwrap();
+    // Item bounds use the synced hint (no `doc_h` yet: the 900 px viewport), the same as the viewer's `content_bounds`
+    // that the web fits with, so both clients fit the same rectangle.
+    assert_eq!(
+        scene.content_bounds(LayerSet::ALL),
+        Some([500.0, 100.0, 1940.0, 1000.0])
+    );
+}

@@ -1,7 +1,7 @@
 //! `POST /frames/open` and `GET /frames/<id>/snapshot.png` (design-harness C2): an agent creates the frames it
 //! proposes and shows the owner what it sees.
 //!
-//! Opening a frame puts it on a page — the caller's, else the project's `"<project> review"` page (created on
+//! Opening a frame puts it on a page — the caller's, else the project's `"<project> board"` page (created on
 //! first use, in the project's notebook), so the owner's tablet and the PC window show it live. The preset defaults to `desktop` and the frame to full length. Each screen (route
 //! and preset) has a lane, and a new screen starts a new lane below the board ([`placement`]). The snapshot
 //! ([`snapshot`]) is the frame's whole box through the shared headless browser, with the owner's ink composited.
@@ -27,7 +27,7 @@ pub(crate) use snapshot::frame_snapshot;
 /// Gap between a new frame and the rightmost existing one, in page px.
 const FRAME_GAP: f32 = 40.0;
 /// Gap between a lane and the lowest box above it.
-const ROW_GAP: f32 = 200.0;
+const ROW_GAP: f32 = crate::frames::still::LANE_GAP;
 /// Fallback page position step, matching the catalog.
 const PAGE_POSITION_STEP: i64 = POSITION_STEP;
 
@@ -87,9 +87,9 @@ pub(crate) async fn frame_open(
     ))
 }
 
-/// The project's review page, created in its notebook when it does not exist yet.
+/// The project's board page (an older `"<project> review"` one counts), created in its notebook when it does not exist yet.
 async fn review_page(app: &AppState, project: &Project) -> Result<PageId, ApiError> {
-    let title = format!("{} review", project.name);
+    let title = super::board::board_title(project);
     let catalog = app.storage.catalog().await?;
     let known = project
         .notebook
@@ -102,7 +102,10 @@ async fn review_page(app: &AppState, project: &Project) -> Result<PageId, ApiErr
         });
     if let Some(notebook) = known {
         let pages = catalog.pages(notebook);
-        if let Some(page) = pages.iter().find(|page| page.title == title) {
+        if let Some(page) = pages
+            .iter()
+            .find(|page| super::board::is_board_title(project, &page.title))
+        {
             return Ok(page.id);
         }
     }
@@ -112,7 +115,10 @@ async fn review_page(app: &AppState, project: &Project) -> Result<PageId, ApiErr
         None => crate::api::pages::pick_notebook(app, &catalog, None, &mut author).await?,
     };
     let pages = catalog.pages(notebook);
-    if let Some(page) = pages.iter().find(|page| page.title == title) {
+    if let Some(page) = pages
+        .iter()
+        .find(|page| super::board::is_board_title(project, &page.title))
+    {
         return Ok(page.id);
     }
     let position = pages.last().map_or(PAGE_POSITION_STEP, |page| {

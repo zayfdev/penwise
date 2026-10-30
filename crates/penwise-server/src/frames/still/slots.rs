@@ -30,11 +30,22 @@ pub(super) struct Slot {
     pub(super) generation: u64,
     /// The last time a client asked for the still.
     pub(super) polled: Option<Instant>,
-    /// Something changed while nobody was looking: the next poll captures before it answers.
-    pub(super) stale: bool,
+    /// When something changed while nobody was looking (a trigger found the frame unpolled).
+    pub(super) stale_at: Option<Instant>,
+    /// When the latest capture that completed had begun: it covers every change before that moment.
+    pub(super) fresh_from: Option<Instant>,
     /// When the latest capture began.
     pub(super) started: Option<Instant>,
     pub(super) failed: Option<(Instant, String)>,
+    /// A background capture started by a poll is queued or running.
+    pub(super) background: bool,
+}
+
+impl Slot {
+    fn is_stale(&self) -> bool {
+        self.stale_at
+            .is_some_and(|stale| self.fresh_from.is_none_or(|fresh| fresh < stale))
+    }
 }
 
 impl Inner {
@@ -47,12 +58,17 @@ impl Inner {
         self.with_slot(frame, |slot| Arc::clone(&slot.gate))
     }
 
-    /// Records a poll; `true` when the frame went stale since its last capture.
+    /// Records a poll; `true` when the frame went stale and no capture that began since has completed.
     pub(super) fn note_poll(&self, frame: ItemId) -> bool {
         self.with_slot(frame, |slot| {
             slot.polled = Some(Instant::now());
-            slot.stale
+            slot.is_stale()
         })
+    }
+
+    #[cfg(test)]
+    pub(super) fn is_stale(&self, frame: ItemId) -> bool {
+        self.with_slot(frame, |slot| slot.is_stale())
     }
 
     pub(super) fn polled_recently(&self, frame: ItemId) -> bool {
@@ -75,8 +91,17 @@ impl Inner {
         self.with_slot(frame, |slot| slot.generation == generation)
     }
 
+    /// Claims the frame's background capture slot; `false` when one is already queued or running.
+    pub(super) fn claim_background(&self, frame: ItemId) -> bool {
+        self.with_slot(frame, |slot| !std::mem::replace(&mut slot.background, true))
+    }
+
+    pub(super) fn release_background(&self, frame: ItemId) {
+        self.with_slot(frame, |slot| slot.background = false);
+    }
+
     pub(super) fn mark_stale(&self, frame: ItemId) {
-        self.with_slot(frame, |slot| slot.stale = true);
+        self.with_slot(frame, |slot| slot.stale_at = Some(Instant::now()));
     }
 
     pub(super) fn clear_failure(&self, frame: ItemId) {
@@ -100,11 +125,16 @@ impl Inner {
         })
     }
 
-    pub(super) fn begin(&self, frame: ItemId) {
-        self.with_slot(frame, |slot| {
-            slot.started = Some(Instant::now());
-            slot.stale = false;
-        });
+    /// Records that a capture begins; returns its start, to hand to [`Inner::complete`].
+    pub(super) fn begin(&self, frame: ItemId) -> Instant {
+        let now = Instant::now();
+        self.with_slot(frame, |slot| slot.started = Some(now));
+        now
+    }
+
+    /// Records that the capture begun at `began` completed: the frame is fresh unless it went stale since.
+    pub(super) fn complete(&self, frame: ItemId, began: Instant) {
+        self.with_slot(frame, |slot| slot.fresh_from = Some(began));
     }
 
     pub(super) fn fail(&self, frame: ItemId, message: String) {

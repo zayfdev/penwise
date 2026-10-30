@@ -21,7 +21,7 @@ use penwise_core::edit::Edit;
 use penwise_core::item::{Item, ItemId, ItemKind, Layer, StrokeItem};
 use penwise_core::marks::{Binding, BindingMode, MarkItem, MarkStatus};
 use penwise_core::sample::Sample;
-use penwise_proto::{AnyOp, ItemRef, Op, OpId, PageId};
+use penwise_proto::{AnyOp, ItemRef, Op, OpId, PageId, PageKind};
 use serde_json::{Value, json};
 
 use crate::api::projects::routes as group;
@@ -387,10 +387,10 @@ async fn frames_open_creates_the_review_page_side_by_side_and_snapshots_png() {
     let first_frame = ItemId::from_hex(first["frame"].as_str().expect("frame")).expect("hex");
     let second_frame = ItemId::from_hex(second["frame"].as_str().expect("frame")).expect("hex");
 
-    // The review page lives in the project's notebook, titled "<project> review".
+    // The review page lives in the project's notebook, titled "<project> board".
     let catalog = rig.storage.catalog().await.expect("catalog");
     let review = catalog.page(page).expect("review page");
-    assert_eq!(review.title, "harness review");
+    assert_eq!(review.title, "harness board");
     let project = rig
         .storage
         .catalog()
@@ -735,4 +735,71 @@ async fn variants_sit_side_by_side_take_the_pick_and_keep_marks_on_clear() {
         .await
         .expect("get");
     assert_eq!(missing.status(), reqwest::StatusCode::NOT_FOUND);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn boards_are_titled_board_and_an_older_review_titled_board_still_counts() {
+    let rig = Rig::new();
+    let registry = rig.projects();
+    let root = fixture_root();
+    registry
+        .link(LinkRequest {
+            id: Some("prj_harness".to_owned()),
+            name: Some("harness".to_owned()),
+            root: root.clone(),
+            folder: Some(root),
+            origin: None,
+        })
+        .await
+        .expect("links");
+    let app = rig.app_with_projects(registry);
+    let project = app
+        .projects
+        .get("prj_harness")
+        .await
+        .expect("get")
+        .expect("project");
+
+    // A v1 board: a page titled "<name> review" in the project's notebook.
+    let notebook = project
+        .notebook
+        .as_deref()
+        .expect("notebook")
+        .parse()
+        .expect("id");
+    let old = PageId::from_parts(app.storage.now_ms(), 4242);
+    let mut author = crate::api::Author::new(&app.storage);
+    author
+        .page(
+            old,
+            penwise_proto::PageChange::Create {
+                notebook,
+                title: "harness review".to_owned(),
+                position: 1,
+                kind: PageKind::Infinite,
+                background: penwise_proto::Background::Blank,
+            },
+        )
+        .await
+        .expect("page");
+    author.commit().await.expect("commit");
+    assert_eq!(
+        super::board::board_page(&app, &project)
+            .await
+            .expect("board"),
+        Some(old),
+        "the old title is still the board"
+    );
+    let (page, _) = super::frame_open_via_json(
+        &app,
+        "prj_harness",
+        "/",
+        penwise_core::item::FramePreset::Desktop,
+    )
+    .await
+    .expect("open");
+    assert_eq!(
+        page, old,
+        "frames go on the existing board, not a second one"
+    );
 }

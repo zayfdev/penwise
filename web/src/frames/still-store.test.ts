@@ -82,3 +82,40 @@ describe("StillStore", () => {
     expect(store.get("f")).toBeNull();
   });
 });
+
+describe("StillStore backoff", () => {
+  it("honours a retry: the frame is not asked again until it is over, and the old still stays", async () => {
+    const replies: StillReply[] = [
+      { kind: "fresh", still: still(1), etag: '"v1"' },
+      { kind: "retry", afterMs: 2_000 },
+      { kind: "fresh", still: still(2), etag: '"v2"' },
+    ];
+    const calls: string[] = [];
+    let time = 1_000;
+    const store = new StillStore(
+      async (id) => {
+        calls.push(id);
+        const reply = replies.shift();
+        if (!reply) throw new Error("offline");
+        return reply;
+      },
+      () => undefined,
+      () => time,
+    );
+    await store.check("f");
+    await store.check("f");
+    expect(calls).toHaveLength(2);
+    // Inside the backoff, polling does nothing and the old still is kept.
+    time += 1_999;
+    await store.check("f");
+    expect(calls).toHaveLength(2);
+    expect(store.get("f")?.version).toBe("1");
+    // Another frame is not held back.
+    await store.check("g");
+    expect(calls).toHaveLength(3);
+    time += 1;
+    replies.push({ kind: "fresh", still: still(2), etag: '"v2"' });
+    await store.check("f");
+    expect(store.get("f")?.version).toBe("2");
+  });
+});

@@ -27,6 +27,7 @@ internal class StillFeed(
     private val etags = HashMap<String, String?>()
     private val polledAt = HashMap<String, Long>()
     private val busy = HashSet<String>()
+    private val backoff = StillBackoff()
     private var visible: () -> List<String> = { emptyList() }
     private var released = false
     private val loop =
@@ -68,7 +69,7 @@ internal class StillFeed(
     fun refresh(force: Boolean = false) {
         val now = SystemClock.uptimeMillis()
         for (id in visible()) {
-            if (id in busy) continue
+            if (id in busy || (!force && backoff.blocked(id, now))) continue
             val last = polledAt[id] ?: 0L
             if (force || id !in manifests || now - last >= POLL_MS) fetch(id, now)
         }
@@ -96,6 +97,7 @@ internal class StillFeed(
         manifests.remove(frameId)
         etags.remove(frameId)
         polledAt.remove(frameId)
+        backoff.clear(frameId)
         bitmaps.retain(frameId, emptyList())
     }
 
@@ -120,6 +122,7 @@ internal class StillFeed(
                 val reply = http.manifest(id, etag)
                 main.post {
                     busy -= id
+                    if (reply is StillReply.Busy) backoff.busy(id, SystemClock.uptimeMillis(), reply.retryAfterMs)
                     if (reply is StillReply.Fresh && !released) accept(id, reply)
                 }
             }

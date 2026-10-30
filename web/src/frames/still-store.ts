@@ -12,6 +12,8 @@ export const STILL_POLL_MS = 3_000;
 export type StillReply =
   | { readonly kind: "none" }
   | { readonly kind: "unchanged" }
+  /** `503` + `Retry-After`: a capture is under way or failed; do not ask this frame again for `afterMs`. */
+  | { readonly kind: "retry"; readonly afterMs: number }
   | { readonly kind: "fresh"; readonly still: Still; readonly etag: string | null };
 
 /** Fetches one frame's still; `etag` is sent as `If-None-Match`. Rejects on a network failure. */
@@ -21,6 +23,8 @@ interface Entry {
   still: Still | null;
   etag: string | null;
   busy: boolean;
+  /** Not before this time (ms) is the frame asked again. */
+  retryAt: number;
 }
 
 /** Stills by frame id. */
@@ -31,6 +35,7 @@ export class StillStore {
     private readonly fetchStill: StillFetch,
     /** A frame's still arrived or changed. */
     private readonly changed: (frameId: string, still: Still) => void,
+    private readonly now: () => number = () => Date.now(),
   ) {}
 
   /** The latest still of `frameId`, or `null` before the server made one. */
@@ -52,14 +57,17 @@ export class StillStore {
   async check(frameId: string): Promise<void> {
     let entry = this.entries.get(frameId);
     if (entry === undefined) {
-      entry = { still: null, etag: null, busy: false };
+      entry = { still: null, etag: null, busy: false, retryAt: 0 };
       this.entries.set(frameId, entry);
     }
-    if (entry.busy) return;
+    if (entry.busy || this.now() < entry.retryAt) return;
     entry.busy = true;
     try {
       const reply = await this.fetchStill(frameId, entry.etag);
-      if (this.entries.get(frameId) !== entry || reply.kind !== "fresh") return;
+      if (this.entries.get(frameId) !== entry) return;
+      // The old still stays on screen through a backoff.
+      if (reply.kind === "retry") entry.retryAt = this.now() + reply.afterMs;
+      if (reply.kind !== "fresh") return;
       entry.still = reply.still;
       entry.etag = reply.etag;
       this.changed(frameId, reply.still);

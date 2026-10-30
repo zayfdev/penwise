@@ -24,9 +24,12 @@ internal class FrameHttp(
         val code: Int,
         val body: ByteArray,
         val etag: String?,
+        /** The `Retry-After` header as sent (seconds), or null. */
+        val retryAfter: String? = null,
     ) {
         val ok: Boolean get() = code in HTTP_OK_FIRST..HTTP_OK_LAST
         val notModified: Boolean get() = code == HTTP_NOT_MODIFIED
+        val unavailable: Boolean get() = code == HTTP_UNAVAILABLE
     }
 
     /** `GET` of a server path or an absolute URL. */
@@ -58,7 +61,7 @@ internal class FrameHttp(
             val code = connection.responseCode
             val stream = if (code in HTTP_OK_FIRST..HTTP_OK_LAST) connection.inputStream else connection.errorStream
             val body = stream?.use { it.readBytes() } ?: ByteArray(0)
-            Reply(code, body, connection.getHeaderField("ETag"))
+            Reply(code, body, connection.getHeaderField("ETag"), connection.getHeaderField("Retry-After"))
         } catch (error: IOException) {
             Log.w(TAG, "$method $pathOrUrl failed: ${error.message}")
             null
@@ -75,6 +78,7 @@ internal class FrameHttp(
         private const val HTTP_OK_FIRST = 200
         private const val HTTP_OK_LAST = 299
         private const val HTTP_NOT_MODIFIED = 304
+        private const val HTTP_UNAVAILABLE = 503
     }
 }
 

@@ -27,14 +27,7 @@ export const LIVE_POLL_MS = 10_000;
 /** The part of the layer the coordinator drives. */
 export type LiveLayer = Pick<
   FrameLayer,
-  | "liveId"
-  | "layoutOf"
-  | "documentLayoutOf"
-  | "setLive"
-  | "placeWindow"
-  | "renderStills"
-  | "setStill"
-  | "scrollTo"
+  "liveId" | "layoutOf" | "setLive" | "placeWindow" | "renderStills" | "setStill" | "scrollTo"
 >;
 
 /** What the coordinator needs around it. */
@@ -202,16 +195,15 @@ export class LiveCoordinator {
           }, WARM_KEEP_MS);
   }
 
-  /** The frame lost its window: its layout is the still's now, or nothing. */
+  /**
+   * The frame lost its window. With a still, the still's layout replaces the live one; without one the live
+   * layout stays as it is (its rects are document coordinates, so it is still right; contract §7).
+   */
   private demote(id: string): void {
     this.scrollSynced.delete(id);
     const frame = this.deps.frames().find((f) => f.id === id);
-    if (!frame) return;
     const still = this.stills.get(id);
-    // Without a still the document facts of the page that was live stay (at scroll zero): a mark below the
-    // first screen must not fall out of a box that shrank to the preset height.
-    const kept = still === null ? this.deps.layer.documentLayoutOf(id) : null;
-    this.replaceLayout(frame, still, kept === null ? undefined : layoutJson(kept, frame.preset));
+    if (frame && still !== null) this.replaceLayout(frame, still);
   }
 
   /** The frame got its window: a kept iframe still has its layout, a new one reports its own. */

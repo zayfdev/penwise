@@ -142,11 +142,23 @@ impl Site {
         format!("{}/frames/{}/{tail}", self.base, frame.to_hex())
     }
 
+    /// `GET still`, polled the way a client does: a `503` with `Retry-After` means the capture runs in the
+    /// background, so wait that long and ask again.
     async fn still(&self, frame: ItemId) -> (Value, reqwest::header::HeaderMap) {
-        let response = reqwest::get(self.url(frame, "still")).await.expect("get");
-        assert_eq!(response.status(), reqwest::StatusCode::OK);
-        let headers = response.headers().clone();
-        (response.json().await.expect("json"), headers)
+        let started = Instant::now();
+        loop {
+            let response = reqwest::get(self.url(frame, "still")).await.expect("get");
+            if response.status() == reqwest::StatusCode::SERVICE_UNAVAILABLE
+                && response.headers().contains_key("retry-after")
+                && started.elapsed() < Duration::from_secs(90)
+            {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                continue;
+            }
+            assert_eq!(response.status(), reqwest::StatusCode::OK);
+            let headers = response.headers().clone();
+            return (response.json().await.expect("json"), headers);
+        }
     }
 
     async fn strip(&self, still: &Value, index: usize) -> Pixmap {
@@ -410,7 +422,7 @@ async fn a_static_reload_makes_a_new_still() {
                 + &format!("<!-- edit {attempt} -->"),
         )
         .expect("edit");
-        second = changed_within(&site, frame, version, Duration::from_secs(6)).await;
+        second = changed_within(&site, frame, version, Duration::from_secs(15)).await;
         if second.is_some() {
             break;
         }
