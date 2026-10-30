@@ -3,7 +3,7 @@
 State after the op-log rewrite (`docs/rewrite-design.md`; gates `just check`, `just android-check`, `just web-e2e`
 green). The earlier notes in this file (page orientation, latency, the 2026-10-25 lost-ink recovery, pictures
 work) described the pre-rewrite code and are superseded; landscape default pages, adaptive previews and the
-picture/anchor surface are all in the current code.
+picture surface are all in the current code.
 
 ## Tablet
 
@@ -64,8 +64,3 @@ picture/anchor surface are all in the current code.
   `X-Penwise-Token`) authenticates every device, and the transport is cleartext HTTP/WS on the LAN. Planned in
   `docs/rewrite-design.md` §6 S7: per-device tokens with revocation, TLS with a pinned fingerprint, token never
   logged, data dir `0700`.
-
-## Extension
-
-- Only the visible viewport is captured (no full-page stitching).
-- Stale selectors are not detected; anchor attribution is recomputed per read instead (`docs/pages.md`).

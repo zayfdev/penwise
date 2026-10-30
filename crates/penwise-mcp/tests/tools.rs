@@ -20,7 +20,7 @@ mod common;
 use common::{Mcp, TOKEN};
 
 /// The tools `docs/mcp.md` documents.
-const DOCUMENTED: [&str; 23] = [
+const DOCUMENTED: [&str; 22] = [
     "penwise_page_png",
     "penwise_page_status",
     "penwise_annotate",
@@ -34,7 +34,6 @@ const DOCUMENTED: [&str; 23] = [
     "penwise_place_image",
     "penwise_list_images",
     "penwise_remove_image",
-    "penwise_page_annotations",
     "penwise_projects",
     "penwise_frame_open",
     "penwise_frame_snapshot",
@@ -171,7 +170,7 @@ async fn every_documented_tool_works_against_the_server() {
         "base64 PNG magic"
     );
 
-    // Pictures and anchors.
+    // Pictures.
     let file = png_file(&scratch);
     let placed = mcp
         .json(
@@ -184,8 +183,6 @@ async fn every_documented_tool_works_against_the_server() {
     let images = mcp.json("penwise_list_images", json!({})).await;
     assert_eq!(images["page"], p2);
     assert_eq!(images["images"].as_array().expect("images").len(), 1);
-    let anchors = mcp.json("penwise_page_annotations", json!({})).await;
-    assert!(anchors["unanchored"].is_number(), "{anchors}");
     let removed = mcp
         .json("penwise_remove_image", json!({ "id": image_id }))
         .await;

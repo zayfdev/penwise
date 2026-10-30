@@ -86,7 +86,6 @@ pub fn router(app: AppState) -> Router {
         .merge(crate::ocr::routes())
         .merge(crate::search::routes())
         .merge(crate::render::routes())
-        .merge(crate::anchors::routes())
         .merge(crate::inspect::routes())
         .merge(pair::protected())
         .layer(middleware::from_fn_with_state(

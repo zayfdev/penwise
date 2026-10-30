@@ -166,8 +166,8 @@ async fn store_label(app: &AppState, id: ItemId, label: String) {
 
 /// `POST /pages/<id>/images` — body `{"asset","x","y","w","h","label"?,"id"?,"layer"?}`.
 ///
-/// The picture is placed in page px: the extension sends a screenshot sized to the page, and components are
-/// laid out where the caller wants them. It goes beneath everything already on the page, so ink draws over it.
+/// The picture is placed in page px, where the caller wants it. It goes beneath everything already on the page,
+/// so ink draws over it.
 async fn image_place(
     Path(page_id): Path<String>,
     State(app): State<AppState>,

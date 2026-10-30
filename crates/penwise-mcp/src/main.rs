@@ -114,10 +114,7 @@ fn call_tool(
     }
     if matches!(
         name,
-        "penwise_place_image"
-            | "penwise_list_images"
-            | "penwise_remove_image"
-            | "penwise_page_annotations"
+        "penwise_place_image" | "penwise_list_images" | "penwise_remove_image"
     ) {
         return pictures::picture_tool(name, request, endpoint);
     }

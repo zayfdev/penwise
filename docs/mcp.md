@@ -47,7 +47,6 @@ broken existing file is reported and left untouched.
 | `penwise_place_image` | `{path? \| asset?, x, y, w?, h?, label?, page?}` | the placed picture `{id, asset, x, y, w, h, label}` |
 | `penwise_list_images` | `{page?}` | `{"page":"<page id>","images":[…]}` |
 | `penwise_remove_image` | `{id, page?}` | `{"removed":1}` |
-| `penwise_page_annotations` | `{page?}` | `{"elements":[{selector, strokes, rect, text}],"unanchored":n}` |
 | `penwise_projects` | — | `[{id, name, root, kind, origin?, static?, port, notebook}]` — linked design projects |
 | `penwise_frame_open` | `{project?, route, preset, page?}` | `{"page":"<page id>","frame":"<item id>"}` — a live page as a frame (project defaults to `PENWISE_PROJECT`; default page: the project's `<name> review`, created if missing) |
 | `penwise_frame_snapshot` | `{frame, ink?}` | PNG image content of the frame at its preset; `ink` includes the owner's marks (default true) |

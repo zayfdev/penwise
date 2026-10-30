@@ -2,7 +2,6 @@
 //! the in-process test harness share (`serve::serve` builds the one router both use).
 
 mod agent;
-mod anchors;
 mod annotate;
 pub mod api;
 mod assets;

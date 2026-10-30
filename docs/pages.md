@@ -62,7 +62,6 @@ ops(seq, op_id, batch, device, hlc, kind, notebook, page, item, body, received_m
 notebooks(...registers + hlcs)     pages(...registers + hlcs)
 items(id, page, kind, layer, z, deleted, body, patch, stamps, added_seq, updated_seq)
 id_alias(legacy, kind, id)         image_labels(item, label)
-page_anchors, page_anchors_seen    -- server-local element maps (sidecar.rs, anchors/store.rs), not synced
 ```
 
 - One writer thread (`storage/writer.rs`) validates, logs, materializes and commits; reads use separate WAL
@@ -108,14 +107,6 @@ is a local Ollama (`PENWISE_OCR_URL`, default `http://127.0.0.1:11434`; `PENWISE
 ink is sent, cropped to its bounds + 48 px, at most 1400 px a side. `GET /search?q=` scans the live text items of
 every live page (case-insensitive, 60 chars of context, at most 50 hits). Typed text items are searched too.
 
-## Anchors
-
-A browser capture can store the page's element map (`POST /pages/<id>/anchors`, `{selector, rect, role?, text?,
-url?}`, replaces the previous map). It is server-local metadata (not an op). Which marks belong to which element
-is **computed on every read** of `GET /pages/<id>/annotations` from the page's current items: a mark belongs to
-the smallest anchor containing its centre (`anchors.rs`), the rest count as `unanchored`. Because nothing is
-cached, erased, moved or promoted marks are attributed correctly and nothing goes stale.
-
 ## Backgrounds
 
 Drawn under the items, identical in the browser, the tablet and the PNG (`BACKGROUND_SPACING_PX = 93.7`,
@@ -141,7 +132,6 @@ Drawn under the items, identical in the browser, the tablet and the PNG (`BACKGR
 | `POST /assets`, `GET /assets/<hash>` | picture bytes |
 | `GET/POST/DELETE /pages/<id>/images` | list / place / remove pictures |
 | `POST /annotate`, `POST /annotate/clear` | agent marks (`{"strokes":[{points,color?,width?}]}`) |
-| `GET/POST /pages/<id>/anchors`, `GET /pages/<id>/annotations` | element map and per-selector attribution |
 | `GET /pages/<id>/history`, `POST /pages/<id>/restore?to_seq=` | restore |
 | `GET /text?page=&refresh=`, `GET /search?q=` | handwriting as text |
 | `GET /health?page=` | `{ok, page, strokes, pages, head_seq}` |
@@ -168,4 +158,4 @@ LAN (security hardening is pending, see `docs/next-iteration.md`).
   magic `PWST`) are read once by `penwise-ffi/src/sync_core/legacy.rs` and imported as ops; they are no longer a
   live format. A foreground service keeps the socket alive while the screen sleeps (`ink/SyncService.kt`).
 - **Browser** (`web/`, `penwise-wasm`): `docs/draw.md`.
-- **Agents / extension**: `docs/mcp.md`, `docs/extension.md`.
+- **Agents**: `docs/mcp.md`.

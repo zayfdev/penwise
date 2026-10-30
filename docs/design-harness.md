@@ -240,7 +240,6 @@ Page tools, from the pen-and-paper side:
 | `penwise_place_image` | Put a picture on a page. |
 | `penwise_list_images` | List the pictures on a page. |
 | `penwise_remove_image` | Remove one placed picture. |
-| `penwise_page_annotations` | Attribute a page's ink to captured elements by selector. |
 | `penwise_list_pages` | List notebooks, pages and the active page. |
 | `penwise_create_page` | Create a page. |
 | `penwise_create_notebook` | Create an empty notebook. |

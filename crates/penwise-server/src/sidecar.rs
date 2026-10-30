@@ -1,5 +1,5 @@
 //! Server-local metadata that sits beside the op log in `penwise.db` and is never synced: picture labels and
-//! the element maps of captured pages.
+//! the frame registry.
 //!
 //! Each call opens its own short-lived connection on the blocking pool (WAL, busy timeout), so these writes
 //! never touch the storage writer thread: they carry no ops and nothing waits on them.
