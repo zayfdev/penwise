@@ -53,6 +53,8 @@ pub struct SyncCore {
     hello_at: u64,
     /// `Welcome` seen on this connection (pushes are allowed).
     welcomed: bool,
+    /// `Welcome.protocol_version` of this connection (`0` before the `Welcome`).
+    server_protocol: u16,
     /// A `PushOps` frame is out and its `Ack` has not arrived.
     inflight: bool,
     snapshotting: bool,
@@ -104,6 +106,7 @@ impl SyncCore {
             ids: IdMint::new(device, entropy),
             hello_at: 0,
             welcomed: false,
+            server_protocol: 0,
             inflight: false,
             snapshotting: false,
             snapshot_pages: BTreeSet::new(),

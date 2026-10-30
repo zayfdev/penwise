@@ -51,7 +51,7 @@ pub fn add_bound_stroke(
     layouts: &FrameLayouts,
     spec: &BoundStroke,
 ) -> Result<Vec<Edit>, EditError> {
-    let frame = frame_state(scene, layouts, spec.frame)
+    let frame = FrameState::of(scene, layouts, spec.frame)
         .ok_or(EditError::InvalidValue { field: "frame" })?;
     let state = frame
         .layout
@@ -149,20 +149,6 @@ pub fn prune_marks(scene: &Scene, edits: &[Edit]) -> Vec<Edit> {
         });
     }
     out
-}
-
-/// The frame's placement state, `None` when `frame` is not a live frame item.
-fn frame_state(scene: &Scene, layouts: &FrameLayouts, frame: ItemId) -> Option<FrameState> {
-    let item = scene.get(frame)?;
-    let ItemKind::Frame(frame_item) = &item.kind else {
-        return None;
-    };
-    Some(FrameState {
-        pos: [item.transform.e, item.transform.f],
-        size: frame_item.page_size(),
-        preset: frame_item.preset,
-        layout: layouts.get(frame).cloned(),
-    })
 }
 
 /// Keeps `Bound` only when a key is present and its rect is known; otherwise the stroke is pinned to the area

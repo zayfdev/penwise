@@ -2,12 +2,15 @@
 //!
 //! Layout (little-endian): `u8 version = 1`, `u8 kind` (index of the `ServerMsg` variant: `Welcome` 0,
 //! `Reject` 1, `Ack` 2, `OpsSince` 3, `SnapshotBegin` 4, `SnapshotChunk` 5, `SnapshotEnd` 6, `StrokeDelta` 7,
-//! `StrokeCancel` 8, `SwitchPage` 9, `Resync` 10, `Error` 11, `Ping` 12, `Pong` 13), `u8 flags` (bit0 catalog changed, bit1 reconnect,
-//! bit2 snapshot finished, bit3 `page` present, bit4 server changed: a different server answered and the replica is held until `resolve_server_change`), `u8 code` (Reject: 0 bad token, 1 unsupported protocol,
+//! `StrokeCancel` 8, `SwitchPage` 9, `Resync` 10, `Error` 11, `Ping` 12, `Pong` 13, `Focus` 14), `u8 flags` (bit0 catalog changed, bit1 reconnect,
+//! bit2 snapshot finished, bit3 `page` present, bit4 server changed: a different server answered and the replica is held until `resolve_server_change`,
+//! bit5 `focus_item` present: a `Focus` named a frame, its `[16] item` is appended after the changes,
+//! bit6 `focus_supported`: a `Welcome` from a server speaking protocol 2 or newer, so `Focus` may be sent), `u8 code` (Reject: 0 bad token, 1 unsupported protocol,
 //! 2 malformed, 3 rate limited; Error: 0 malformed, 1 too large, 2 internal, 3 shutting down; else 0),
 //! `u64 head_seq`, `u32 applied`, `u32 apply_errors`, `u32 acked`, `u32 rejected`, `[16] page` when bit3,
 //! `u32 n` then `n × (u32 len, frame)` replies to send, `u32 m` then `m × ([16] page, [16] item)` changes
-//! (all-zero item = reload the whole page).
+//! (all-zero item = reload the whole page), then `[16] focus_item` when bit5. `Focus` carries its target page in
+//! `page` (bit3) like `SwitchPage`; without bit5 it means "fit the page's content".
 
 use penwise_core::item::ItemId;
 use penwise_proto::{ErrorCode, PageId, RejectReason, ServerMsg};
@@ -47,6 +50,10 @@ pub struct Outcome {
     pub page: Option<PageId>,
     pub replies: Vec<Vec<u8>>,
     pub changes: Vec<Change>,
+    /// `Focus`: the frame to fit (`None` = fit the page's content; `page` holds the target page).
+    pub focus_item: Option<ItemId>,
+    /// `Welcome`: the server speaks protocol 2 or newer, so `Focus` may be sent on this connection.
+    pub focus_supported: bool,
 }
 
 /// Wire index of a server message (the `kind` byte).
@@ -67,6 +74,7 @@ pub fn kind_code(msg: &ServerMsg) -> u8 {
         ServerMsg::Error { .. } => 11,
         ServerMsg::Ping { .. } => 12,
         ServerMsg::Pong { .. } => 13,
+        ServerMsg::Focus { .. } => 14,
     }
 }
 
@@ -120,7 +128,9 @@ impl Outcome {
             | u8::from(self.reconnect) << 1
             | u8::from(self.snapshot_done) << 2
             | u8::from(self.page.is_some()) << 3
-            | u8::from(self.server_changed) << 4;
+            | u8::from(self.server_changed) << 4
+            | u8::from(self.focus_item.is_some()) << 5
+            | u8::from(self.focus_supported) << 6;
         w.u8(flags);
         w.u8(self.code);
         w.u64(self.head_seq);
@@ -139,6 +149,9 @@ impl Outcome {
         for change in &self.changes {
             w.raw(&change.page.to_bytes());
             w.raw(&change.item.map_or([0; 16], |id| id.0));
+        }
+        if let Some(item) = self.focus_item {
+            w.raw(&item.0);
         }
         w.finish()
     }

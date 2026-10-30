@@ -20,6 +20,8 @@ pub struct Accepted {
     pub device: DeviceId,
     pub kind: ClientKind,
     pub last_seen_seq: u64,
+    /// The protocol version the client offered (it speaks the message set up to this version).
+    pub protocol: u16,
 }
 
 /// Why a first frame is refused, if it is.
@@ -50,6 +52,7 @@ fn judge(frame: &WsIn, token_ok: impl Fn(&AuthToken) -> bool) -> Result<Accepted
         device,
         kind: client,
         last_seen_seq,
+        protocol: protocol_version,
     })
 }
 

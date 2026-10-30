@@ -41,7 +41,7 @@ async fn bad_frames_get_error_and_close_and_log_is_untouched() {
     let mut trailing = good_push.clone();
     trailing.push(0);
     let mut wrong_version = good_push.clone();
-    wrong_version[0] = 2;
+    wrong_version[0] = 3;
     let cases: Vec<(WsIn, ErrorCode)> = vec![
         (WsIn::Text, ErrorCode::Malformed),
         (WsIn::Binary(Vec::new().into()), ErrorCode::Malformed),

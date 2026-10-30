@@ -2,8 +2,8 @@
 
 use penwise_core::item::ItemId;
 use penwise_proto::{
-    AuthToken, ClientKind, ClientMsg, PROTOCOL_VERSION, Scope, ServerId, ServerMsg, SnapshotChunk,
-    decode_server, encode_client, newest_stamp, observe_snapshot_chunk,
+    AuthToken, ClientKind, ClientMsg, FOCUS_PROTOCOL_VERSION, PROTOCOL_VERSION, Scope, ServerId,
+    ServerMsg, SnapshotChunk, decode_server, encode_client, newest_stamp, observe_snapshot_chunk,
 };
 
 use super::SyncCore;
@@ -24,6 +24,7 @@ impl SyncCore {
     ) -> Result<Vec<u8>, SyncError> {
         self.hello_at = now_ms;
         self.welcomed = false;
+        self.server_protocol = 0;
         self.inflight = false;
         self.snapshotting = false;
         self.caught_up = false;
@@ -64,12 +65,15 @@ impl SyncCore {
         }
         match msg {
             ServerMsg::Welcome {
+                protocol_version,
                 server,
                 server_now_ms,
                 head_seq,
                 current_page,
                 ..
             } => {
+                self.server_protocol = protocol_version;
+                out.focus_supported = protocol_version >= FOCUS_PROTOCOL_VERSION;
                 self.on_welcome(server, server_now_ms, head_seq, now_ms, &mut out);
                 out.page = current_page;
             }
@@ -89,6 +93,10 @@ impl SyncCore {
             ServerMsg::SnapshotChunk(chunk) => self.on_chunk(&chunk, now_ms, &mut out),
             ServerMsg::SnapshotEnd { head_seq } => self.on_snapshot_end(head_seq, &mut out),
             ServerMsg::SwitchPage { page, .. } => out.page = Some(page),
+            ServerMsg::Focus { page, item, .. } => {
+                out.page = Some(page);
+                out.focus_item = item.map(ItemId::from);
+            }
             ServerMsg::Error { code, .. } => out.code = error_code(code),
             ServerMsg::Ping { nonce } => {
                 out.replies.push(encode_client(&ClientMsg::Pong { nonce })?);

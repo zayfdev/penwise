@@ -22,6 +22,7 @@ pub enum MessageKind {
     Error = 11,
     Ping = 12,
     Pong = 13,
+    Focus = 14,
 }
 
 /// Notebook row for the UI.
@@ -57,6 +58,10 @@ pub struct PageEntry {
 
 /// Summary of one frame after the viewer applied it. Fields not relevant to `kind` are empty/zero.
 #[wasm_bindgen(getter_with_clone)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "one field per fact the UI reacts to; the struct is the JS-facing summary"
+)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct Received {
     pub kind: MessageKind,
@@ -64,9 +69,11 @@ pub struct Received {
     pub head_seq: u64,
     /// `OpsSince`: another catch-up batch follows.
     pub more: bool,
-    /// `Welcome.current_page`, `SwitchPage.page`.
+    /// `Welcome.current_page`, `SwitchPage.page`, `Focus.page`.
     pub page: Option<String>,
-    /// `SwitchPage.by`, `StrokeDelta`/`StrokeCancel` producer.
+    /// `Focus.item` (the frame to fit, 26-char ULID text); `None` = fit the page's content.
+    pub item: Option<String>,
+    /// `SwitchPage.by`, `Focus.by`, `StrokeDelta`/`StrokeCancel` producer.
     pub device: Option<String>,
     /// Pages whose committed scene changed (re-render).
     pub changed_pages: Vec<String>,
@@ -76,6 +83,8 @@ pub struct Received {
     pub scope: Option<String>,
     /// Notebook/page lists changed (refresh the page list).
     pub catalog_changed: bool,
+    /// `Welcome`: the server speaks protocol 2 or newer, so `Focus` may be sent on this connection.
+    pub focus_supported: bool,
     /// `Welcome.server`.
     pub server: Option<String>,
     /// `Reject` reason: `bad_token` | `unsupported_protocol` | `malformed` | `rate_limited`.
@@ -114,6 +123,7 @@ impl MessageKind {
             ServerMsg::Error { .. } => Self::Error,
             ServerMsg::Ping { .. } => Self::Ping,
             ServerMsg::Pong { .. } => Self::Pong,
+            ServerMsg::Focus { .. } => Self::Focus,
         }
     }
 }
@@ -161,11 +171,13 @@ impl Received {
             head_seq: 0,
             more: false,
             page: None,
+            item: None,
             device: None,
             changed_pages: Vec::new(),
             live_pages: Vec::new(),
             catalog_changed: false,
             scope: None,
+            focus_supported: false,
             server: None,
             reject: None,
             error: None,

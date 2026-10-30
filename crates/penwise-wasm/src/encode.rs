@@ -4,7 +4,7 @@
 //! paths run natively too. The viewer never pushes ops or live ink.
 
 use penwise_proto::{
-    AuthToken, ClientKind, ClientMsg, DeviceId, PROTOCOL_VERSION, PageId, encode_client,
+    AuthToken, ClientKind, ClientMsg, DeviceId, ItemRef, PROTOCOL_VERSION, PageId, encode_client,
 };
 use wasm_bindgen::prelude::{JsError, wasm_bindgen};
 
@@ -60,6 +60,19 @@ pub fn encode_watch(page: Option<String>) -> Result<Vec<u8>, JsError> {
 #[wasm_bindgen]
 pub fn encode_switch_page(page: &str) -> Result<Vec<u8>, JsError> {
     Ok(switch_page_frame(page)?)
+}
+
+/// `Focus { page, item }`: show `page` and fit frame `item` (26-char ULID text); `None` fits the page's content.
+///
+/// # Errors
+/// `JsError` for a malformed page or item id.
+#[wasm_bindgen]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "wasm_bindgen passes optional strings by value"
+)]
+pub fn encode_focus(page: &str, item: Option<String>) -> Result<Vec<u8>, JsError> {
+    Ok(focus_frame(page, item.as_deref())?)
 }
 
 /// `Resync { from_seq }`.
@@ -142,6 +155,17 @@ pub fn watch_frame(page: Option<&str>) -> Result<Vec<u8>, WasmError> {
 pub fn switch_page_frame(page: &str) -> Result<Vec<u8>, WasmError> {
     frame(&ClientMsg::SwitchPage {
         page: parse_id(page)?,
+    })
+}
+
+/// Encoded `Focus`.
+///
+/// # Errors
+/// [`WasmError::Id`] for a malformed page or item id.
+pub fn focus_frame(page: &str, item: Option<&str>) -> Result<Vec<u8>, WasmError> {
+    frame(&ClientMsg::Focus {
+        page: parse_id(page)?,
+        item: item.map(parse_id::<ItemRef>).transpose()?,
     })
 }
 

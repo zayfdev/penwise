@@ -1,9 +1,9 @@
 //! Valid items of every kind for the slice e codec and undo tests.
 
 use penwise_core::item::{
-    Affine, ArrowHead, EraseItem, FillItem, FrameItem, FramePreset, ImageItem, Item, ItemId,
-    ItemKind, Layer, Paint, Polygon, SampleParam, SampleRange, ShapeItem, ShapeKind, StrokeItem,
-    TextItem, Trim,
+    Affine, ArrowHead, EraseItem, FillItem, FrameExtent, FrameItem, FramePreset, ImageItem, Item,
+    ItemId, ItemKind, Layer, Paint, Polygon, SampleParam, SampleRange, ShapeItem, ShapeKind,
+    StrokeItem, TextItem, Trim,
 };
 use penwise_core::smoothing::{HistoryPoint, PositionState, PressureState, SmootherState};
 use penwise_core::{Color, Preset, Sample};
@@ -278,6 +278,8 @@ pub fn frame(id: ItemId, z: i64) -> Item {
             label: "variant A".to_owned(),
             group: Some("grp-1".to_owned()),
             chosen: true,
+            extent: FrameExtent::Full,
+            doc_h: 5120,
         }),
     );
     it.transform = Affine::translate(100.75, -40.0);

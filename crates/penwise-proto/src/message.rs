@@ -15,7 +15,7 @@ use core::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::ids::{DeviceId, OpId, PageId, ServerId};
+use crate::ids::{DeviceId, ItemRef, OpId, PageId, ServerId};
 use crate::live::{StrokeCancel, StrokeDelta};
 use crate::op::{AnyOp, OpRejection, SeqOp};
 use crate::snapshot::{Scope, SnapshotChunk};
@@ -118,6 +118,14 @@ pub enum ClientMsg {
     Pong {
         nonce: u64,
     },
+    /// "Show `item` (a frame) on `page`": relayed to every other session as [`ServerMsg::Focus`]. The receiver
+    /// switches to `page` if needed, then fits the frame to the screen; `item: None` fits the page's content.
+    /// Needs envelope [`crate::envelope::FRAME_VERSION`] 2 and protocol 2 (appended last: older variant indices
+    /// unchanged); send it only when the `Welcome` reported `protocol_version >= 2`.
+    Focus {
+        page: PageId,
+        item: Option<ItemRef>,
+    },
 }
 
 /// Server → client. Variant order frozen; append only.
@@ -200,6 +208,13 @@ pub enum ServerMsg {
     },
     Pong {
         nonce: u64,
+    },
+    /// `by` asked every device to show `item` on `page` (see [`ClientMsg::Focus`]). Envelope version 2; the server
+    /// sends it only to sessions that offered protocol 2.
+    Focus {
+        page: PageId,
+        item: Option<ItemRef>,
+        by: DeviceId,
     },
 }
 

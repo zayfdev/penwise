@@ -395,12 +395,12 @@ internal object Native {
 
     /**
      * Every live frame as JSON:
-     * `[{id, project, route, preset, cssW, cssH, rect: [x, y, w, h], patch, label, group, chosen}]`,
-     * ids as 32 hex. `patch` is the P1 patch as an object (or `null`), `group` a variant group id (or `null`).
+     * `[{id, project, route, preset, cssW, cssH, extent, docH, boxH, rect: [x, y, w, h], patch, label, group,
+     * chosen}]`, ids as 32 hex; `extent` viewport or full, `docH` measured document height (0 = unknown).
      */
     external fun sceneFrames(handle: Long): String
 
-    /** Places a frame from `{project, route, preset, cssW?, cssH?, x, y}` on the ink layer. */
+    /** Places a frame from `{project, route, preset, cssW?, cssH?, extent?, x, y}` on the ink layer. */
     external fun sceneAddFrame(
         handle: Long,
         json: String,

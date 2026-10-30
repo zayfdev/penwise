@@ -2,12 +2,12 @@
 //! layouts, and blobs written before them keep decoding with the defaults.
 
 use penwise_core::CodecError;
-use penwise_core::codec::edit::{EDIT_VERSION, EDIT_VERSION_V3, decode_edit, encode_edit};
+use penwise_core::codec::edit::{EDIT_VERSION_V3, EDIT_VERSION_V4, decode_edit, encode_edit};
 use penwise_core::codec::item::{ITEM_VERSION, decode_item, encode_item};
 use penwise_core::edit::{Edit, ItemPatch};
 use penwise_core::hash::fnv1a64;
 use penwise_core::item::{
-    Affine, FrameItem, FramePreset, Item, ItemId, ItemKind, Layer, MAX_PATCH_LEN,
+    Affine, FrameExtent, FrameItem, FramePreset, Item, ItemId, ItemKind, Layer, MAX_PATCH_LEN,
 };
 
 fn id(n: u8) -> ItemId {
@@ -30,6 +30,8 @@ fn variant_frame() -> Item {
             label: "bigger hero".to_owned(),
             group: Some("grp-1".to_owned()),
             chosen: true,
+            extent: FrameExtent::Viewport,
+            doc_h: 0,
         }),
     }
 }
@@ -40,13 +42,16 @@ fn plain_frame() -> Item {
         layer: Layer::Ink,
         z: 4 << 16,
         transform: Affine::translate(0.0, 0.0),
-        kind: ItemKind::Frame(FrameItem::new(
-            "portfolio".to_owned(),
-            "/".to_owned(),
-            FramePreset::Desktop,
-            1440,
-            900,
-        )),
+        kind: ItemKind::Frame(FrameItem {
+            extent: FrameExtent::Viewport,
+            ..FrameItem::new(
+                "portfolio".to_owned(),
+                "/".to_owned(),
+                FramePreset::Desktop,
+                1440,
+                900,
+            )
+        }),
     }
 }
 
@@ -75,7 +80,7 @@ fn item_v3_round_trips_the_variant_fields() {
     let item = variant_frame();
     let bytes = item_blob(&item);
     assert_eq!(bytes[4..6], ITEM_VERSION.to_le_bytes());
-    assert_eq!(ITEM_VERSION, 3);
+    assert_eq!(ITEM_VERSION, 4);
     assert_eq!(decode_item(&bytes).as_ref(), Ok(&item));
     assert_eq!(item_blob(&decode_item(&bytes).unwrap()), bytes, "canonical");
 }
@@ -84,9 +89,10 @@ fn item_v3_round_trips_the_variant_fields() {
 fn item_v2_blob_decodes_with_variant_defaults() {
     let plain = plain_frame();
     let bytes = item_blob(&plain);
-    // A plain frame's v3 tail is exactly four zero bytes: patch flag, empty label length, group flag, chosen.
-    let tail = bytes.len() - 8 - 4;
-    assert_eq!(&bytes[tail..bytes.len() - 8], &[0, 0, 0, 0]);
+    // A plain viewport frame's v3 + v4 tail is exactly six zero bytes: patch flag, empty label length, group flag,
+    // chosen, then the v4 extent (viewport) and unknown document height.
+    let tail = bytes.len() - 8 - 6;
+    assert_eq!(&bytes[tail..bytes.len() - 8], &[0, 0, 0, 0, 0, 0]);
     let mut older = bytes[..tail].to_vec();
     older.extend_from_slice(&bytes[bytes.len() - 8..]);
     older[4..6].copy_from_slice(&2_u16.to_le_bytes());
@@ -105,8 +111,7 @@ fn frame_variant_updates_round_trip_and_need_v4() {
     };
     let edit = Edit::Update { id: id(7), patch };
     let bytes = edit_blob(&edit);
-    assert_eq!(bytes[4..6], EDIT_VERSION.to_le_bytes());
-    assert_eq!(EDIT_VERSION, 4);
+    assert_eq!(bytes[4..6], EDIT_VERSION_V4.to_le_bytes());
     assert_eq!(decode_edit(&bytes).as_ref(), Ok(&edit));
     assert_eq!(edit_blob(&decode_edit(&bytes).unwrap()), bytes, "canonical");
 
@@ -136,11 +141,13 @@ fn frame_variant_updates_round_trip_and_need_v4() {
 fn adding_a_variant_frame_needs_edit_v4_and_item_v3() {
     let edit = Edit::Add(variant_frame());
     let bytes = edit_blob(&edit);
-    assert_eq!(bytes[4..6], EDIT_VERSION.to_le_bytes());
+    assert_eq!(bytes[4..6], EDIT_VERSION_V4.to_le_bytes());
     assert_eq!(decode_edit(&bytes).as_ref(), Ok(&edit));
-    // The body carries the item at layout v3: the same item round-trips through the item codec too.
+    // The viewport variant frame is written at item layout v3 inside edit v4; the item codec itself always
+    // writes the current layout.
     let item_bytes = item_blob(&variant_frame());
     assert_eq!(item_bytes[4..6], ITEM_VERSION.to_le_bytes());
+    assert_eq!(decode_item(&item_bytes).as_ref(), Ok(&variant_frame()));
 }
 
 #[test]

@@ -1,6 +1,7 @@
-//! Frame codec: round trips for every variant, v1 fixtures, rejection of bad frames, decode totality.
+//! Frame codec: round trips for every variant, v1 and v2 fixtures, rejection of bad frames, decode totality.
 //!
-//! Fixtures live in `tests/fixtures/v1/*.bin` (one per variant). They are frozen: a change that alters their
+//! Fixtures live in `tests/fixtures/v1/*.bin` (one per variant of the first release) and
+//! `tests/fixtures/v2/*.bin` (the envelope-v2 additions: `Focus`). They are frozen: a change that alters their
 //! bytes breaks compatibility with shipped clients. Regenerate deliberately with
 //! `PENWISE_BLESS=1 cargo test -p penwise-proto --test wire`.
 #![allow(
@@ -25,12 +26,14 @@ use std::path::PathBuf;
 
 use common::Rng;
 use penwise_proto::{
-    AnyOp, ClientMsg, ErrorCode, FRAME_VERSION, MAX_FRAME_BYTES, ProtoError, ServerMsg,
-    decode_client, decode_op, decode_server, encode_client, encode_op, encode_server,
+    AnyOp, ClientMsg, ErrorCode, FRAME_VERSION, FRAME_VERSION_V1, MAX_FRAME_BYTES, ProtoError,
+    ServerMsg, decode_client, decode_op, decode_server, encode_client, encode_op, encode_server,
 };
 
-fn fixture_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/v1")
+fn fixture_dir(version: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(version)
 }
 
 fn blessing() -> bool {
@@ -38,10 +41,10 @@ fn blessing() -> bool {
 }
 
 /// Asserts `frame` equals the stored fixture `name` (or rewrites it when blessing).
-fn check_fixture(name: &str, frame: &[u8]) -> Vec<u8> {
-    let path = fixture_dir().join(format!("{name}.bin"));
+fn check_fixture(version: &str, name: &str, frame: &[u8]) -> Vec<u8> {
+    let path = fixture_dir(version).join(format!("{name}.bin"));
     if blessing() {
-        fs::create_dir_all(fixture_dir()).unwrap();
+        fs::create_dir_all(fixture_dir(version)).unwrap();
         fs::write(&path, frame).unwrap();
     }
     let stored = fs::read(&path).unwrap_or_else(|e| panic!("missing fixture {name}: {e}"));
@@ -60,6 +63,7 @@ fn client_index(msg: &ClientMsg) -> usize {
         ClientMsg::Resync { .. } => 6,
         ClientMsg::Ping { .. } => 7,
         ClientMsg::Pong { .. } => 8,
+        ClientMsg::Focus { .. } => 9,
     }
 }
 
@@ -79,6 +83,7 @@ fn server_index(msg: &ServerMsg) -> usize {
         ServerMsg::Error { .. } => 11,
         ServerMsg::Ping { .. } => 12,
         ServerMsg::Pong { .. } => 13,
+        ServerMsg::Focus { .. } => 14,
     }
 }
 
@@ -96,14 +101,14 @@ fn every_client_variant_round_trips_and_matches_its_fixture() {
     for (name, msg) in samples::client_msgs() {
         covered.insert(client_index(&msg));
         let frame = encode_client(&msg).unwrap();
-        assert_eq!(frame[0], FRAME_VERSION);
+        assert_eq!(frame[0], FRAME_VERSION_V1);
         assert_eq!(
             usize::from(frame[1]),
             client_index(&msg),
             "{name}: postcard discriminant"
         );
         assert_eq!(decode_client(&frame).unwrap(), msg, "{name}");
-        let stored = check_fixture(name, &frame);
+        let stored = check_fixture("v1", name, &frame);
         assert_eq!(
             decode_client(&stored).unwrap(),
             msg,
@@ -119,14 +124,14 @@ fn every_server_variant_round_trips_and_matches_its_fixture() {
     for (name, msg) in samples::server_msgs() {
         covered.insert(server_index(&msg));
         let frame = encode_server(&msg).unwrap();
-        assert_eq!(frame[0], FRAME_VERSION);
+        assert_eq!(frame[0], FRAME_VERSION_V1);
         assert_eq!(
             usize::from(frame[1]),
             server_index(&msg),
             "{name}: postcard discriminant"
         );
         assert_eq!(decode_server(&frame).unwrap(), msg, "{name}");
-        let stored = check_fixture(name, &frame);
+        let stored = check_fixture("v1", name, &frame);
         assert_eq!(
             decode_server(&stored).unwrap(),
             msg,
@@ -143,12 +148,64 @@ fn every_op_kind_round_trips_and_matches_its_fixture() {
         covered.insert(op_index(&op));
         assert_eq!(usize::from(op.kind_code()), op_index(&op));
         let frame = encode_op(&op).unwrap();
+        assert_eq!(frame[0], FRAME_VERSION_V1, "stored ops keep envelope v1");
         assert_eq!(usize::from(frame[1]), op_index(&op));
         assert_eq!(decode_op(&frame).unwrap(), op, "{name}");
-        let stored = check_fixture(name, &frame);
+        let stored = check_fixture("v1", name, &frame);
         assert_eq!(decode_op(&stored).unwrap(), op, "{name}: fixture decodes");
     }
     assert_eq!(covered.len(), 3);
+}
+
+#[test]
+fn envelope_v2_variants_round_trip_and_match_their_fixtures() {
+    for (name, msg) in samples::client_msgs_v2() {
+        let frame = encode_client(&msg).unwrap();
+        assert_eq!(frame[0], FRAME_VERSION, "{name}: needs envelope v2");
+        assert_eq!(
+            usize::from(frame[1]),
+            client_index(&msg),
+            "{name}: discriminant"
+        );
+        assert_eq!(client_index(&msg), 9, "Focus is the last client variant");
+        let stored = check_fixture("v2", name, &frame);
+        assert_eq!(
+            decode_client(&stored).unwrap(),
+            msg,
+            "{name}: fixture decodes"
+        );
+    }
+    for (name, msg) in samples::server_msgs_v2() {
+        let frame = encode_server(&msg).unwrap();
+        assert_eq!(frame[0], FRAME_VERSION, "{name}: needs envelope v2");
+        assert_eq!(
+            usize::from(frame[1]),
+            server_index(&msg),
+            "{name}: discriminant"
+        );
+        assert_eq!(server_index(&msg), 14, "Focus is the last server variant");
+        let stored = check_fixture("v2", name, &frame);
+        assert_eq!(
+            decode_server(&stored).unwrap(),
+            msg,
+            "{name}: fixture decodes"
+        );
+    }
+    let expected: BTreeSet<String> = samples::client_msgs_v2()
+        .iter()
+        .map(|(n, _)| (*n).to_owned())
+        .chain(
+            samples::server_msgs_v2()
+                .iter()
+                .map(|(n, _)| (*n).to_owned()),
+        )
+        .map(|n| format!("{n}.bin"))
+        .collect();
+    let found: BTreeSet<String> = fs::read_dir(fixture_dir("v2"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    assert_eq!(found, expected);
 }
 
 #[test]
@@ -160,7 +217,7 @@ fn fixture_directory_holds_exactly_the_sampled_frames() {
         .chain(samples::ops().iter().map(|(n, _)| (*n).to_owned()))
         .map(|n| format!("{n}.bin"))
         .collect();
-    let found: BTreeSet<String> = fs::read_dir(fixture_dir())
+    let found: BTreeSet<String> = fs::read_dir(fixture_dir("v1"))
         .unwrap()
         .map(|e| e.unwrap().file_name().into_string().unwrap())
         .collect();
@@ -172,7 +229,7 @@ fn bad_frames_are_rejected_with_typed_errors() {
     assert_eq!(decode_client(&[]), Err(ProtoError::Empty));
     assert_eq!(decode_server(&[]), Err(ProtoError::Empty));
     let ping = encode_client(&ClientMsg::Ping { nonce: 5 }).unwrap();
-    for version in [0_u8, 2, 255] {
+    for version in [0_u8, 3, 255] {
         let mut frame = ping.clone();
         frame[0] = version;
         assert_eq!(

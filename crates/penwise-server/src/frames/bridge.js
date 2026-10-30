@@ -478,7 +478,12 @@
       entries.push([key, element]);
       var rect = element ? rectOf(element) : null;
       all[key] = rect;
-      var text = JSON.stringify(rect);
+      // Change detection works on the DOCUMENT rect (viewport rect + scroll): core stores document rects, so a
+      // fixed element (constant viewport rect) or a scroll-anchored one must be resent after a scroll. The
+      // message still carries the viewport rect.
+      var text = JSON.stringify(
+        rect ? [rect[0] + pos.x, rect[1] + pos.y, rect[2], rect[3]] : null
+      );
       if (lastRects[key] !== text) {
         lastRects[key] = text;
         rects[key] = rect;

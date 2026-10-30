@@ -259,3 +259,49 @@ fn the_bound_commit_queues_one_op_pair_and_one_undo_step() {
     assert_eq!(undone, 2, "the stroke and its mark undo together");
     assert!(viewer.marks(&page).unwrap().contains("[]"));
 }
+
+#[test]
+fn full_length_frames_report_extent_box_and_a_live_window_that_follows_the_scroll() {
+    let (mut viewer, page) = ready();
+    let full = viewer
+        .add_frame(
+            &page,
+            r#"{"project":"site","route":"/","preset":"desktop","x":500,"y":100}"#,
+            NOW_F,
+        )
+        .unwrap();
+    let viewport = viewer
+        .add_frame(
+            &page,
+            r#"{"project":"site","route":"/","preset":"desktop","extent":"viewport","x":3000,"y":100}"#,
+            NOW_F + 1.0,
+        )
+        .unwrap();
+    let listed: serde_json::Value = serde_json::from_str(&viewer.frames(&page).unwrap()).unwrap();
+    assert_eq!(listed[0]["extent"], "full");
+    assert_eq!(listed[0]["docH"], 0);
+    assert_eq!(listed[0]["boxH"], 900.0);
+    assert_eq!(listed[1]["extent"], "viewport");
+
+    let layout = r#"{"preset":"desktop","scroll":[0,1200],"viewport":[1440,900]}"#;
+    viewer.set_frame_layout(&full, layout).unwrap();
+    viewer.set_frame_layout(&viewport, layout).unwrap();
+    assert_eq!(
+        viewer.frame_live_window(&full).unwrap(),
+        vec![500.0, 1300.0, 1440.0, 900.0]
+    );
+    assert_eq!(
+        viewer.frame_live_window(&viewport).unwrap(),
+        vec![3000.0, 100.0, 1440.0, 900.0]
+    );
+    assert_eq!(
+        viewer.frame_doc_point(&full, 520.0, 3100.0).unwrap(),
+        vec![20.0, 3000.0]
+    );
+    assert_eq!(
+        viewer.frame_board_point(&full, 20.0, 3000.0).unwrap(),
+        vec![520.0, 3100.0]
+    );
+    let unknown = penwise_proto::ItemRef::from_parts(1, 1).to_string();
+    assert!(viewer.frame_live_window(&unknown).unwrap().is_empty());
+}

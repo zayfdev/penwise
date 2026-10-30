@@ -7,14 +7,19 @@
 //! text and pictures), so the item transform's translation is the frame's page position and the page box is
 //! `css_w × css_h` page units at scale 1. Only `route`, `preset` and the CSS size are mutable after `Add`
 //! ([`crate::edit::Field::FrameRoute`], [`crate::edit::Field::FramePreset`]), plus the ghost/variant fields
-//! ([`crate::edit::Field::FramePatch`], `FrameLabel`, `FrameGroup`, `FrameChosen`); the project is fixed.
+//! ([`crate::edit::Field::FramePatch`], `FrameLabel`, `FrameGroup`, `FrameChosen`) and the full-length fields
+//! (`FrameExtent`, `FrameDocHeight`); the project is fixed. For a [`FrameExtent::Full`] frame the box is
+//! taller than the page box: see [`FrameItem::box_size`].
 
 use crate::edit::EditError;
 
 mod edits;
 mod item;
 
-pub use edits::{VariantSpec, group_frames, set_chosen, set_patch, variant_frames};
+pub use edits::{
+    VariantSpec, group_frames, set_chosen, set_doc_height, set_extent, set_patch, variant_frames,
+};
+pub(crate) use item::full_box_height;
 pub use item::{FrameItem, FrameSpec, add_frame};
 
 /// Longest project id, in bytes.
@@ -99,6 +104,58 @@ impl FramePreset {
             Self::Tablet => Some((834, 1194)),
             Self::Desktop => Some((1440, 900)),
             Self::Custom => None,
+        }
+    }
+}
+
+/// How tall a frame's box is on the board. Codes are frozen (stored in the item and edit codecs; append only).
+///
+/// The live view is always exactly `css_w × css_h` (the preset); the extent only decides whether the box
+/// around it grows to the whole document.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum FrameExtent {
+    /// The box is the preset viewport (design harness v1); the live view scrolls inside it.
+    Viewport,
+    /// The box is the whole document, `max(css_h, doc_h)` tall; the live view is a sliding window over it.
+    Full,
+}
+
+impl FrameExtent {
+    /// Frozen byte tag: `Viewport = 0, Full = 1`.
+    #[must_use]
+    pub fn code(self) -> u8 {
+        match self {
+            Self::Viewport => 0,
+            Self::Full => 1,
+        }
+    }
+
+    /// Inverse of [`FrameExtent::code`]; `None` for unknown bytes.
+    #[must_use]
+    pub fn from_code(code: u8) -> Option<Self> {
+        match code {
+            0 => Some(Self::Viewport),
+            1 => Some(Self::Full),
+            _ => None,
+        }
+    }
+
+    /// The lowercase name the clients and JSON use (`"viewport"`, `"full"`).
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Viewport => "viewport",
+            Self::Full => "full",
+        }
+    }
+
+    /// Inverse of [`FrameExtent::as_str`]; `None` for any other text.
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "viewport" => Some(Self::Viewport),
+            "full" => Some(Self::Full),
+            _ => None,
         }
     }
 }

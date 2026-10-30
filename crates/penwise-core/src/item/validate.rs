@@ -132,7 +132,7 @@ fn local_box(kind: &ItemKind) -> Bounds {
             b.include_point(i.w, i.h);
         }
         ItemKind::Frame(f) => {
-            let [w, h] = f.page_size();
+            let [w, h] = f.box_size(None);
             b.include_point(0.0, 0.0);
             b.include_point(w, h);
         }

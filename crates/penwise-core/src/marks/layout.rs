@@ -5,7 +5,9 @@ use std::collections::BTreeMap;
 use super::MAX_STATE_LEN;
 use crate::item::{FramePreset, ItemId};
 
-/// An axis-aligned rect in viewport CSS px (a `null` in the bridge's `rects` means "the element is gone").
+/// An axis-aligned rect in CSS px (a `null` in the bridge's `rects` means "the element is gone"). In a
+/// [`FrameLayoutUpdate`] it is relative to the viewport (what the bridge measures); once merged into a
+/// [`FrameLayout`] it is in **document** coordinates (`rect + scroll`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FrameRect {
     pub x: f32,
@@ -63,7 +65,8 @@ impl FrameRect {
 }
 
 /// One frame's live layout: preset, scroll, page/viewport size, current state recipe and the rects of the
-/// element keys its marks need (absent = not watched yet, `None` = the element is gone).
+/// element keys its marks need (absent = not watched yet, `None` = the element is gone). `rects` are in
+/// **document** coordinates, so they do not move when the page scrolls.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FrameLayout {
     pub preset: FramePreset,
@@ -88,8 +91,10 @@ impl FrameLayout {
         }
     }
 
-    /// Merges `update`: every field it carries replaces the stored one; `rects` entries replace per key.
-    /// Returns true when anything visible changed. Non-finite values are ignored (the bridge is untrusted).
+    /// Merges `update`: every field it carries replaces the stored one; `rects` entries replace per key. The
+    /// update's rects are viewport-relative; they are stored in document coordinates, `rect + scroll` with the
+    /// scroll in effect after this update. Returns true when anything visible changed. Non-finite values are
+    /// ignored (the bridge is untrusted).
     pub fn merge(&mut self, update: &FrameLayoutUpdate) -> bool {
         let mut changed = false;
         if let Some(preset) = update.preset
@@ -109,7 +114,9 @@ impl FrameLayout {
             changed = true;
         }
         for (key, rect) in &update.rects {
-            let rect = rect.filter(|r| r.is_valid());
+            let rect = rect
+                .filter(|r| r.is_valid())
+                .map(|r| FrameRect::new(r.x + self.scroll[0], r.y + self.scroll[1], r.w, r.h));
             if key.len() <= super::MAX_KEY_LEN && self.rects.get(key) != Some(&rect) {
                 self.rects.insert(key.clone(), rect);
                 changed = true;
@@ -126,6 +133,7 @@ impl FrameLayout {
 }
 
 /// A partial layout update (one `pw:layout` message): `None` fields are left alone, `rects` merge per key.
+/// `rects` are viewport-relative here (see [`FrameRect`]).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct FrameLayoutUpdate {
     pub preset: Option<FramePreset>,

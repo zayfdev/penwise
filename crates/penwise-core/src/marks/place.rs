@@ -1,7 +1,7 @@
 //! Effective placement and visibility of one bound stroke (K1 "Coordinates", "Visibility").
 
-use super::{Binding, BindingMode, FrameLayout, FrameRect, MarkStatus};
-use crate::item::FramePreset;
+use super::{Binding, BindingMode, FrameLayout, FrameLayouts, FrameRect, MarkStatus};
+use crate::item::{FrameExtent, FramePreset, ItemId, ItemKind, Scene};
 
 /// How a stroke renders and answers input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,8 +19,12 @@ pub enum Visibility {
 pub struct FrameState {
     /// Page position of the frame's top-left corner (the frame item's translation).
     pub pos: [f32; 2],
-    /// CSS size of the frame page (`css_w × css_h`).
+    /// CSS size of the frame's viewport (`css_w × css_h`): the live view's size.
     pub size: [f32; 2],
+    /// Whether the frame's box is the viewport or the whole document.
+    pub extent: FrameExtent,
+    /// The synced document height hint (`0` = unknown); only [`FrameExtent::Full`] boxes use it.
+    pub doc_h: f32,
     /// The frame's current preset (from the frame item: the synced source of truth).
     pub preset: FramePreset,
     /// The bridge layout for this frame; `None` = no data yet (anchor fallback).
@@ -28,10 +32,62 @@ pub struct FrameState {
 }
 
 impl FrameState {
-    /// The frame's page box (the clip rect for its ink).
+    /// The placement state of frame `frame` in `scene` under the bridge `layouts`; `None` when `frame` is not a
+    /// live frame item.
+    #[must_use]
+    pub fn of(scene: &Scene, layouts: &FrameLayouts, frame: ItemId) -> Option<Self> {
+        let item = scene.get(frame)?;
+        let ItemKind::Frame(frame_item) = &item.kind else {
+            return None;
+        };
+        Some(Self {
+            pos: [item.transform.e, item.transform.f],
+            size: frame_item.page_size(),
+            extent: frame_item.extent,
+            doc_h: crate::item::side_px(frame_item.doc_h),
+            preset: frame_item.preset,
+            layout: layouts.get(frame).cloned(),
+        })
+    }
+
+    /// The frame's box size, as `FrameItem::box_size`: with a layout that reported a document height, that
+    /// live height (so ink below the synced hint is not clipped); otherwise the synced `doc_h` hint.
+    #[must_use]
+    pub fn box_size(&self) -> [f32; 2] {
+        let live = self
+            .layout
+            .as_ref()
+            .map(|layout| layout.doc[1])
+            .filter(|h| *h > 0.0);
+        match self.extent {
+            FrameExtent::Viewport => self.size,
+            FrameExtent::Full => [
+                self.size[0],
+                crate::item::full_box_height(self.size[1], live.unwrap_or(self.doc_h)),
+            ],
+        }
+    }
+
+    /// The frame's page box (the clip rect for its ink), from [`FrameState::box_size`].
     #[must_use]
     pub fn clip(&self) -> FrameRect {
-        FrameRect::new(self.pos[0], self.pos[1], self.size[0], self.size[1])
+        let [w, h] = self.box_size();
+        FrameRect::new(self.pos[0], self.pos[1], w, h)
+    }
+
+    /// The document point shown at the box's top-left, given the page `scroll`: `[0, 0]` for a full-length
+    /// frame (its box is the document), `scroll` for a viewport frame (its box is the viewport).
+    #[must_use]
+    pub fn view_origin(&self, scroll: [f32; 2]) -> [f32; 2] {
+        match self.extent {
+            FrameExtent::Viewport => scroll,
+            FrameExtent::Full => [0.0; 2],
+        }
+    }
+
+    /// [`FrameState::view_origin`] under the frame's own layout (`[0, 0]` while it has none).
+    fn current_view_origin(&self) -> [f32; 2] {
+        self.view_origin(self.layout.as_ref().map_or([0.0; 2], |l| l.scroll))
     }
 }
 
@@ -60,6 +116,9 @@ pub struct PlaceQuery<'a> {
 
 /// The binding origin in page coords, or `None` when the stroke is hidden by its binding (gone element, not yet
 /// watched, no layout → anchor fallback is handled by [`place`]).
+///
+/// One rule for both extents: a document point `p` of the frame lands at `pos + p − view_origin`. An area
+/// stroke's origin is `pos − view_origin`; a bound stroke's adds the element's document rect corner.
 #[must_use]
 pub fn binding_origin(
     frame: &FrameState,
@@ -67,14 +126,15 @@ pub fn binding_origin(
     key: Option<&str>,
 ) -> Option<[f32; 2]> {
     let layout = frame.layout.as_ref()?;
+    let view = frame.current_view_origin();
     Some(match mode {
-        BindingMode::Area => [
-            frame.pos[0] - layout.scroll[0],
-            frame.pos[1] - layout.scroll[1],
-        ],
+        BindingMode::Area => [frame.pos[0] - view[0], frame.pos[1] - view[1]],
         BindingMode::Bound => {
             let rect = layout.rect(key?)??;
-            [frame.pos[0] + rect.x, frame.pos[1] + rect.y]
+            [
+                frame.pos[0] + rect.x - view[0],
+                frame.pos[1] + rect.y - view[1],
+            ]
         }
     })
 }

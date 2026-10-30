@@ -11,8 +11,8 @@ use crate::codec::item::{decode_item, decode_item_body, encode_item, encode_item
 use crate::codec::varint::Reader;
 use crate::edit::{self, Edit, EditError, Field, ItemPatch, LassoParams};
 use crate::item::{
-    Affine, FrameItem, FramePreset, Item, ItemId, ItemKind, Layer, LayerSet, PageKind, Scene,
-    StrokeItem,
+    Affine, FrameExtent, FrameItem, FramePreset, Item, ItemId, ItemKind, Layer, LayerSet, PageKind,
+    Scene, StrokeItem,
 };
 use crate::sample::Sample;
 
@@ -38,7 +38,11 @@ fn frame_item(item_id: ItemId, z: i64, at: [f32; 2], preset: FramePreset) -> Ite
         layer: Layer::Ink,
         z,
         transform: Affine::translate(at[0], at[1]),
-        kind: ItemKind::Frame(FrameItem::new("site".into(), "/".into(), preset, w, h)),
+        // The v1 placement tests below are written for viewport frames; `tests/full.rs` covers full-length ones.
+        kind: ItemKind::Frame(FrameItem {
+            extent: FrameExtent::Viewport,
+            ..FrameItem::new("site".into(), "/".into(), preset, w, h)
+        }),
     }
 }
 
@@ -76,9 +80,10 @@ fn layout() -> FrameLayout {
     layout.scroll = [0.0, 120.0];
     layout.doc = [390.0, 2000.0];
     layout.viewport = [390.0, 844.0];
+    // Stored rects are document coordinates: the element is 300 below the viewport top at scroll 120.
     layout
         .rects
-        .insert("k".into(), Some(FrameRect::new(100.0, 300.0, 40.0, 20.0)));
+        .insert("k".into(), Some(FrameRect::new(100.0, 420.0, 40.0, 20.0)));
     layout
 }
 
@@ -86,6 +91,8 @@ fn frame_state(layout: Option<FrameLayout>) -> FrameState {
     FrameState {
         pos: [500.0, 0.0],
         size: [390.0, 844.0],
+        extent: FrameExtent::Viewport,
+        doc_h: 0.0,
         preset: FramePreset::Phone,
         layout,
     }
@@ -128,7 +135,7 @@ fn bound_and_area_placements_follow_the_layout() {
     moved.scroll = [0.0, 300.0];
     moved
         .rects
-        .insert("k".into(), Some(FrameRect::new(150.0, 40.0, 40.0, 20.0)));
+        .insert("k".into(), Some(FrameRect::new(150.0, 340.0, 40.0, 20.0)));
     let frame = frame_state(Some(moved));
     assert_eq!(
         place(&query(&bound, Some(&frame), None, true)).offset,
@@ -846,3 +853,5 @@ fn field_codes_pin_the_new_mark_registers() {
     assert!(Field::MarkStatus.applies_to(crate::item::ItemKindTag::Mark));
     assert!(!Field::MarkStatus.applies_to(crate::item::ItemKindTag::Stroke));
 }
+
+mod full;

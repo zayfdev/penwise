@@ -66,7 +66,7 @@ impl<S: SyncStore> Session<S> {
 
     /// Forwards a live frame unless it is ours, for another page, or the socket queue is full.
     pub(super) fn on_live_event(&self, event: &LiveEvent) {
-        if event.origin == self.id {
+        if event.origin == self.id || self.protocol < event.min_protocol {
             return;
         }
         if event.page.is_some() && event.page != self.watch {

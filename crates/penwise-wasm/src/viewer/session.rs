@@ -25,8 +25,31 @@ impl Viewer {
         let head = self.replica.head_seq();
         let author = self.author.as_mut().ok_or(WasmError::NotIdentified)?;
         author.begin_session(whole_ms(now_ms));
+        self.server_protocol = 0;
         let device = author.device.to_string();
         Ok(crate::encode::hello_frame(&device, token, head)?)
+    }
+
+    /// True when this connection's `Welcome` reported protocol 2 or newer (`Focus` may be sent).
+    #[must_use]
+    pub fn supports_focus(&self) -> bool {
+        self.server_protocol >= penwise_proto::FOCUS_PROTOCOL_VERSION
+    }
+
+    /// The `Focus` frame (see `encode_focus`), or `None` when the server did not report protocol 2 (an older
+    /// server would drop it).
+    ///
+    /// # Errors
+    /// `JsError` for a malformed page or item id.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "wasm_bindgen passes optional strings by value"
+    )]
+    pub fn focus(&self, page: &str, item: Option<String>) -> Result<Option<Vec<u8>>, JsError> {
+        if !self.supports_focus() {
+            return Ok(None);
+        }
+        Ok(Some(crate::encode::focus_frame(page, item.as_deref())?))
     }
 
     /// The socket closed: pushes pause, previews of other devices are dropped (the outbox is kept).

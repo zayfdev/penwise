@@ -252,25 +252,11 @@ impl<'a> MarkView<'a> {
 
     /// The frame's state from its item (position, size, preset) and the bridge layout.
     fn frame_states(&self) -> BTreeMap<ItemId, FrameState> {
-        let mut out = BTreeMap::new();
-        for id in self.scene.live_ids() {
-            let Some(item) = self.scene.get(id) else {
-                continue;
-            };
-            let ItemKind::Frame(frame) = &item.kind else {
-                continue;
-            };
-            out.insert(
-                id,
-                FrameState {
-                    pos: [item.transform.e, item.transform.f],
-                    size: frame.page_size(),
-                    preset: frame.preset,
-                    layout: self.layouts.get(id).cloned(),
-                },
-            );
-        }
-        out
+        self.scene
+            .live_ids()
+            .into_iter()
+            .filter_map(|id| Some((id, FrameState::of(self.scene, self.layouts, id)?)))
+            .collect()
     }
 
     /// Stroke id → (its mark's status, its mark's state).

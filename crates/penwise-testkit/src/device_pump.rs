@@ -136,6 +136,7 @@ impl TestDevice {
             ServerMsg::Reject { reason } => self.events.rejects.push(reason),
             ServerMsg::Welcome { .. }
             | ServerMsg::SwitchPage { .. }
+            | ServerMsg::Focus { .. }
             | ServerMsg::Ping { .. }
             | ServerMsg::Pong { .. } => {}
         }

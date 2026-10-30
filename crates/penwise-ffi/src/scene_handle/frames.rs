@@ -2,15 +2,17 @@
 //! variant pick.
 //!
 //! The JSON is the contract the tablet and the PC window share (see `docs/design-harness-spec.md` C1, P2):
-//! `[{"id","project","route","preset","cssW","cssH","rect":[x,y,w,h],"patch","label","group","chosen"}]`,
-//! ids as 32 lowercase hex, `rect` in page units, `patch` the P1 patch as an object (or `null`). Every tool
+//! `[{"id","project","route","preset","cssW","cssH","extent","docH","boxH","rect":[x,y,w,h],"patch","label",
+//! "group","chosen"}]`, ids as 32 lowercase hex, `extent` `"viewport"` or `"full"`, `docH` the server's measured
+//! document height (`0` = unknown), `boxH` the box height on the board (`FrameItem::box_size(None)`), `rect` in
+//! page units, `patch` the P1 patch as an object (or `null`). Every tool
 //! applies its edits to the scene, records them as one undo step and returns them for
 //! [`SceneHandle::commit_into`], like the pen tools.
 
 use penwise_core::edit::{Edit, ItemPatch};
 use penwise_core::item::{
-    FrameItem, FramePreset, FrameSize, FrameSpec, ItemId, ItemKind, Layer, LayerSet, add_frame,
-    set_chosen,
+    FrameExtent, FrameItem, FramePreset, FrameSize, FrameSpec, ItemId, ItemKind, Layer, LayerSet,
+    add_frame, set_chosen,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -18,7 +20,7 @@ use serde_json::json;
 use super::SceneHandle;
 use crate::error::SyncError;
 
-/// Body of `sceneAddFrame` (`cssW`/`cssH` only matter for `custom`).
+/// Body of `sceneAddFrame` (`cssW`/`cssH` only matter for `custom`; `extent` defaults to `"full"`).
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AddFrameRequest {
@@ -27,6 +29,8 @@ struct AddFrameRequest {
     preset: String,
     css_w: Option<u32>,
     css_h: Option<u32>,
+    #[serde(default)]
+    extent: Option<String>,
     x: f32,
     y: f32,
 }
@@ -52,6 +56,9 @@ impl SceneHandle {
                     "preset": frame.preset.as_str(),
                     "cssW": frame.css_w,
                     "cssH": frame.css_h,
+                    "extent": frame.extent.as_str(),
+                    "docH": frame.doc_h,
+                    "boxH": frame.box_size(None)[1],
                     "rect": [rect.min_x, rect.min_y, rect.width(), rect.height()],
                     "patch": patch_json(frame.patch.as_deref()),
                     "label": frame.label,
@@ -73,6 +80,10 @@ impl SceneHandle {
             serde_json::from_str(json).map_err(|_| SyncError::BadArgument("frame json"))?;
         let preset =
             FramePreset::parse(&request.preset).ok_or(SyncError::BadArgument("frame preset"))?;
+        let extent = match request.extent.as_deref() {
+            None => FrameExtent::Full,
+            Some(text) => FrameExtent::parse(text).ok_or(SyncError::BadArgument("frame extent"))?,
+        };
         let spec = FrameSpec::new(
             request.project,
             request.route,
@@ -81,7 +92,8 @@ impl SceneHandle {
             request.css_h,
             request.x,
             request.y,
-        )?;
+        )?
+        .with_extent(extent);
         let id = self.new_item_id(now_ms);
         let z = self.next_z()?;
         self.local(vec![add_frame(&spec, id, Layer::Ink, z)])

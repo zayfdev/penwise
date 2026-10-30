@@ -23,6 +23,12 @@ export interface CoreApi {
   set_show_done(on: boolean): boolean;
   /** M4 (contract P4): the owner's pick among a variant group; one batch, one undo step. */
   set_frame_chosen(id: string, chosen: boolean, now_ms: number): void;
+  /** V2 (contract §2.2): `[x, y, w, h]` of the frame's live window in board coords; empty for an unknown frame. */
+  frame_live_window(frame: string): Float32Array;
+  /** V2: the document point `[x, y]` under a board point; empty for an unknown frame. */
+  frame_doc_point(frame: string, x: number, y: number): Float32Array;
+  /** V2: the board point `[x, y]` of a document point (inverse of `frame_doc_point`). */
+  frame_board_point(frame: string, x: number, y: number): Float32Array;
 }
 
 /** The viewer seen through the M2 contract. */

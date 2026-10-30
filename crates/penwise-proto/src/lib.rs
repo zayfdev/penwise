@@ -32,8 +32,9 @@ pub mod snapshot;
 
 pub use catalog::Catalog;
 pub use envelope::{
-    FRAME_VERSION, MAX_FRAME_BYTES, MIN_PROTOCOL_VERSION, PROTOCOL_VERSION, decode_client,
-    decode_op, decode_server, encode_client, encode_op, encode_server,
+    FOCUS_PROTOCOL_VERSION, FRAME_VERSION, FRAME_VERSION_V1, MAX_FRAME_BYTES, MIN_PROTOCOL_VERSION,
+    PROTOCOL_VERSION, decode_client, decode_op, decode_server, encode_client, encode_op,
+    encode_server,
 };
 pub use error::{ProtoError, ReplicaError};
 pub use hlc::{ClockOffset, Hlc, HlcClock, HlcError, MAX_SKEW_MS};

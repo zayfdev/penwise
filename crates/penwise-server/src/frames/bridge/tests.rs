@@ -315,21 +315,19 @@ async fn layout_reports_scroll_resize_moves_and_removals() {
     assert!(moved_rect[0] > first_rect[0] + 40.0, "moved right");
     assert!(moved_rect[1] > first_rect[1] + 30.0, "moved down");
 
-    // Scroll: the layout carries the position and the viewport-relative rect moves with it.
+    // Scroll: the layout carries the position; the element's document rect is unchanged, so its rect is not
+    // resent (core keeps `rect + scroll` from when it was reported, which is still right).
     inspect
         .eval(&page, "window.scrollTo(0, 300); 1")
         .await
         .expect("scroll");
     let scrolled = wait_layout(&inspect, &page, |message| {
-        message["scroll"][1].as_f64().is_some_and(|y| y > 299.0) && rect_of(message, &key).is_some()
+        message["scroll"][1].as_f64().is_some_and(|y| y > 299.0)
     })
     .await;
-    let scrolled_rect = rect_of(&scrolled, &key).expect("scrolled rect");
     assert!(
-        (moved_rect[1] - scrolled_rect[1] - 300.0).abs() < 1.0,
-        "rect follows the scroll: {} -> {}",
-        moved_rect[1],
-        scrolled_rect[1]
+        rect_of(&scrolled, &key).is_none(),
+        "an unmoved element is not resent after a scroll: {scrolled}"
     );
 
     // Resize: the new viewport arrives in full.
@@ -353,6 +351,52 @@ async fn layout_reports_scroll_resize_moves_and_removals() {
         message["rects"].get(&key).is_some_and(Value::is_null)
     })
     .await;
+
+    page.close().await;
+    inspect.shutdown().await;
+    server.shutdown().await;
+}
+
+/// A `position: fixed` element keeps its viewport rect while the page scrolls, but core stores document rects
+/// (`rect + scroll`), so the bridge must resend the rect after a scroll (it compares document rects).
+#[tokio::test]
+async fn a_fixed_element_is_resent_after_a_scroll() {
+    if !chromium_installed() {
+        tracing::warn!("chromium is not installed; bridge fixed-element test skipped");
+        return;
+    }
+    let server = project().await;
+    let (inspect, page) = open(&server).await;
+    inspect
+        .eval(
+            &page,
+            "var bar = document.createElement('div'); bar.id = 'pw-fixed'; \
+             bar.style.cssText = 'position:fixed;top:12px;left:8px;width:120px;height:24px;z-index:9'; \
+             bar.textContent = 'fixed'; document.body.appendChild(bar); window.scrollTo(0, 0); 1",
+        )
+        .await
+        .expect("fixed bar");
+    let key = hit_key(&inspect, &page, "#pw-fixed").await;
+    watch(&inspect, &page, std::slice::from_ref(&key)).await;
+    let first = wait_layout(&inspect, &page, |message| {
+        message["scroll"][1].as_f64().is_some_and(|y| y < 1.0) && rect_of(message, &key).is_some()
+    })
+    .await;
+    let first_rect = rect_of(&first, &key).expect("first rect");
+
+    let before = layout_count(&inspect, &page).await;
+    inspect
+        .eval(&page, "window.scrollTo(0, 250); 1")
+        .await
+        .expect("scroll");
+    let scrolled = wait_layout_since(&inspect, &page, before, |message| {
+        message["scroll"][1].as_f64().is_some_and(|y| y > 249.0)
+    })
+    .await;
+    let rect = rect_of(&scrolled, &key).expect(
+        "a fixed element's rect is resent after a scroll although its viewport rect is unchanged",
+    );
+    assert_eq!(rect, first_rect, "the viewport rect itself did not change");
 
     page.close().await;
     inspect.shutdown().await;

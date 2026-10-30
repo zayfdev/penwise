@@ -4,7 +4,9 @@
 
 use super::EditError;
 use crate::brush::{BrushParams, Color};
-use crate::item::{Affine, FrameSize, Item, ItemId, ItemKindTag, Layer, Paint, Polygon, ShapeKind};
+use crate::item::{
+    Affine, FrameExtent, FrameSize, Item, ItemId, ItemKindTag, Layer, Paint, Polygon, ShapeKind,
+};
 
 mod fields;
 
@@ -54,11 +56,15 @@ pub enum Field {
     FrameGroup,
     /// Frame `chosen` (the owner's pick; choosing one un-chooses its group's others). Code 20.
     FrameChosen,
+    /// Frame `extent` (viewport or full length). Code 21.
+    FrameExtent,
+    /// Frame `doc_h` (the document height the server measured). Code 22.
+    FrameDocHeight,
 }
 
 impl Field {
     /// Every field in code order.
-    pub const ALL: [Field; 21] = [
+    pub const ALL: [Field; 23] = [
         Field::Deleted,
         Field::Layer,
         Field::Z,
@@ -80,6 +86,8 @@ impl Field {
         Field::FrameLabel,
         Field::FrameGroup,
         Field::FrameChosen,
+        Field::FrameExtent,
+        Field::FrameDocHeight,
     ];
 
     /// Frozen code (see variant docs).
@@ -112,7 +120,9 @@ impl Field {
             | Self::FramePatch
             | Self::FrameLabel
             | Self::FrameGroup
-            | Self::FrameChosen => tag == ItemKindTag::Frame,
+            | Self::FrameChosen
+            | Self::FrameExtent
+            | Self::FrameDocHeight => tag == ItemKindTag::Frame,
             Self::MarkStatus | Self::MarkStrokes => tag == ItemKindTag::Mark,
         }
     }
@@ -150,6 +160,10 @@ pub struct ItemPatch {
     pub frame_group: Option<Option<String>>,
     /// The frame's chosen flag.
     pub frame_chosen: Option<bool>,
+    /// The frame's box extent.
+    pub frame_extent: Option<FrameExtent>,
+    /// The frame's measured document height in CSS px (`0` = unknown).
+    pub frame_doc_h: Option<u32>,
 }
 
 impl ItemPatch {
@@ -220,6 +234,8 @@ impl ItemPatch {
             Field::FrameLabel => self.frame_label.is_some(),
             Field::FrameGroup => self.frame_group.is_some(),
             Field::FrameChosen => self.frame_chosen.is_some(),
+            Field::FrameExtent => self.frame_extent.is_some(),
+            Field::FrameDocHeight => self.frame_doc_h.is_some(),
         }
     }
 
@@ -247,6 +263,8 @@ impl ItemPatch {
             Field::FrameLabel => self.frame_label.clone_from(&from.frame_label),
             Field::FrameGroup => self.frame_group.clone_from(&from.frame_group),
             Field::FrameChosen => self.frame_chosen = from.frame_chosen,
+            Field::FrameExtent => self.frame_extent = from.frame_extent,
+            Field::FrameDocHeight => self.frame_doc_h = from.frame_doc_h,
         }
     }
 

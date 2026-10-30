@@ -17,6 +17,7 @@ use crate::received::{NotebookEntry, PageEntry, Received};
 mod author;
 mod dispatch;
 mod edits;
+mod frame_space;
 mod frames;
 mod marks;
 mod pen;
@@ -39,6 +40,8 @@ pub struct Viewer {
     layouts: FrameLayouts,
     /// The local show-done view flag.
     show_done: bool,
+    /// `Welcome.protocol_version` of the current connection (`0` before the `Welcome`).
+    server_protocol: u16,
 }
 
 #[wasm_bindgen]

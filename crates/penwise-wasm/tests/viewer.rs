@@ -155,6 +155,33 @@ fn small_messages_fill_the_summary() {
     );
     assert_eq!(switch.page, Some(page_id(4).to_string()));
     assert_eq!(switch.device, Some(device(2).to_string()));
+    let item = ItemRef::from_parts(1_700_000_000_000, 5);
+    let focus = send(
+        &mut viewer,
+        &ServerMsg::Focus {
+            page: page_id(4),
+            item: Some(item),
+            by: device(2),
+        },
+    );
+    assert_eq!(focus.kind, MessageKind::Focus);
+    assert_eq!(
+        (focus.page, focus.item, focus.device),
+        (
+            Some(page_id(4).to_string()),
+            Some(item.to_string()),
+            Some(device(2).to_string())
+        )
+    );
+    let fit_page = send(
+        &mut viewer,
+        &ServerMsg::Focus {
+            page: page_id(4),
+            item: None,
+            by: device(2),
+        },
+    );
+    assert_eq!(fit_page.item, None);
     let ack = send(
         &mut viewer,
         &ServerMsg::Ack {
@@ -461,4 +488,37 @@ fn undecodable_frames_are_errors_and_change_nothing() {
         Err(WasmError::Proto(_))
     ));
     assert_eq!(viewer.head_seq(), 3);
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+fn focus_is_sent_only_after_a_welcome_that_reports_protocol_2() {
+    let welcome = |protocol_version: u16| ServerMsg::Welcome {
+        protocol_version,
+        server: ServerId::from_parts(1, 9),
+        device: device(1),
+        head_seq: 0,
+        log_floor: 0,
+        server_now_ms: 1_700_000_000_000,
+        current_page: None,
+    };
+    let page = page_id(2).to_string();
+    let mut viewer = Viewer::new();
+    assert!(!viewer.supports_focus());
+    assert_eq!(viewer.focus(&page, None).unwrap(), None);
+
+    let old = send(&mut viewer, &welcome(1));
+    assert!(!old.focus_supported && !viewer.supports_focus());
+    assert_eq!(viewer.focus(&page, None).unwrap(), None);
+
+    let new = send(&mut viewer, &welcome(2));
+    assert!(new.focus_supported && viewer.supports_focus());
+    let frame = viewer.focus(&page, None).unwrap().expect("focus frame");
+    assert_eq!(
+        penwise_proto::decode_client(&frame).unwrap(),
+        penwise_proto::ClientMsg::Focus {
+            page: page_id(2),
+            item: None
+        }
+    );
 }

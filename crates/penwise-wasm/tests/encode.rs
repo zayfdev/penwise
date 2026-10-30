@@ -8,9 +8,11 @@
 mod common;
 
 use common::page_id;
-use penwise_proto::{AuthToken, ClientKind, ClientMsg, DeviceId, PROTOCOL_VERSION, decode_client};
+use penwise_proto::{
+    AuthToken, ClientKind, ClientMsg, DeviceId, ItemRef, PROTOCOL_VERSION, decode_client,
+};
 use penwise_wasm::encode::{
-    device_id, encode_ping, encode_pong, encode_resync, hello_frame, protocol_version,
+    device_id, encode_ping, encode_pong, encode_resync, focus_frame, hello_frame, protocol_version,
     switch_page_frame, watch_frame,
 };
 use penwise_wasm::error::WasmError;
@@ -92,4 +94,28 @@ fn small_frames_round_trip() {
         decode(encode_pong(9).unwrap()),
         ClientMsg::Pong { nonce: 9 }
     );
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+fn focus_frames_name_a_page_and_an_optional_frame() {
+    let decode = |frame: Vec<u8>| decode_client(&frame).unwrap();
+    let page = page_id(2);
+    let item = ItemRef::from_parts(1_700_000_000_000, 5);
+    assert_eq!(
+        decode(focus_frame(&page.to_string(), Some(&item.to_string())).unwrap()),
+        ClientMsg::Focus {
+            page,
+            item: Some(item)
+        }
+    );
+    assert_eq!(
+        decode(focus_frame(&page.to_string(), None).unwrap()),
+        ClientMsg::Focus { page, item: None }
+    );
+    assert!(matches!(focus_frame("x", None), Err(WasmError::Id(_))));
+    assert!(matches!(
+        focus_frame(&page.to_string(), Some("x")),
+        Err(WasmError::Id(_))
+    ));
 }

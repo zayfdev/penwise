@@ -2,7 +2,10 @@
 //! agent proposes. Every helper returns the `Edit`s to commit; the caller applies them as one batch, so one
 //! commit is one undo step (contracts P2, P4).
 
-use super::{FrameItem, MAX_GROUP_LEN, MAX_PATCH_LEN, MAX_VARIANTS, VARIANT_GAP_PX};
+use super::{
+    FrameExtent, FrameItem, MAX_FRAME_SIDE, MAX_GROUP_LEN, MAX_PATCH_LEN, MAX_VARIANTS,
+    VARIANT_GAP_PX,
+};
 use crate::edit::{Edit, EditError, ItemPatch};
 use crate::item::{Affine, Item, ItemId, ItemKind, Layer, LayerSet, Scene, Z_STEP};
 
@@ -65,6 +68,50 @@ pub fn set_patch(scene: &Scene, id: ItemId, patch: Option<String>) -> Result<Vec
     )])
 }
 
+/// Edits giving frame `id` `extent`: one `Field::FrameExtent` update (LWW). Empty for an unknown/non-frame id
+/// or when the extent is unchanged.
+#[must_use]
+pub fn set_extent(scene: &Scene, id: ItemId, extent: FrameExtent) -> Vec<Edit> {
+    let Some(frame) = frame_of(scene, id) else {
+        return Vec::new();
+    };
+    if frame.extent == extent {
+        return Vec::new();
+    }
+    vec![update(
+        id,
+        ItemPatch {
+            frame_extent: Some(extent),
+            ..ItemPatch::default()
+        },
+    )]
+}
+
+/// Edits recording the measured document height `doc_h` (CSS px, `0` = unknown) on frame `id`: one
+/// `Field::FrameDocHeight` update (LWW), written by the server. Empty for an unknown/non-frame id or when the
+/// height is unchanged.
+///
+/// # Errors
+/// [`EditError::InvalidValue`] naming `"frame_doc_h"` when `doc_h` exceeds [`MAX_FRAME_SIDE`].
+pub fn set_doc_height(scene: &Scene, id: ItemId, doc_h: u32) -> Result<Vec<Edit>, EditError> {
+    let Some(frame) = frame_of(scene, id) else {
+        return Ok(Vec::new());
+    };
+    if doc_h > MAX_FRAME_SIDE {
+        return Err(invalid("frame_doc_h"));
+    }
+    if frame.doc_h == doc_h {
+        return Ok(Vec::new());
+    }
+    Ok(vec![update(
+        id,
+        ItemPatch {
+            frame_doc_h: Some(doc_h),
+            ..ItemPatch::default()
+        },
+    )])
+}
+
 /// Edits setting the owner's pick: `chosen` on `id`, and `false` on every other frame of the same group that
 /// was chosen, in one batch (one undo step). Choosing is a group decision, so a frame without a group is a
 /// no-op; so is an unknown/non-frame id or an unchanged state.
@@ -105,7 +152,8 @@ pub fn set_chosen(scene: &Scene, id: ItemId, chosen: bool) -> Result<Vec<Edit>, 
     Ok(edits)
 }
 
-/// The `Add` edits for `variants` beside frame `base`: same project, route, preset and size, first variant
+/// The `Add` edits for `variants` beside frame `base`: same project, route, preset, size and extent (and
+/// document height hint), first variant
 /// at `base.right + 40`, each next one 40 px right of the previous. They join group `group` unchosen; `z` is
 /// the first frame's z and each next one is one [`Z_STEP`] higher.
 ///
@@ -145,6 +193,8 @@ pub fn variant_frames(
             label: variant.label.clone(),
             group: Some(group.to_owned()),
             chosen: false,
+            extent: base_frame.extent,
+            doc_h: base_frame.doc_h,
         };
         frame.check()?;
         edits.push(Edit::Add(Item {

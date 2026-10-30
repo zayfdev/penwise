@@ -5,7 +5,8 @@ use penwise_core::codec::stroke::encode_params;
 use penwise_core::item::ItemId;
 use penwise_core::sample::Sample;
 use penwise_proto::{
-    ClientMsg, ItemRef, LiveSample, PageId, StrokeCancel, StrokeDelta, encode_client,
+    ClientMsg, FOCUS_PROTOCOL_VERSION, ItemRef, LiveSample, PageId, StrokeCancel, StrokeDelta,
+    encode_client,
 };
 
 use super::SyncCore;
@@ -68,6 +69,27 @@ impl SyncCore {
     /// Encoding failure (never expected).
     pub fn switch_page(&self, page: PageId) -> Result<Vec<u8>, SyncError> {
         Ok(encode_client(&ClientMsg::SwitchPage { page })?)
+    }
+
+    /// True when this connection's `Welcome` reported protocol 2 or newer (`Focus` may be sent).
+    #[must_use]
+    pub fn server_supports_focus(&self) -> bool {
+        self.server_protocol >= FOCUS_PROTOCOL_VERSION
+    }
+
+    /// `Focus` frame (ask every other device to show `page` and fit frame `item`; `None` fits the page's
+    /// content). `None` when the server's `Welcome` did not report protocol 2: an older server would drop it.
+    ///
+    /// # Errors
+    /// Encoding failure (never expected).
+    pub fn focus(&self, page: PageId, item: Option<ItemId>) -> Result<Option<Vec<u8>>, SyncError> {
+        if !self.server_supports_focus() {
+            return Ok(None);
+        }
+        Ok(Some(encode_client(&ClientMsg::Focus {
+            page,
+            item: item.map(ItemRef::from),
+        })?))
     }
 
     /// `Watch` frame (`None` stops watching).

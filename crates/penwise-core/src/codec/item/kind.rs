@@ -7,14 +7,15 @@ use super::fields::{
     read_shape_kind, read_str, write_flag, write_id, write_len, write_opt_color, write_paint,
     write_polygons, write_shape_kind, write_str,
 };
+use super::frame::{decode_frame, encode_frame};
 use super::{decode_points, encode_points};
 use crate::codec::error::CodecError;
 use crate::codec::params_fields::{invalid, write_f32s};
 use crate::codec::stroke::{decode_params, decode_samples, encode_params, encode_samples};
 use crate::codec::varint::{Reader, write_uv32};
 use crate::item::{
-    EraseItem, FillItem, FrameItem, FramePreset, ImageItem, ItemKind, ItemKindTag, SampleParam,
-    SampleRange, ShapeItem, StrokeItem, TextItem, Trim,
+    EraseItem, FillItem, FramePreset, ImageItem, ItemKind, ItemKindTag, SampleParam, SampleRange,
+    ShapeItem, StrokeItem, TextItem, Trim,
 };
 use crate::marks::{Binding, BindingMode, MarkItem, MarkStatus};
 use crate::sample::{GridSample, Sample};
@@ -57,16 +58,7 @@ pub(super) fn encode_kind(kind: &ItemKind, version: u16, out: &mut Vec<u8>) {
             out.extend_from_slice(&image.asset);
             write_f32s(out, &[image.w, image.h]);
         }
-        ItemKind::Frame(frame) => {
-            out.push(frame.preset.code());
-            write_uv32(out, frame.css_w);
-            write_uv32(out, frame.css_h);
-            write_str(out, &frame.project);
-            write_str(out, &frame.route);
-            if version >= 3 {
-                encode_frame_variant(frame, out);
-            }
-        }
+        ItemKind::Frame(frame) => encode_frame(frame, version, out),
         ItemKind::Mark(mark) => {
             write_id(out, mark.frame);
             out.push(mark.preset.code());
@@ -119,18 +111,7 @@ pub(super) fn decode_kind(
             let [w, h] = read_pair(r, "image.size")?;
             ItemKind::Image(ImageItem { asset, w, h })
         }
-        ItemKindTag::Frame => {
-            let preset = FramePreset::from_code(r.u8()?).ok_or(invalid("frame.preset"))?;
-            let css_w = r.uv32()?;
-            let css_h = r.uv32()?;
-            let project = read_str(r)?;
-            let route = read_str(r)?;
-            let mut frame = FrameItem::new(project, route, preset, css_w, css_h);
-            if version >= 3 {
-                decode_frame_variant(r, &mut frame)?;
-            }
-            ItemKind::Frame(frame)
-        }
+        ItemKindTag::Frame => ItemKind::Frame(decode_frame(r, version)?),
         ItemKindTag::Mark => {
             let frame = read_id(r)?;
             let preset = FramePreset::from_code(r.u8()?).ok_or(invalid("mark.preset"))?;
@@ -150,43 +131,6 @@ pub(super) fn decode_kind(
             })
         }
     })
-}
-
-/// v3 frame fields: `patch flag u8 [+ len uv + UTF-8]; label (len uv + UTF-8); group flag u8 [+ len uv +
-/// UTF-8]; chosen flag u8`.
-fn encode_frame_variant(frame: &FrameItem, out: &mut Vec<u8>) {
-    match &frame.patch {
-        Some(patch) => {
-            write_flag(out, true);
-            write_str(out, patch);
-        }
-        None => write_flag(out, false),
-    }
-    write_str(out, &frame.label);
-    match &frame.group {
-        Some(group) => {
-            write_flag(out, true);
-            write_str(out, group);
-        }
-        None => write_flag(out, false),
-    }
-    write_flag(out, frame.chosen);
-}
-
-fn decode_frame_variant(r: &mut Reader<'_>, frame: &mut FrameItem) -> Result<(), CodecError> {
-    frame.patch = if read_flag(r, "frame.patch flag")? {
-        Some(read_str(r)?)
-    } else {
-        None
-    };
-    frame.label = read_str(r)?;
-    frame.group = if read_flag(r, "frame.group flag")? {
-        Some(read_str(r)?)
-    } else {
-        None
-    };
-    frame.chosen = read_flag(r, "frame.chosen")?;
-    Ok(())
 }
 
 fn encode_stroke(stroke: &StrokeItem, version: u16, out: &mut Vec<u8>) {

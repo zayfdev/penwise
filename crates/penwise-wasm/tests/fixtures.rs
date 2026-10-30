@@ -1,4 +1,4 @@
-//! Every committed v1 wire fixture decodes through the binding layer (natively and under
+//! Every committed v1 wire fixture (and the envelope-v2 `Focus` ones) decodes through the binding layer (natively and under
 //! `wasm-pack test --node --release crates/penwise-wasm`).
 #![allow(
     clippy::unwrap_used,
@@ -97,6 +97,32 @@ fn kind_names_match_the_file_names() {
         .find(|(n, _)| *n == "op_item_add.bin")
         .unwrap();
     assert_eq!(op_kind(bytes).unwrap(), "Item");
+}
+
+/// The envelope-v2 `Focus` frames decode through the binding layer too.
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+fn focus_fixtures_decode() {
+    let client: [&[u8]; 2] = [
+        include_bytes!("../../penwise-proto/tests/fixtures/v2/client_focus_frame.bin"),
+        include_bytes!("../../penwise-proto/tests/fixtures/v2/client_focus_page.bin"),
+    ];
+    for bytes in client {
+        assert_eq!(client_kind(bytes).unwrap(), "Focus");
+    }
+    let server: [&[u8]; 2] = [
+        include_bytes!("../../penwise-proto/tests/fixtures/v2/server_focus_frame.bin"),
+        include_bytes!("../../penwise-proto/tests/fixtures/v2/server_focus_page.bin"),
+    ];
+    for bytes in server {
+        let kind = server_kind(bytes).unwrap();
+        let received = Viewer::new().receive(bytes).unwrap();
+        assert_eq!(
+            (received.kind, kind),
+            (penwise_wasm::received::MessageKind::Focus, kind)
+        );
+        assert!(received.page.is_some());
+    }
 }
 
 /// A new fixture file must be added to the list above.

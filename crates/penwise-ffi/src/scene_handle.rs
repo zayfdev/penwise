@@ -10,6 +10,7 @@
 
 mod dirty;
 mod edits_blob;
+mod frame_space;
 mod frames;
 mod marks;
 mod mirror;

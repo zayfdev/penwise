@@ -1,8 +1,8 @@
 //! The frame item and the one-call spec the server and the clients place it with (design harness C1).
 
 use super::{
-    FramePreset, FrameSize, MAX_GROUP_LEN, MAX_LABEL_LEN, MAX_PATCH_LEN, MAX_PROJECT_LEN,
-    MAX_ROUTE_LEN, invalid, side_px,
+    FrameExtent, FramePreset, FrameSize, MAX_FRAME_SIDE, MAX_GROUP_LEN, MAX_LABEL_LEN,
+    MAX_PATCH_LEN, MAX_PROJECT_LEN, MAX_ROUTE_LEN, invalid, side_px,
 };
 use crate::edit::{Edit, EditError};
 use crate::item::{Affine, Item, ItemId, ItemKind, Layer};
@@ -28,11 +28,16 @@ pub struct FrameItem {
     pub group: Option<String>,
     /// The owner's pick within its group (choosing one frame un-chooses the group's others).
     pub chosen: bool,
+    /// Whether the box on the board is the viewport or the whole document ([`FrameItem::box_size`]).
+    pub extent: FrameExtent,
+    /// The document height in CSS px last measured by the server; `0` = unknown. At most
+    /// [`super::MAX_FRAME_SIDE`].
+    pub doc_h: u32,
 }
 
 impl FrameItem {
-    /// A plain frame item (no patch, no label, no group); the caller is expected to build it from a
-    /// [`FrameSpec`] or validated JSON.
+    /// A plain frame item (no patch, no label, no group, [`FrameExtent::Full`], unknown document height); the
+    /// caller is expected to build it from a [`FrameSpec`] or validated JSON.
     #[must_use]
     pub fn new(
         project: String,
@@ -51,6 +56,8 @@ impl FrameItem {
             label: String::new(),
             group: None,
             chosen: false,
+            extent: FrameExtent::Full,
+            doc_h: 0,
         }
     }
 
@@ -70,13 +77,31 @@ impl FrameItem {
         [side_px(self.css_w), side_px(self.css_h)]
     }
 
+    /// The frame's box on the board, `[width, height]` in page units. A [`FrameExtent::Viewport`] frame is
+    /// `[css_w, css_h]`; a [`FrameExtent::Full`] one is `[css_w, max(css_h, h)]` where `h` is
+    /// `layout_doc_h` (the live or still document height a rendering client knows) or, when `None`, the
+    /// synced `doc_h` hint; the height is clamped to [`MAX_FRAME_SIDE`] (the bridge is untrusted). Bounds, hit tests, the lasso, validation and mark clipping pass `None`.
+    #[must_use]
+    pub fn box_size(&self, layout_doc_h: Option<f32>) -> [f32; 2] {
+        let [w, h] = self.page_size();
+        match self.extent {
+            FrameExtent::Viewport => [w, h],
+            FrameExtent::Full => {
+                let doc = layout_doc_h
+                    .filter(|v| v.is_finite())
+                    .unwrap_or_else(|| side_px(self.doc_h));
+                [w, full_box_height(h, doc)]
+            }
+        }
+    }
+
     /// The string fields' invariants: `project` non-empty and ≤ 64 bytes, `route` starts with `/` and is at most
     /// 2048 bytes, the size is valid, `patch` at most 64 KiB, `label` at most 80 bytes and `group` (when set)
-    /// non-empty and at most 64 bytes.
+    /// non-empty and at most 64 bytes, `doc_h` at most [`MAX_FRAME_SIDE`].
     ///
     /// # Errors
     /// [`EditError::InvalidValue`] naming `"frame_project"`, `"frame_route"`, `"frame_size"`,
-    /// `"frame_patch"`, `"frame_label"` or `"frame_group"`.
+    /// `"frame_patch"`, `"frame_label"`, `"frame_group"` or `"frame_doc_h"`.
     pub fn check(&self) -> Result<(), EditError> {
         if self.project.is_empty() || self.project.len() > MAX_PROJECT_LEN {
             return Err(invalid("frame_project"));
@@ -101,6 +126,9 @@ impl FrameItem {
         {
             return Err(invalid("frame_group"));
         }
+        if self.doc_h > MAX_FRAME_SIDE {
+            return Err(invalid("frame_doc_h"));
+        }
         self.size().check()
     }
 }
@@ -117,6 +145,9 @@ pub struct FrameSpec {
     /// Page position of the frame's top-left corner.
     pub x: f32,
     pub y: f32,
+    /// The box extent of the placed frame; [`FrameExtent::Full`] unless changed with
+    /// [`FrameSpec::with_extent`].
+    pub extent: FrameExtent,
 }
 
 impl FrameSpec {
@@ -148,7 +179,16 @@ impl FrameSpec {
             css_h: size.css_h,
             x,
             y,
+            extent: FrameExtent::Full,
         })
+    }
+
+    /// This spec with `extent` (new frames are [`FrameExtent::Full`]; pass [`FrameExtent::Viewport`] for the
+    /// v1 behaviour).
+    #[must_use]
+    pub fn with_extent(mut self, extent: FrameExtent) -> Self {
+        self.extent = extent;
+        self
     }
 
     /// The placed item: identity transform plus a translation to `(x, y)`, so the page box is the CSS size at
@@ -160,13 +200,16 @@ impl FrameSpec {
             layer,
             z,
             transform: Affine::translate(self.x, self.y),
-            kind: ItemKind::Frame(FrameItem::new(
-                self.project.clone(),
-                self.route.clone(),
-                self.preset,
-                self.css_w,
-                self.css_h,
-            )),
+            kind: ItemKind::Frame(FrameItem {
+                extent: self.extent,
+                ..FrameItem::new(
+                    self.project.clone(),
+                    self.route.clone(),
+                    self.preset,
+                    self.css_w,
+                    self.css_h,
+                )
+            }),
         }
     }
 
@@ -181,4 +224,9 @@ impl FrameSpec {
 #[must_use]
 pub fn add_frame(spec: &FrameSpec, id: ItemId, layer: Layer, z: i64) -> Edit {
     spec.edit(id, layer, z)
+}
+
+/// Height of a full-length box: `doc` (CSS px) clamped to `0 ..= MAX_FRAME_SIDE`, never below the viewport `css_h`.
+pub(crate) fn full_box_height(css_h: f32, doc: f32) -> f32 {
+    crate::float::max(css_h, doc.clamp(0.0, side_px(MAX_FRAME_SIDE)))
 }

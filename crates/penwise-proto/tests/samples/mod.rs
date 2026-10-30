@@ -1,4 +1,4 @@
-//! One canonical sample per wire variant (the v1 fixture set). Changing a sample changes its fixture bytes:
+//! One canonical sample per wire variant (the v1 fixture set; `*_v2` hold the envelope-v2 additions). Changing a sample changes its fixture bytes:
 //! frozen formats must not change, so edit these only when appending new variants.
 #![allow(dead_code, reason = "each test binary uses a subset")]
 
@@ -395,4 +395,46 @@ pub fn full_delta() -> StrokeDelta {
     let mut d = delta();
     d.samples = vec![d.samples[0]; MAX_DELTA_SAMPLES];
     d
+}
+
+/// Client messages that need envelope version 2 (fixtures in `tests/fixtures/v2/`).
+pub fn client_msgs_v2() -> Vec<(&'static str, ClientMsg)> {
+    vec![
+        (
+            "client_focus_frame",
+            ClientMsg::Focus {
+                page: page_id(2),
+                item: Some(item_id(5).into()),
+            },
+        ),
+        (
+            "client_focus_page",
+            ClientMsg::Focus {
+                page: page_id(2),
+                item: None,
+            },
+        ),
+    ]
+}
+
+/// Server messages that need envelope version 2 (fixtures in `tests/fixtures/v2/`).
+pub fn server_msgs_v2() -> Vec<(&'static str, ServerMsg)> {
+    vec![
+        (
+            "server_focus_frame",
+            ServerMsg::Focus {
+                page: page_id(3),
+                item: Some(item_id(5).into()),
+                by: device(2),
+            },
+        ),
+        (
+            "server_focus_page",
+            ServerMsg::Focus {
+                page: page_id(3),
+                item: None,
+                by: device(2),
+            },
+        ),
+    ]
 }

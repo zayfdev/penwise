@@ -13,8 +13,8 @@ use std::collections::BTreeSet;
 use penwise_core::edit::Edit;
 use penwise_proto::message::OpRejected;
 use penwise_proto::{
-    AnyOp, ItemRef, OpId, PageId, Scope, SeqOp, ServerMsg, SnapshotChunk, decode_server,
-    newest_stamp,
+    AnyOp, FOCUS_PROTOCOL_VERSION, ItemRef, OpId, PageId, Scope, SeqOp, ServerMsg, SnapshotChunk,
+    decode_server, newest_stamp,
 };
 
 use super::{Viewer, author::Author};
@@ -44,6 +44,7 @@ impl Viewer {
         let mut touched = Touched::default();
         match msg {
             ServerMsg::Welcome {
+                protocol_version,
                 server,
                 head_seq,
                 current_page,
@@ -53,6 +54,8 @@ impl Viewer {
                 if let Some(author) = self.author.as_mut() {
                     author.on_welcome(*server_now_ms);
                 }
+                self.server_protocol = *protocol_version;
+                out.focus_supported = *protocol_version >= FOCUS_PROTOCOL_VERSION;
                 out.head_seq = *head_seq;
                 out.server = Some(server.to_string());
                 out.page = current_page.map(|p| p.to_string());
@@ -92,6 +95,11 @@ impl Viewer {
             }
             ServerMsg::SwitchPage { page, by } => {
                 out.page = Some(page.to_string());
+                out.device = Some(by.to_string());
+            }
+            ServerMsg::Focus { page, item, by } => {
+                out.page = Some(page.to_string());
+                out.item = item.map(|item| item.to_string());
                 out.device = Some(by.to_string());
             }
             ServerMsg::Resync { .. } => self.drop_live(&mut touched),

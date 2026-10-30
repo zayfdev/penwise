@@ -205,7 +205,7 @@ impl Item {
                 .map(|c| t.apply(c)),
             },
             ItemKind::Frame(frame) => {
-                let [w, h] = frame.page_size();
+                let [w, h] = frame.box_size(None);
                 ItemGeometry::Frame {
                     corners: [[0.0, 0.0], [w, 0.0], [w, h], [0.0, h]].map(|c| t.apply(c)),
                 }

@@ -54,6 +54,8 @@ impl ItemPatch {
             Field::FrameLabel => self.frame_label == other.frame_label,
             Field::FrameGroup => self.frame_group == other.frame_group,
             Field::FrameChosen => self.frame_chosen == other.frame_chosen,
+            Field::FrameExtent => self.frame_extent == other.frame_extent,
+            Field::FrameDocHeight => self.frame_doc_h == other.frame_doc_h,
         }
     }
 
@@ -83,6 +85,8 @@ impl ItemPatch {
             (Field::FrameLabel, ItemKind::Frame(f)) => self.frame_label = Some(f.label.clone()),
             (Field::FrameGroup, ItemKind::Frame(f)) => self.frame_group = Some(f.group.clone()),
             (Field::FrameChosen, ItemKind::Frame(f)) => self.frame_chosen = Some(f.chosen),
+            (Field::FrameExtent, ItemKind::Frame(f)) => self.frame_extent = Some(f.extent),
+            (Field::FrameDocHeight, ItemKind::Frame(f)) => self.frame_doc_h = Some(f.doc_h),
             _ => {}
         }
     }
@@ -131,6 +135,8 @@ impl ItemPatch {
                 set(&mut f.label, self.frame_label.as_ref());
                 set(&mut f.group, self.frame_group.as_ref());
                 set(&mut f.chosen, self.frame_chosen.as_ref());
+                set(&mut f.extent, self.frame_extent.as_ref());
+                set(&mut f.doc_h, self.frame_doc_h.as_ref());
             }
             ItemKind::Mark(m) => {
                 set(&mut m.status, self.mark_status.as_ref());

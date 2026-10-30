@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use penwise_proto::message::{HANDSHAKE_TIMEOUT_MS, IDLE_TIMEOUT_MS, PING_INTERVAL_MS};
-use penwise_proto::{DeviceId, PageId, ServerMsg, encode_server};
+use penwise_proto::{DeviceId, ItemRef, PageId, ServerMsg, encode_server};
 use tokio::sync::{broadcast, watch};
 
 use super::limiter::HandshakeLimiter;
@@ -64,6 +64,18 @@ pub struct LiveEvent {
     pub page: Option<PageId>,
     /// Encoded `ServerMsg` frame.
     pub frame: Arc<[u8]>,
+    /// Lowest negotiated protocol version whose message set contains the frame (`Focus` needs 2); sessions
+    /// below it are skipped, they could not decode it.
+    pub min_protocol: u16,
+}
+
+/// The protocol version that introduced `msg`.
+pub(super) fn min_protocol_of(msg: &ServerMsg) -> u16 {
+    if matches!(msg, ServerMsg::Focus { .. }) {
+        penwise_proto::FOCUS_PROTOCOL_VERSION
+    } else {
+        1
+    }
 }
 
 #[allow(
@@ -127,6 +139,7 @@ impl<S: SyncStore> Hub<S> {
                 origin: 0,
                 page,
                 frame: frame.into(),
+                min_protocol: min_protocol_of(msg),
             }),
             Err(error) => tracing::debug!(%error, "live frame not encodable; dropped"),
         }
@@ -136,6 +149,12 @@ impl<S: SyncStore> Hub<S> {
     /// no session mistakes it for its own switch).
     pub fn announce_switch_page(&self, page: PageId, by: DeviceId) {
         self.announce(None, &ServerMsg::SwitchPage { page, by });
+    }
+
+    /// `Focus` from the HTTP API or an agent tool: every connected device switches to `page` and fits `item`
+    /// (a frame; `None` = the page's content). `by` is the server device.
+    pub fn announce_focus(&self, page: PageId, item: Option<ItemRef>, by: DeviceId) {
+        self.announce(None, &ServerMsg::Focus { page, item, by });
     }
 
     pub(super) fn handshake_allowed(&self, peer: Option<IpAddr>) -> bool {

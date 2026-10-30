@@ -7,8 +7,8 @@
 
 use penwise_core::edit::{Edit, ItemPatch};
 use penwise_core::item::{
-    FrameItem, FramePreset, FrameSize, FrameSpec, IdSource, ItemId, ItemKind, Layer, LayerSet,
-    add_frame, set_chosen,
+    FrameExtent, FrameItem, FramePreset, FrameSize, FrameSpec, IdSource, ItemId, ItemKind, Layer,
+    LayerSet, add_frame, set_chosen,
 };
 use penwise_proto::{ItemRef, PageId};
 use serde::Deserialize;
@@ -18,7 +18,7 @@ use wasm_bindgen::prelude::{JsError, wasm_bindgen};
 use super::{Viewer, parse_id, whole_ms};
 use crate::error::WasmError;
 
-/// Body of `add_frame` (`cssW`/`cssH` only matter for `custom`).
+/// Body of `add_frame` (`cssW`/`cssH` only matter for `custom`; `extent` defaults to `"full"`).
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AddFrameRequest {
@@ -27,6 +27,8 @@ struct AddFrameRequest {
     preset: String,
     css_w: Option<u32>,
     css_h: Option<u32>,
+    #[serde(default)]
+    extent: Option<String>,
     x: f32,
     y: f32,
 }
@@ -34,8 +36,10 @@ struct AddFrameRequest {
 #[wasm_bindgen]
 impl Viewer {
     /// Live frames of `page` as JSON:
-    /// `[{"id","project","route","preset","cssW","cssH","rect":[x,y,w,h],"patch","label","group","chosen"}]`,
-    /// in paint order; `patch` is the P1 patch as an object (or `null`). Unknown page → `[]`.
+    /// `[{"id","project","route","preset","cssW","cssH","extent","docH","boxH","rect":[x,y,w,h],"patch","label",
+    /// "group","chosen"}]`, in paint order; `extent` is `"viewport"` or `"full"`, `docH` the server's measured
+    /// document height (`0` = unknown), `boxH` the box height on the board, `patch` the P1 patch as an object
+    /// (or `null`). Unknown page → `[]`.
     ///
     /// # Errors
     /// `JsError` for a malformed page id.
@@ -43,7 +47,7 @@ impl Viewer {
         Ok(self.frames_json(parse_id(page)?))
     }
 
-    /// Places a frame on `page` from `{project,route,preset,cssW?,cssH?,x,y}`; returns its id text.
+    /// Places a frame on `page` from `{project,route,preset,cssW?,cssH?,extent?,x,y}`; returns its id text.
     ///
     /// # Errors
     /// `JsError` before `identify`, for a malformed page id/JSON/preset or a rejected value.
@@ -110,6 +114,9 @@ impl Viewer {
                     "preset": frame.preset.as_str(),
                     "cssW": frame.css_w,
                     "cssH": frame.css_h,
+                    "extent": frame.extent.as_str(),
+                    "docH": frame.doc_h,
+                    "boxH": frame.box_size(None)[1],
                     "rect": [rect.min_x, rect.min_y, rect.width(), rect.height()],
                     "patch": patch_json(frame.patch.as_deref()),
                     "label": frame.label,
@@ -135,6 +142,10 @@ impl Viewer {
             serde_json::from_str(json).map_err(|_| WasmError::BadArgument("frame json"))?;
         let preset =
             FramePreset::parse(&request.preset).ok_or(WasmError::BadArgument("frame preset"))?;
+        let extent = match request.extent.as_deref() {
+            None => FrameExtent::Full,
+            Some(text) => FrameExtent::parse(text).ok_or(WasmError::BadArgument("frame extent"))?,
+        };
         let spec = FrameSpec::new(
             request.project,
             request.route,
@@ -143,7 +154,8 @@ impl Viewer {
             request.css_h,
             request.x,
             request.y,
-        )?;
+        )?
+        .with_extent(extent);
         let author = self.author.as_mut().ok_or(WasmError::NotIdentified)?;
         if self.replica.page(page).is_none() {
             return Err(WasmError::UnknownPage);
@@ -234,7 +246,7 @@ impl Viewer {
     }
 
     /// `(page, frame)` of live frame `id`, if any page holds it.
-    fn frame(&self, id: ItemId) -> Option<(PageId, FrameItem)> {
+    pub(super) fn frame(&self, id: ItemId) -> Option<(PageId, FrameItem)> {
         let catalog = self.replica.catalog();
         let pages: Vec<PageId> = catalog
             .notebooks()

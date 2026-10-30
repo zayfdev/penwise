@@ -203,6 +203,91 @@ async fn switch_page_is_relayed_to_everyone_else_and_remembered() {
 }
 
 #[tokio::test]
+async fn focus_is_relayed_like_switch_page_and_remembered() {
+    let store = FakeStore::new(16);
+    let hub = Hub::new(store.clone(), config());
+    let p = page_id(7);
+    let frame = Some(stroke(3));
+    let mut a = tablet(&hub, device(1), None).await;
+    let mut b = tablet(&hub, device(2), Some(page_id(1))).await;
+    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+    a.send(&ClientMsg::Focus {
+        page: p,
+        item: frame,
+    })
+    .await;
+    assert_eq!(
+        b.next().await,
+        ServerMsg::Focus {
+            page: p,
+            item: frame,
+            by: device(1)
+        }
+    );
+    assert!(a.quiet().await, "the sender gets no echo");
+    assert_eq!(store.current(), Some(p));
+
+    // `item: None` fits the page's content, and the server's own announcement reaches everyone.
+    a.send(&ClientMsg::Focus {
+        page: p,
+        item: None,
+    })
+    .await;
+    assert_eq!(
+        b.next().await,
+        ServerMsg::Focus {
+            page: p,
+            item: None,
+            by: device(1)
+        }
+    );
+    hub.announce_focus(p, frame, device(9));
+    let expected = ServerMsg::Focus {
+        page: p,
+        item: frame,
+        by: device(9),
+    };
+    assert_eq!(a.next().await, expected);
+    assert_eq!(b.next().await, expected);
+}
+
+#[tokio::test]
+async fn focus_skips_sessions_that_negotiated_protocol_1() {
+    let store = FakeStore::new(16);
+    let hub = Hub::new(store, config());
+    let p = page_id(7);
+    let a = tablet(&hub, device(1), None).await;
+    let mut modern = tablet(&hub, device(2), None).await;
+    // An older tablet: its Hello offers protocol 1, so it cannot decode a version-2 frame.
+    let mut old = Rig::on(hub.clone());
+    old.send(&ClientMsg::Hello {
+        protocol_version: 1,
+        device: device(3),
+        token: penwise_proto::AuthToken(super::TOKEN.to_owned()),
+        last_seen_seq: 0,
+        client: ClientKind::Tablet,
+    })
+    .await;
+    assert!(matches!(old.next().await, ServerMsg::Welcome { .. }));
+    collect_catch_up(&mut old).await;
+    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+
+    a.send(&ClientMsg::Focus {
+        page: p,
+        item: None,
+    })
+    .await;
+    assert!(matches!(modern.next().await, ServerMsg::Focus { .. }));
+    assert!(
+        old.quiet().await,
+        "a protocol-1 session gets no Focus frame"
+    );
+    // Its other live traffic is unaffected.
+    a.send(&ClientMsg::SwitchPage { page: p }).await;
+    assert!(matches!(old.next().await, ServerMsg::SwitchPage { .. }));
+}
+
+#[tokio::test]
 async fn a_live_stroke_stays_on_the_page_of_its_first_delta() {
     let store = FakeStore::new(16);
     let hub = Hub::new(store, config());

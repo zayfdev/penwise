@@ -56,6 +56,7 @@ pub fn client_kind(frame: &[u8]) -> Result<&'static str, WasmError> {
         ClientMsg::Resync { .. } => "Resync",
         ClientMsg::Ping { .. } => "Ping",
         ClientMsg::Pong { .. } => "Pong",
+        ClientMsg::Focus { .. } => "Focus",
     })
 }
 

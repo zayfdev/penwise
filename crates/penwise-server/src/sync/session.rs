@@ -13,7 +13,7 @@ use tokio::sync::{broadcast, mpsc, watch};
 use tokio::time::{Instant, MissedTickBehavior};
 
 use super::handshake::{self, Accepted};
-use super::hub::{Hub, LiveEvent};
+use super::hub::{Hub, LiveEvent, min_protocol_of};
 use super::outbound::{CLOSE_ERROR, CLOSE_NORMAL, Outbound, Stop};
 use super::store::{OpFilter, SyncStore};
 use super::transport::WsIn;
@@ -23,6 +23,8 @@ pub(super) struct Session<S: SyncStore> {
     pub(super) id: u64,
     pub(super) device: DeviceId,
     pub(super) kind: ClientKind,
+    /// Protocol version the client offered in `Hello`.
+    pub(super) protocol: u16,
     pub(super) out: Outbound,
     /// Last seq delivered (or covered by a snapshot).
     pub(super) cursor: u64,
@@ -79,6 +81,7 @@ impl<S: SyncStore> Session<S> {
             id,
             device: accepted.device,
             kind: accepted.kind,
+            protocol: accepted.protocol,
             out,
             cursor: 0,
             watch: None,
@@ -253,6 +256,21 @@ impl<S: SyncStore> Session<S> {
                 );
                 Ok(())
             }
+            ClientMsg::Focus { page, item } => {
+                // Like `SwitchPage`: the target page becomes current, then every other session fits `item`.
+                if let Err(error) = self.hub.store.set_current_page(page).await {
+                    tracing::warn!(%error, "current page not saved");
+                }
+                self.publish(
+                    None,
+                    &ServerMsg::Focus {
+                        page,
+                        item,
+                        by: self.device,
+                    },
+                );
+                Ok(())
+            }
             ClientMsg::Watch { page } => self.on_watch(page).await,
             ClientMsg::Resync { from_seq } => {
                 self.out.send(&ServerMsg::Resync { from_seq }).await?;
@@ -270,6 +288,7 @@ impl<S: SyncStore> Session<S> {
                 origin: self.id,
                 page,
                 frame: frame.into(),
+                min_protocol: min_protocol_of(msg),
             }),
             Err(error) => tracing::debug!(%error, "live frame not encodable; dropped"),
         }

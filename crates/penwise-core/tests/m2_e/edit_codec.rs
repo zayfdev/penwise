@@ -3,13 +3,15 @@
 use super::fixtures::{BLUE, RED, every_kind, id, shape_kinds, square};
 use super::item_codec::reseal;
 use penwise_core::codec::edit::{
-    EDIT_MAGIC, EDIT_VERSION, EDIT_VERSION_V1, EDIT_VERSION_V2, EDIT_VERSION_V3, decode_edit,
-    decode_edit_body, encode_edit, encode_edit_body,
+    EDIT_MAGIC, EDIT_VERSION, EDIT_VERSION_V1, EDIT_VERSION_V2, EDIT_VERSION_V3, EDIT_VERSION_V4,
+    decode_edit, decode_edit_body, encode_edit, encode_edit_body,
 };
 use penwise_core::codec::item::{ITEM_MAGIC, encode_item};
 use penwise_core::codec::varint::{Reader, write_uv32};
 use penwise_core::edit::{Edit, Field, ItemPatch};
-use penwise_core::item::{Affine, FramePreset, FrameSize, Layer, Paint, Polygon, ShapeKind};
+use penwise_core::item::{
+    Affine, FrameExtent, FramePreset, FrameSize, Layer, Paint, Polygon, ShapeKind,
+};
 use penwise_core::marks::MarkStatus;
 use penwise_core::{CodecError, Preset};
 
@@ -20,7 +22,7 @@ fn blob(edit: &Edit) -> Vec<u8> {
 }
 
 /// The version [`encode_edit`] must pick for `edit` (minimal: v2 for a frame field, v3 for a mark field or
-/// item layout v2, v4 for the frame patch/label/group/chosen fields).
+/// item layout v2, v4 for the frame patch/label/group/chosen fields, v5 for the frame extent/document height).
 /// True when `item` needs item layout v2 (a bound stroke or a mark).
 fn needs_item_v2(item: &penwise_core::item::Item) -> bool {
     match &item.kind {
@@ -43,9 +45,20 @@ fn needs_item_v3(item: &penwise_core::item::Item) -> bool {
     }
 }
 
+/// True when `item` needs item layout v4 (a full-length frame, or one with a measured document height).
+fn needs_item_v4(item: &penwise_core::item::Item) -> bool {
+    match &item.kind {
+        penwise_core::item::ItemKind::Frame(frame) => {
+            frame.extent == FrameExtent::Full || frame.doc_h != 0
+        }
+        _ => false,
+    }
+}
+
 fn expected_version(edit: &Edit) -> u16 {
     match edit {
-        Edit::Add(item) if needs_item_v3(item) => EDIT_VERSION,
+        Edit::Add(item) if needs_item_v4(item) => EDIT_VERSION,
+        Edit::Add(item) if needs_item_v3(item) => EDIT_VERSION_V4,
         Edit::Add(item) if needs_item_v2(item) => EDIT_VERSION_V3,
         Edit::Add(_) | Edit::Delete(_) => EDIT_VERSION_V1,
         Edit::Update { patch, .. } => {
@@ -55,8 +68,10 @@ fn expected_version(edit: &Edit) -> u16 {
                 .map(|field| u32::from(field.code()))
                 .max()
                 .unwrap_or(0);
-            if highest >= 17 {
+            if highest >= 21 {
                 EDIT_VERSION
+            } else if highest >= 17 {
+                EDIT_VERSION_V4
             } else if highest >= 15 {
                 EDIT_VERSION_V3
             } else if highest >= 13 {
@@ -155,6 +170,10 @@ fn single(field: Field, variant: usize) -> ItemPatch {
             });
         }
         Field::FrameChosen => p.frame_chosen = Some(variant.is_multiple_of(2)),
+        Field::FrameExtent => {
+            p.frame_extent = Some([FrameExtent::Viewport, FrameExtent::Full][variant % 2]);
+        }
+        Field::FrameDocHeight => p.frame_doc_h = Some([0, 1, 900, 30_000, 1 << 20][variant % 5]),
     }
     p
 }
@@ -255,7 +274,7 @@ fn unknown_tag_and_mask_bits_are_invalid() {
     let mask_at = 6 + 1 + 16;
     assert_eq!(bytes[mask_at], 0);
     let mut bad = bytes[..mask_at].to_vec();
-    bad.extend_from_slice(&[0x80, 0x80, 0x80, 0x01]); // bit 21 (one past the last field)
+    bad.extend_from_slice(&[0x80, 0x80, 0x80, 0x04]); // bit 23 (one past the last field)
     bad.extend_from_slice(&bytes[mask_at + 1..]);
     assert_eq!(
         decode_edit(&reseal(bad)),
@@ -305,10 +324,19 @@ fn blobs_use_the_minimal_version_and_older_blobs_still_decode() {
     let bytes = blob(&chosen);
     assert_eq!(
         bytes[4..6],
-        EDIT_VERSION.to_le_bytes(),
+        EDIT_VERSION_V4.to_le_bytes(),
         "frame variant fields need v4"
     );
     assert_eq!(decode_edit(&bytes), Ok(chosen));
+
+    let extent = update(single(Field::FrameExtent, 1));
+    let bytes_v5 = blob(&extent);
+    assert_eq!(
+        bytes_v5[4..6],
+        EDIT_VERSION.to_le_bytes(),
+        "frame extent/document height need v5"
+    );
+    assert_eq!(decode_edit(&bytes_v5), Ok(extent));
 
     let mut v1_frame = bytes;
     v1_frame[4..6].copy_from_slice(&EDIT_VERSION_V1.to_le_bytes());
@@ -321,10 +349,10 @@ fn blobs_use_the_minimal_version_and_older_blobs_still_decode() {
     );
 
     let mut unknown = blob(&Edit::Delete(id(1)));
-    unknown[4..6].copy_from_slice(&5_u16.to_le_bytes());
+    unknown[4..6].copy_from_slice(&6_u16.to_le_bytes());
     assert_eq!(
         decode_edit(&reseal(unknown)),
-        Err(CodecError::UnsupportedVersion(5))
+        Err(CodecError::UnsupportedVersion(6))
     );
 }
 
