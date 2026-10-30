@@ -35,8 +35,10 @@ Time runs left to right. The live frame is "now"; variants to its right are poss
  sketches, wireframes and notes anywhere around it
 ```
 
-On resolve, the snapshot takes the live frame's place and the live frame moves one column right (one `Update`
-op). A phone frame of the same route gets its own row below.
+Each screen (route + preset) has its own **lane**: one row holding that screen's history, live frame and
+variants. Lanes stack downward (`y = bottom of the tallest box above + 200`). On resolve, the snapshot takes the
+live frame's place and the live frame moves one column right (one `Update` op); within its lane only the
+variants were there, and resolve removes them (the picked one too: the live frame now shows it in code).
 
 ## 3. Full-length frames
 
@@ -88,7 +90,8 @@ up on release.
 - `look` without Send works too: it returns the open round's marks **[owner]**.
 - Resolve: when every mark of the round is done (or the agent resolves the whole round), the server captures the
   frame **with** the round's ink, places the image where the live frame was, moves the live frame right, clears
-  ghosts, and removes unpicked variants (their marks become `done`, as `variants_clear` does today).
+  ghosts, and removes the lane's variants (their marks become `done`, as `variants_clear` does today) — except a
+  variant the owner marked after Send, which stays for the next round.
 
 ## 5. Agent interface — MCP v2
 

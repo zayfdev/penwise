@@ -44,7 +44,8 @@ pub use layout::{FrameLayout, FrameLayoutUpdate, FrameLayouts, FrameRect};
 pub use mark::{MAX_MARK_STROKES, MarkItem, MarkStatus, mark_of, set_mark_status};
 pub use place::{FrameState, PlaceQuery, Placement, Visibility, binding_origin, place};
 pub use space::{
-    board_point, doc_point, frame_board_point, frame_doc_point, frame_live_window, live_window,
+    board_point, doc_point, frame_board_point, frame_box_size, frame_doc_point, frame_live_window,
+    live_window,
 };
 pub use view::{DIM_OPACITY, MarkEntry, MarkView, Presentation};
 

@@ -9,6 +9,8 @@ import { PRESET_CHOICES, type Project } from "./model";
 /** What the form asks for. */
 export interface AddFrameEvents {
   add(project: string, route: string, preset: string): void;
+  /** "Send": closes the project's open round (spec v2 §4). */
+  send(project: string): void;
 }
 
 /** Project · route · preset, mounted into `#frames-panel`. */
@@ -37,8 +39,18 @@ export class AddFrameForm {
     attrs: { type: "button", id: "add-frame" },
   });
 
+  private readonly sendButton = el("button", {
+    text: "Send",
+    attrs: { type: "button", id: "send-round", title: "Send the marks drawn since the last send" },
+  });
+  private readonly sendStatus = el("span", { attrs: { id: "send-status", role: "status" } });
+
   constructor(root: HTMLElement, events: AddFrameEvents) {
     this.addButton.disabled = true;
+    this.sendButton.disabled = true;
+    this.sendButton.addEventListener("click", () => {
+      if (this.project.value !== "") events.send(this.project.value);
+    });
     this.addButton.addEventListener("click", () => {
       if (this.project.value === "") return;
       events.add(this.project.value, this.route.value, this.preset.value);
@@ -46,7 +58,18 @@ export class AddFrameForm {
     root.append(
       el("div", { class: "row" }, [this.project, this.preset]),
       el("div", { class: "row" }, [this.route, this.addButton]),
+      el("div", { class: "row" }, [this.sendButton, this.sendStatus]),
     );
+  }
+
+  /** The result of the last Send ("Sent", "No new marks", or a problem); empty clears it. */
+  setSendStatus(text: string): void {
+    this.sendStatus.textContent = text;
+  }
+
+  /** Enables Send while a send is not in flight. */
+  setSending(sending: boolean): void {
+    this.sendButton.disabled = sending || this.project.value === "";
   }
 
   /** The linked projects; adding is impossible while there are none. */
@@ -59,5 +82,6 @@ export class AddFrameForm {
     );
     if (projects.some((project) => project.id === previous)) this.project.value = previous;
     this.addButton.disabled = projects.length === 0;
+    this.sendButton.disabled = projects.length === 0;
   }
 }

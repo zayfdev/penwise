@@ -238,16 +238,77 @@ main {
 }
 
 #frames .frame iframe {
+  position: absolute;
+  z-index: 1;
   display: block;
-  width: 100%;
-  height: 100%;
   border: 0;
   background: #fff;
   pointer-events: none;
 }
 
+/* The previous live frame: kept, same size and layout, but not seen or reached. */
+#frames .frame iframe[data-warm] {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 #frames.interact .frame iframe {
   pointer-events: auto;
+}
+
+/* The still: strips of the server's picture of the document, in document coordinates. */
+#frames .frame .stills {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+#frames.interact .frame .stills {
+  pointer-events: auto;
+}
+
+#frames .frame .stills img {
+  position: absolute;
+  left: 0;
+  display: block;
+  max-width: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* Until the server has made a still, the box says so instead of being a blank sheet. */
+#frames .frame.no-still {
+  background: repeating-linear-gradient(135deg, #f1f1f3 0 12px, #fafafb 12px 24px);
+}
+
+#frames .frame.no-still::after {
+  content: "Capturing…";
+  position: absolute;
+  z-index: 0;
+  top: 12px;
+  left: 12px;
+  color: #7a7a82;
+  font-size: 12px;
+}
+
+.agent-chip {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  z-index: 5;
+  transform: translateX(-50%);
+  padding: 6px 14px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--accent);
+  font: inherit;
+  box-shadow: 0 2px 10px rgb(0 0 0 / 0.18);
+  cursor: pointer;
+}
+
+.agent-chip[hidden] {
+  display: none;
 }
 
 #frame-chips {

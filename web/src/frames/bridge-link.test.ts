@@ -17,10 +17,18 @@ const LAYOUT: Layout = {
   doc: [390, 2000],
   viewport: [390, 844],
   state: "",
+  cause: "page",
+  requestId: null,
   rects: { a: [10, 20, 30, 40] },
 };
 
 describe("BridgeChannel", () => {
+  it("asks the page to scroll with an id the bridge echoes", () => {
+    const { window, posted } = fakeWindow();
+    new BridgeChannel(() => window).scrollTo(0, 2400, 3);
+    expect(posted).toEqual([{ t: "pw:scrollTo", x: 0, y: 2400, id: 3 }]);
+  });
+
   it("posts the watched keys and re-posts them after a new document", () => {
     const { window, posted } = fakeWindow();
     const channel = new BridgeChannel(() => window);
@@ -66,6 +74,25 @@ describe("BridgeChannel", () => {
     expect(merged?.rects).toEqual({ a: [50, 60, 30, 40], b: null });
     expect(merged?.state).toBe("");
     expect(channel.layout()?.rects).toEqual({ a: [50, 60, 30, 40], b: null });
+  });
+
+  it("accumulates the rects of later messages, which carry only what changed", () => {
+    const { window } = fakeWindow();
+    const channel = new BridgeChannel(() => window);
+    channel.store(LAYOUT);
+    channel.store({ ...LAYOUT, scroll: [0, 90], rects: { b: [1, 2, 3, 4] } });
+    expect(channel.layout()?.scroll).toEqual([0, 90]);
+    // `a` was reported at scroll 40, so it sits at document y 60: at scroll 90 it is 30 px above the viewport.
+    expect(channel.layout()?.rects).toEqual({ a: [10, -30, 30, 40], b: [1, 2, 3, 4] });
+    // At scroll zero the viewport rects are the document rects.
+    expect(channel.documentLayout()).toMatchObject({
+      scroll: [0, 0],
+      doc: [390, 2000],
+      rects: { a: [10, 60, 30, 40], b: [1, 92, 3, 4] },
+    });
+    channel.loaded();
+    channel.store({ ...LAYOUT, rects: { c: [1, 1, 1, 1] } });
+    expect(channel.layout()?.rects).toEqual({ c: [1, 1, 1, 1] });
   });
 
   it("posts a replay recipe and reads the current state", () => {

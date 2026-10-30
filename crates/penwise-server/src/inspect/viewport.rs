@@ -21,6 +21,13 @@ impl Page {
         self.set_viewport(width, height).await
     }
 
+    pub(super) async fn setup(&self, width: u32, height: u32) -> Result<(), Error> {
+        for domain in ["Page.enable", "DOM.enable", "CSS.enable"] {
+            self.command(domain, serde_json::json!({})).await?;
+        }
+        self.set_viewport(width, height).await
+    }
+
     pub(super) async fn set_viewport(&self, width: u32, height: u32) -> Result<(), Error> {
         self.command(
             "Emulation.setDeviceMetricsOverride",

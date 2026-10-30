@@ -79,19 +79,14 @@ impl FrameItem {
 
     /// The frame's box on the board, `[width, height]` in page units. A [`FrameExtent::Viewport`] frame is
     /// `[css_w, css_h]`; a [`FrameExtent::Full`] one is `[css_w, max(css_h, h)]` where `h` is
-    /// `layout_doc_h` (the live or still document height a rendering client knows) or, when `None`, the
-    /// synced `doc_h` hint; the height is clamped to [`MAX_FRAME_SIDE`] (the bridge is untrusted). Bounds, hit tests, the lasso, validation and mark clipping pass `None`.
+    /// `layout_doc_h` (the live or still document height a rendering client knows; `None`, non-finite or
+    /// `<= 0` mean unknown) or the synced `doc_h` hint; the height is clamped to [`MAX_FRAME_SIDE`] (the bridge is untrusted). Bounds, hit tests, the lasso, validation and mark clipping pass `None`.
     #[must_use]
     pub fn box_size(&self, layout_doc_h: Option<f32>) -> [f32; 2] {
         let [w, h] = self.page_size();
         match self.extent {
             FrameExtent::Viewport => [w, h],
-            FrameExtent::Full => {
-                let doc = layout_doc_h
-                    .filter(|v| v.is_finite())
-                    .unwrap_or_else(|| side_px(self.doc_h));
-                [w, full_box_height(h, doc)]
-            }
+            FrameExtent::Full => [w, full_box_height(h, layout_doc_h, side_px(self.doc_h))],
         }
     }
 
@@ -226,7 +221,12 @@ pub fn add_frame(spec: &FrameSpec, id: ItemId, layer: Layer, z: i64) -> Edit {
     spec.edit(id, layer, z)
 }
 
-/// Height of a full-length box: `doc` (CSS px) clamped to `0 ..= MAX_FRAME_SIDE`, never below the viewport `css_h`.
-pub(crate) fn full_box_height(css_h: f32, doc: f32) -> f32 {
+/// Height of a full-length box: the one rule every box size goes through. The live document height `layout_doc`
+/// (CSS px) wins when it is finite and above 0; otherwise the synced `hint` (`0` = unknown) applies. The result
+/// is clamped to `0 ..= MAX_FRAME_SIDE` (the bridge is untrusted) and is never below the viewport `css_h`.
+pub(crate) fn full_box_height(css_h: f32, layout_doc: Option<f32>, hint: f32) -> f32 {
+    let doc = layout_doc
+        .filter(|h| h.is_finite() && *h > 0.0)
+        .unwrap_or(hint);
     crate::float::max(css_h, doc.clamp(0.0, side_px(MAX_FRAME_SIDE)))
 }

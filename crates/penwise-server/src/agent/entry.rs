@@ -195,12 +195,11 @@ async fn resolve_element(
         }
         BindingMode::Area => {
             let rect = facts.rects.get(&entry.id).copied().flatten()?;
+            // The mark's rect is in page coordinates; the element lives at a document point, possibly far below
+            // the first screen, which `element_at_doc` scrolls into view.
             let x = rect[0] - facts.position[0] + rect[2] / 2.0;
             let y = rect[1] - facts.position[1] + rect[3] / 2.0;
-            inspect
-                .element_at(&facts.browser.page, f64::from(x), f64::from(y))
-                .await
-                .ok()
+            facts.browser.element_at_doc(inspect, [x, y]).await.ok()
         }
     }
 }
@@ -213,17 +212,16 @@ async fn point_element(
     local: [f32; 2],
 ) -> Option<Value> {
     let binding = binding?;
+    // Document coordinates: the page is measured at scroll 0, so a node's viewport rect is its document rect,
+    // and an area mark's samples are stored in document coordinates already.
     let point = match binding.mode {
         BindingMode::Bound => {
             let node = facts.browser.node(binding.key.as_deref()?)?;
             [node.rect[0] + local[0], node.rect[1] + local[1]]
         }
-        BindingMode::Area => [
-            local[0] - facts.browser.scroll[0],
-            local[1] - facts.browser.scroll[1],
-        ],
+        BindingMode::Area => local,
     };
-    super::frame::element_at_point(inspect, &facts.browser.page, point).await
+    super::frame::element_at_point(inspect, facts.browser, point).await
 }
 
 /// A state recipe as its steps (`"click: a;click: b"` → `["click: a", "click: b"]`).

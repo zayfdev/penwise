@@ -96,6 +96,17 @@ export class Peer {
     await this.settled();
   }
 
+  /**
+   * Sends `Focus { page, item }` (switch to `page`, fit the frame). `false` when the server did not report
+   * protocol 2, so a client must not send it.
+   */
+  focus(page: string, item: string | null): boolean {
+    const bytes = this.viewer.focus(page, item);
+    if (!bytes) return false;
+    this.socket.send(bytes as Uint8Array<ArrayBuffer>);
+    return true;
+  }
+
   /** Waits until every local op is acknowledged. */
   async settled(): Promise<void> {
     const deadline = Date.now() + 10_000;

@@ -16,6 +16,7 @@
 
 mod bytes;
 pub mod error;
+mod jni_frames;
 mod jni_scene;
 mod jni_scene_tools;
 mod jni_sync;

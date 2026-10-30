@@ -15,7 +15,7 @@ export interface ActionEvents {
 /** HTTP-backed user actions. */
 export class Actions {
   constructor(
-    private readonly api: Pick<Api, "createPage" | "createNotebook">,
+    private readonly api: Pick<Api, "createPage" | "createNotebook" | "sendRound">,
     private readonly events: ActionEvents,
   ) {}
 
@@ -33,6 +33,16 @@ export class Actions {
       await this.api.createNotebook(title);
     } catch (error) {
       this.events.problem(`could not create the notebook: ${String(error)}`);
+    }
+  }
+
+  /** "Send": closes the project's open round; the words to show next to the button. */
+  async sendRound(project: string): Promise<string> {
+    try {
+      return (await this.api.sendRound(project)) ? "Sent" : "No new marks";
+    } catch (error) {
+      this.events.problem(`round not sent: ${String(error)}`);
+      return "Not sent";
     }
   }
 

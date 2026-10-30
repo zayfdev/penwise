@@ -7,6 +7,8 @@ import {
   layoutJson,
   patchFor,
   patchMessage,
+  readHit,
+  scrollToMessage,
 } from "./bridge-messages";
 
 const LAYOUT: Layout = {
@@ -14,6 +16,8 @@ const LAYOUT: Layout = {
   doc: [390, 2400],
   viewport: [390, 844],
   state: "click:#menu",
+  cause: "page",
+  requestId: null,
   rects: { "v1|a|h1|…": [10, 20, 300, 80], "v1||gone|…": null },
 };
 
@@ -46,9 +50,23 @@ describe("decodeBridge", () => {
         doc: [3, 4],
         viewport: [5, 6],
         state: "",
+        cause: "page",
+        requestId: null,
         rects: { good: [1, 2, 3, 4] },
       },
     });
+  });
+
+  it("reads the scroll's cause and the request it answers; an unknown cause is the page's", () => {
+    const row = { t: "pw:layout", scroll: [0, 9], doc: [1, 1], viewport: [1, 1], rects: {} };
+    const layoutOf = (extra: object) => {
+      const message = decodeBridge({ ...row, ...extra });
+      return message?.t === "layout" ? message.layout : null;
+    };
+    expect(layoutOf({ cause: "user" })).toMatchObject({ cause: "user", requestId: null });
+    expect(layoutOf({ cause: "request", id: 4 })).toMatchObject({ cause: "request", requestId: 4 });
+    expect(layoutOf({ cause: "weird" })).toMatchObject({ cause: "page" });
+    expect(layoutOf({})).toMatchObject({ cause: "page" });
   });
 
   it("drops a layout missing a required array or carrying non-finite numbers", () => {
@@ -192,5 +210,23 @@ describe("bindingJson", () => {
     });
     expect(bindingJson(null, "bound", "v1|src|h1")).toBeNull();
     expect(bindingJson("", "area", null)).toBeNull();
+  });
+});
+
+describe("readHit", () => {
+  it("reads the bridge's and the server's hit shape", () => {
+    expect(readHit({ key: "v1|a", selector: "a", rect: [1, 2, 3, 4] })).toEqual({
+      key: "v1|a",
+      rect: [1, 2, 3, 4],
+    });
+    expect(readHit({ key: "", rect: [1, 2, 3, 4] })).toEqual({ key: null, rect: null });
+    expect(readHit({ key: "k", rect: [1, 2] })).toEqual({ key: "k", rect: null });
+    expect(readHit("nope")).toEqual({ key: null, rect: null });
+  });
+});
+
+describe("scrollToMessage", () => {
+  it("is the bridge's pw:scrollTo", () => {
+    expect(scrollToMessage(0, 2400, 7)).toEqual({ t: "pw:scrollTo", x: 0, y: 2400, id: 7 });
   });
 });

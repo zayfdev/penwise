@@ -6,7 +6,7 @@ use axum::extract::{Query, State};
 use axum::routing::post;
 use penwise_core::edit::Edit;
 use penwise_core::item::{ItemId, Layer, Z_STEP};
-use penwise_proto::OpId;
+use penwise_proto::{OpId, PageId};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -55,6 +55,19 @@ async fn annotate(
 ) -> Result<Json<Value>, ApiError> {
     let requested = request.page.as_deref().or(query.page.as_deref());
     let page = page_of(&app, requested).await?;
+    let added = add_annotations(&app, page, &request).await?;
+    Ok(Json(json!({ "added": added })))
+}
+
+/// Draws `request`'s strokes on `page`'s agent layer in one batch; returns how many strokes were added.
+///
+/// # Errors
+/// 404 for an unknown page, storage failures.
+pub(crate) async fn add_annotations(
+    app: &AppState,
+    page: PageId,
+    request: &AnnotateRequest,
+) -> Result<usize, ApiError> {
     let view = app
         .storage
         .page_view(page)
@@ -64,14 +77,14 @@ async fn annotate(
     let mut identity = RandomIdentity {
         now_ms: app.storage.now_ms(),
     };
-    let items = to_items(&request, first_z, &mut identity);
+    let items = to_items(request, first_z, &mut identity);
     let added = items.len();
     let mut author = Author::new(&app.storage);
     for item in items {
         author.item(page, Edit::Add(item)).await?;
     }
     author.commit().await?;
-    Ok(Json(json!({ "added": added })))
+    Ok(added)
 }
 
 /// Deletes every live agent item of the page (`?page=` or body `{"page"}`); ink and promoted marks stay.

@@ -14,6 +14,7 @@ pub mod pairing;
 mod pictures;
 mod qr;
 mod render;
+mod rounds;
 mod search;
 pub mod serve;
 mod sidecar;

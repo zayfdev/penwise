@@ -10,6 +10,7 @@ use penwise_core::item::{
     FrameExtent, FrameItem, FramePreset, FrameSize, FrameSpec, IdSource, ItemId, ItemKind, Layer,
     LayerSet, add_frame, set_chosen,
 };
+use penwise_core::marks::frame_box_size;
 use penwise_proto::{ItemRef, PageId};
 use serde::Deserialize;
 use serde_json::json;
@@ -37,9 +38,11 @@ struct AddFrameRequest {
 impl Viewer {
     /// Live frames of `page` as JSON:
     /// `[{"id","project","route","preset","cssW","cssH","extent","docH","boxH","rect":[x,y,w,h],"patch","label",
-    /// "group","chosen"}]`, in paint order; `extent` is `"viewport"` or `"full"`, `docH` the server's measured
-    /// document height (`0` = unknown), `boxH` the box height on the board, `patch` the P1 patch as an object
-    /// (or `null`). Unknown page → `[]`.
+    /// "group","chosen","hex"}]`, in paint order; `id` is the 26-char ULID text, `hex` the 32-hex id the HTTP
+    /// routes take (`/frames/{hex}/still`); `extent` is `"viewport"` or `"full"`, `docH` the server's measured
+    /// document height (`0` = unknown), `boxH` the box height on the board computed by core from the frame's
+    /// current layout (the size `Placement` clips with; clients never compute it), `patch` the P1 patch as an
+    /// object (or `null`). Unknown page → `[]`.
     ///
     /// # Errors
     /// `JsError` for a malformed page id.
@@ -109,6 +112,7 @@ impl Viewer {
                 let rect = scene.bounds(id)?;
                 Some(json!({
                     "id": ItemRef::from(id).to_string(),
+                    "hex": id.to_hex(),
                     "project": frame.project,
                     "route": frame.route,
                     "preset": frame.preset.as_str(),
@@ -116,7 +120,7 @@ impl Viewer {
                     "cssH": frame.css_h,
                     "extent": frame.extent.as_str(),
                     "docH": frame.doc_h,
-                    "boxH": frame.box_size(None)[1],
+                    "boxH": frame_box_size(scene, &self.layouts, id)?[1],
                     "rect": [rect.min_x, rect.min_y, rect.width(), rect.height()],
                     "patch": patch_json(frame.patch.as_deref()),
                     "label": frame.label,

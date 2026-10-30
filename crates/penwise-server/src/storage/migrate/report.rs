@@ -17,6 +17,10 @@ pub struct MigrationReport {
     /// The database was already v4: nothing was done.
     pub already_current: bool,
     pub dry_run: bool,
+    /// A dry run found a v4 database: this numbered step would be applied when the server opens it.
+    pub pending_step: Option<u32>,
+    /// A run upgraded a v4 database with this numbered step.
+    pub applied_step: Option<u32>,
     /// `VACUUM INTO` copy of the v3 database (not made by a dry run).
     pub backup: Option<PathBuf>,
     pub notebooks: u64,
@@ -40,7 +44,16 @@ pub struct MigrationReport {
 impl fmt::Display for MigrationReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.already_current {
-            return writeln!(f, "already schema v4: nothing to do");
+            return writeln!(f, "already the current schema: nothing to do");
+        }
+        if let Some(step) = self.pending_step {
+            return writeln!(
+                f,
+                "schema v4: step {step} pending (dry run, nothing written); it is applied when the server opens the database or `migrate` runs"
+            );
+        }
+        if let Some(step) = self.applied_step {
+            return writeln!(f, "schema v4 -> v{step}: step {step} applied");
         }
         let mode = if self.dry_run {
             "dry run (nothing written)"

@@ -386,3 +386,69 @@ fn edit_v5_carries_full_frames_and_the_new_fields() {
     assert_eq!(bytes[4..6], EDIT_VERSION.to_le_bytes());
     assert_eq!(decode_edit(&bytes).as_ref(), Ok(&update));
 }
+
+/// One rule for every box size: `FrameItem::box_size(layout doc)` and the size marks clip with agree for
+/// every combination of live height and hint.
+#[test]
+fn item_and_placement_box_sizes_follow_one_rule() {
+    use penwise_core::marks::{FrameLayoutUpdate, FrameLayouts, frame_box_size};
+
+    let lives = [
+        None,
+        Some(0.0_f32),
+        Some(-40.0),
+        Some(300.0),
+        Some(2500.0),
+        Some(1.0e30),
+    ];
+    for doc_h in [0_u32, 700, 4000] {
+        for extent in [FrameExtent::Full, FrameExtent::Viewport] {
+            let mut scene = Scene::new(PageKind::Infinite);
+            let mut item = full_frame(doc_h);
+            let ItemKind::Frame(frame) = &mut item.kind else {
+                panic!("frame")
+            };
+            frame.extent = extent;
+            scene.apply(&Edit::Add(item)).unwrap();
+            for live in lives {
+                let mut layouts = FrameLayouts::new();
+                if let Some(h) = live {
+                    layouts.merge(
+                        id(1),
+                        FramePreset::Desktop,
+                        &FrameLayoutUpdate {
+                            doc: Some([1440.0, h]),
+                            ..FrameLayoutUpdate::default()
+                        },
+                    );
+                }
+                assert_eq!(
+                    frame_box_size(&scene, &layouts, id(1)),
+                    Some(frame_of(&scene, id(1)).box_size(live)),
+                    "{extent:?} doc_h {doc_h} live {live:?}"
+                );
+            }
+        }
+    }
+    assert_eq!(
+        frame_box_size(&Scene::new(PageKind::Infinite), &FrameLayouts::new(), id(1)),
+        None
+    );
+}
+
+#[test]
+fn a_live_height_of_zero_or_below_falls_back_to_the_hint() {
+    let ItemKind::Frame(frame) = full_frame(4000).kind else {
+        panic!("frame")
+    };
+    for unknown in [
+        Some(0.0),
+        Some(-1.0),
+        Some(f32::NAN),
+        Some(f32::INFINITY),
+        None,
+    ] {
+        assert_eq!(frame.box_size(unknown), [1440.0, 4000.0], "{unknown:?}");
+    }
+    assert_eq!(frame.box_size(Some(5000.0)), [1440.0, 5000.0]);
+}

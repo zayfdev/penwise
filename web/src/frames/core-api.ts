@@ -11,6 +11,8 @@ import type { Viewer } from "../wasm";
 export interface CoreApi {
   /** Merges a frame's layout; true when what is drawn may have changed. */
   set_frame_layout(frame: string, json: string): boolean;
+  /** Drops a frame's layout entirely (demote to the still: the next `set_frame_layout` replaces, never merges). */
+  clear_frame_layout(frame: string): boolean;
   /** JSON array of element keys the frame's bound strokes need rects for. */
   frame_keys(frame: string): string;
   /** Commits the open stroke with a binding: `{"frame","mode","key"?}`. */

@@ -76,8 +76,14 @@ it and never change it; a needed change goes back to the orchestrator. File:line
 
 - `GET /frames/{id}/still` → `{version, doc:[w,h], viewport:[w,h], strips:[{y,h,url}], layout:{rects, state}}`.
   `layout.rects` are **document** coords for the frame's watched keys (bound marks) — clients feed them to core
-  as the frame's layout while it is not live.
-- `GET /frames/{id}/still/{version}/{y}.png` — strips of at most 4096 CSS px tall, `captureBeyondViewport`,
+  as the frame's layout while it is not live. `ETag` = `"<version>"`; `304` on a matching `If-None-Match`. An
+  infinite feed (§6) adds `"note":"infinite feed: viewport mode"`.
+- **Polling:** clients poll `GET /frames/{id}/still` every 3 s with `If-None-Match` for every visible non-live
+  frame. Strip URLs are **content-addressed** (`/frames/{id}/strip/{hash}.png`, immutable): a new version that
+  only changed rects reuses the same URLs, so clients fetch only strips whose URL they don't have yet.
+- Scaled strips: `GET /frames/{id}/strip/{hash}.png?w=<px>` serves the strip downscaled to the smallest of 360 / 720 / 1440
+  that is at least `w` (never above the strip's own width), cached beside the strip and immutable like it.
+- Strips: at most 4096 CSS px tall and at most ~6 Mpx (`h = min(4096, 6_000_000 / width)`), `captureBeyondViewport`,
   viewport kept at `css_w × css_h` (never resized to the document), no ink (clients draw ink themselves).
 - Made on: frame created, live reload/HMR settled, patch changed, route changed — debounced 500 ms. Each new
   still writes `FrameDocHeight` (server device op) when the height changed by more than 1 px, clamped so that
@@ -88,9 +94,28 @@ it and never change it; a needed change goes back to the orchestrator. File:line
   point below the first screen, scroll the headless page so the point is in view, then `getNodeForLocation`
   (`entry.rs:195-205`). `MAX_VIEWPORT`/crop caps apply per strip, not per document.
 - Server pen-down hit for points outside a client's live window: `GET /frames/{id}/hit?x&y` (doc coords) →
-  same payload as the bridge's `pw:hit`.
+  same payload as the bridge's `pw:hit` (`{key, selector, rect}`), but `rect` is in **document** coordinates
+  (clients convert); all three are `null` when nothing is there. It is answered from the still's **hit map**
+  (every visible element's key, selector and document rect, collected on the pre-rolled capture page, topmost
+  first), in milliseconds and for the exact version the owner drew on; the browser path is only a fallback
+  when no still exists.
+- Capture order: load → pre-roll → back to 0 → network idle → pause animations/transitions → state replay →
+  patch → measure → hit map → strips. Headless capture pages identify themselves (extra request header) and
+  their sockets never count as HMR.
 
 ## 5. Input
+
+- **Who moves the camera:** the camera follows the page's scroll **only for scrolls the owner started** (finger or
+  wheel in the page, and the fling/momentum after it). Every other scroll — reload/HMR restore, route change,
+  anchors, `scrollIntoView`, smooth-scroll libraries, the client's own scroll request — moves only the live
+  window; by §1 the page still sits right on the board. Never while the pen is down.
+- The bridge labels every `pw:scroll`/`pw:layout` with `cause`: `"user"` (wheel/touch/key/pointer input in the
+  page within the last 250 ms or while a pointer is down, plus the momentum after it), `"request"` (echoes the `id`
+  of the `pw:scrollTo {x, y, id}` that caused it; `pw:scrollTo` scrolls with `behavior: "instant"`), else
+  `"page"`. The tablet may use its own touch knowledge instead (native `onScrollChanged` + finger state).
+- Frame JSON from core (`ffi` and `wasm`) carries `boxH` computed by core from the frame's current layout
+  (`box_size(layout doc)`, the same function `Placement` uses) and `hex` (the 32-hex id the HTTP routes take).
+  Clients never compute box height or convert ids themselves.
 
 - Pen: always ink. Pen-down inside the live window → bridge `pw:hit?` (viewport px = doc − scroll). Outside it,
   on the still → server `hit`. Binding stays pending until the answer, as in v1.

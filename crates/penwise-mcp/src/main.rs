@@ -1,10 +1,9 @@
-//! Penwise MCP server (stdio): lets an agent read the tablet's page.
+//! Penwise MCP server (stdio): four tools between an agent and the owner's design board.
 //!
 //! JSON-RPC 2.0 over stdin/stdout, MCP `initialize` / `tools/list` / `tools/call`. It talks to the Penwise server
-//! over plain HTTP on the loopback interface, so it needs no TLS stack and no async runtime.
-//!
-//! Tools: `penwise_page_png` (render the page), `penwise_page_status` (stroke count), and the design-harness
-//! tools in [`design`] (mark bundles, frames, project list).
+//! over plain HTTP on the loopback interface, so it needs no TLS stack and no async runtime. The tools are
+//! `look`, `show`, `resolve` and `notes` ([`tools`]); every one maps onto a server route and the composition
+//! lives in the server. The project comes from `PENWISE_PROJECT` (written by `penwise link`).
 #![allow(
     clippy::print_stdout,
     clippy::print_stderr,
@@ -17,9 +16,10 @@ const SERVER_NAME: &str = "penwise";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const DEFAULT_PROTOCOL: &str = "2024-11-05";
 mod base64;
-mod design;
 mod endpoint;
-mod pictures;
+mod look;
+mod notes;
+mod show;
 mod tools;
 
 use endpoint::resolve_token;
@@ -36,10 +36,11 @@ fn main() {
         port,
         token: resolve_token(),
     };
-    // The project `penwise link` wrote into this config: tools that take a project default to it.
-    let default_project = std::env::var("PENWISE_PROJECT")
+    // The project `penwise link` wrote into this config; no tool takes a project argument.
+    let project = std::env::var("PENWISE_PROJECT")
         .ok()
-        .filter(|project| !project.trim().is_empty());
+        .map(|project| project.trim().to_owned())
+        .filter(|project| !project.is_empty());
     let stdin = std::io::stdin();
     let mut lines = stdin.lock().lines();
     while let Some(Ok(line)) = lines.next() {
@@ -54,7 +55,7 @@ fn main() {
                 continue;
             }
         };
-        if let Some(response) = handle(&request, &endpoint, default_project.as_deref()) {
+        if let Some(response) = handle(&request, &endpoint, project.as_deref()) {
             let mut out = std::io::stdout();
             if writeln!(out, "{response}").is_err() || out.flush().is_err() {
                 break;
@@ -63,11 +64,11 @@ fn main() {
     }
 }
 
-/// Where the Penwise server lives.
+/// One JSON-RPC request; `None` for notifications (no `id`).
 fn handle(
     request: &serde_json::Value,
     endpoint: &Endpoint,
-    default_project: Option<&str>,
+    project: Option<&str>,
 ) -> Option<serde_json::Value> {
     let id = request.get("id")?.clone();
     let method = request
@@ -77,7 +78,11 @@ fn handle(
     let result = match method {
         "initialize" => Ok(initialize(request)),
         "tools/list" => Ok(tools::tools_list()),
-        "tools/call" => call_tool(request, endpoint, default_project),
+        "tools/call" => match call_tool(request, endpoint, project) {
+            Err(CallError::Tool(message)) => Ok(tool_error(&message)),
+            Err(CallError::Protocol(failure)) => Err(failure),
+            Ok(result) => Ok(result),
+        },
         "ping" => Ok(serde_json::json!({})),
         other => Err(error(-32601, &format!("unknown method {other}"))),
     };
@@ -96,108 +101,70 @@ fn initialize(request: &serde_json::Value) -> serde_json::Value {
         "protocolVersion": version,
         "capabilities": { "tools": { "listChanged": false } },
         "serverInfo": { "name": SERVER_NAME, "version": SERVER_VERSION },
-        "instructions": "Penwise: the user's pen tablet page. Use penwise_page_png to look at what they drew; on linked projects use penwise_marks to read marks on a frame (kind, colour, handwriting, element, source lines, crops); PENWISE_PROJECT makes the project argument optional. Before editing code, show a change with penwise_ghost or propose 2-4 options with penwise_variants, then read the owner's pick with penwise_choice.",
+        "instructions": "Penwise: the owner draws marks on a live copy of the linked project. Loop: look (read the marks with file:line), show (a frame, a ghost, 2-4 variants, a sketch), edit the code, look again to read the owner's pick, resolve. notes reads the owner's plain notes.",
     })
+}
+
+/// Why a `tools/call` produced no result: a malformed request (a JSON-RPC error) or a tool that could not do
+/// its work (reported to the model as an `isError` result, so it can read the message and recover).
+enum CallError {
+    Protocol(serde_json::Value),
+    Tool(String),
 }
 
 fn call_tool(
     request: &serde_json::Value,
     endpoint: &Endpoint,
-    default_project: Option<&str>,
-) -> Result<serde_json::Value, serde_json::Value> {
+    project: Option<&str>,
+) -> Result<serde_json::Value, CallError> {
     let name = request
         .pointer("/params/name")
         .and_then(serde_json::Value::as_str)
         .unwrap_or("");
-    if let Some(result) = design::tool(name, request, endpoint, default_project) {
-        return result;
+    if !matches!(name, "look" | "show" | "resolve" | "notes") {
+        return Err(CallError::Protocol(error(
+            -32602,
+            &format!("unknown tool {name}"),
+        )));
     }
-    if matches!(
-        name,
-        "penwise_place_image" | "penwise_list_images" | "penwise_remove_image"
-    ) {
-        return pictures::picture_tool(name, request, endpoint);
-    }
-    match name {
-        "penwise_page_png" => {
-            let scale = request
-                .pointer("/params/arguments/scale")
-                .and_then(serde_json::Value::as_f64)
-                .unwrap_or(1.0);
-            let arguments = arguments(request);
-            let page = page_query(&arguments);
-            let png = endpoint
-                .get(&format!("/page.png?scale={scale}{page}"))
-                .map_err(|failure| error(-32603, &failure))?;
-            Ok(serde_json::json!({
-                "content": [
-                    { "type": "text", "text": format!("Penwise page, {} PNG bytes at scale {scale}.", png.len()) },
-                    { "type": "image", "mimeType": "image/png", "data": base64::encode(&png) }
-                ]
-            }))
+    let outcome = if name == "notes" {
+        notes::notes(request, endpoint)
+    } else {
+        match project {
+            None => Err(error(
+                -32602,
+                "PENWISE_PROJECT is not set: run `penwise link` in the project and restart the agent",
+            )),
+            Some(project) => match name {
+                "look" => look::look(request, endpoint, project),
+                "show" => show::show(request, endpoint, project),
+                _ => show::resolve(request, endpoint, project),
+            },
         }
-        "penwise_page_status" => get_text(endpoint, &page_path("/health", request)),
-        "penwise_annotate" => post_arguments(request, endpoint, "/annotate"),
-        "penwise_clear_agent_marks" => {
-            post_text(endpoint, &page_path("/annotate/clear", request), "{}")
-        }
-        "penwise_list_pages" => get_text(endpoint, "/pages"),
-        "penwise_search" => {
-            let query = arguments(request)
-                .get("query")
+    };
+    outcome.map_err(|failure| {
+        CallError::Tool(
+            failure
+                .get("message")
                 .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| error(-32602, "missing query"))?
-                .to_owned();
-            get_text(endpoint, &format!("/search?q={}", encode_query(&query)))
-        }
-        "penwise_page_text" => {
-            let arguments = arguments(request);
-            let page = page_query(&arguments);
-            let refresh = if arguments
-                .get("refresh")
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false)
-            {
-                "&refresh=true"
-            } else {
-                ""
-            };
-            get_text(endpoint, &format!("/text?x=1{page}{refresh}"))
-        }
-        "penwise_create_page" => post_arguments(request, endpoint, "/pages"),
-        "penwise_create_notebook" => post_arguments(request, endpoint, "/notebooks"),
-        "penwise_switch_page" => {
-            let arguments = arguments(request);
-            let page = arguments
-                .get("page")
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| error(-32602, "missing page"))?;
-            post_text(
-                endpoint,
-                &format!("/pages/{}/select", encode_segment(page)),
-                "{}",
-            )
-        }
-        other => Err(error(-32602, &format!("unknown tool {other}"))),
-    }
+                .unwrap_or("the tool failed")
+                .to_owned(),
+        )
+    })
 }
 
-/// `&page=<id>` (encoded) when the arguments name a page, else nothing.
-fn page_query(arguments: &serde_json::Value) -> String {
-    arguments
-        .get("page")
-        .and_then(serde_json::Value::as_str)
-        .map(|page| format!("&page={}", encode_segment(page)))
-        .unwrap_or_default()
+/// A failed tool call as MCP wants it: a result with `isError`, whose text the model reads.
+fn tool_error(message: &str) -> serde_json::Value {
+    serde_json::json!({ "isError": true, "content": [{ "type": "text", "text": message }] })
 }
 
 /// Percent-encodes everything but unreserved bytes, spaces as `+` (a query value).
-fn encode_query(value: &str) -> String {
+pub(crate) fn encode_query(value: &str) -> String {
     percent_encode(value, "+")
 }
 
-/// Percent-encodes everything but unreserved bytes (a path segment or `page=` value). A page id comes from
-/// the agent's tool arguments and is spliced into the HTTP request line, so a CR/LF/space in it would end the
+/// Percent-encodes everything but unreserved bytes (a path segment or `page=` value). A value comes from the
+/// agent's tool arguments and is spliced into the HTTP request line, so a CR/LF/space in it would end the
 /// request early and smuggle in another one.
 pub(crate) fn encode_segment(value: &str) -> String {
     percent_encode(value, "%20")
@@ -227,15 +194,6 @@ pub(crate) fn get_text(
     Ok(text_content(&String::from_utf8_lossy(&body)))
 }
 
-/// `POST path` with the call's `arguments` as JSON, returned as a text content block.
-pub(crate) fn post_arguments(
-    request: &serde_json::Value,
-    endpoint: &Endpoint,
-    path: &str,
-) -> Result<serde_json::Value, serde_json::Value> {
-    post_text(endpoint, path, &arguments(request).to_string())
-}
-
 /// `POST path` with an explicit body, returned as a text content block.
 pub(crate) fn post_text(
     endpoint: &Endpoint,
@@ -256,17 +214,6 @@ pub(crate) fn arguments(request: &serde_json::Value) -> serde_json::Value {
         .unwrap_or_else(|| serde_json::json!({}))
 }
 
-/// `path`, plus `?page=<id>` when the arguments name one.
-fn page_path(path: &str, request: &serde_json::Value) -> String {
-    match arguments(request)
-        .get("page")
-        .and_then(serde_json::Value::as_str)
-    {
-        Some(page) => format!("{path}?page={}", encode_segment(page)),
-        None => path.to_owned(),
-    }
-}
-
 pub(crate) fn text_content(text: &str) -> serde_json::Value {
     serde_json::json!({ "content": [{ "type": "text", "text": text }] })
 }
@@ -280,7 +227,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_page_id_with_a_request_smuggle_is_one_inert_path_segment() {
+    fn a_value_with_a_request_smuggle_is_one_inert_path_segment() {
         let hostile = "pg_1 HTTP/1.1\r\n\r\nGET /pages HTTP/1.1\r\nX: ";
         let encoded = encode_segment(hostile);
         assert!(
@@ -294,8 +241,19 @@ mod tests {
     }
 
     #[test]
-    fn the_page_query_encodes_the_id() {
-        let request = serde_json::json!({ "params": { "arguments": { "page": "a b&x=1" } } });
-        assert_eq!("/p?page=a%20b%26x%3D1", page_path("/p", &request));
+    fn a_query_value_turns_spaces_into_plus() {
+        assert_eq!("hello+world%26x", encode_query("hello world&x"));
+    }
+
+    #[test]
+    fn exactly_four_tools_are_listed() {
+        let list = tools::tools_list();
+        let names: Vec<&str> = list["tools"]
+            .as_array()
+            .expect("tools")
+            .iter()
+            .filter_map(|tool| tool["name"].as_str())
+            .collect();
+        assert_eq!(vec!["look", "show", "resolve", "notes"], names);
     }
 }

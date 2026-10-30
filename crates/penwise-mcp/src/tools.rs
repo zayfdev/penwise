@@ -1,281 +1,146 @@
-//! Tool definitions, kept as JSON so the schemas read like the protocol docs.
+//! The four tool definitions (spec v2 §5), kept as JSON so the schemas read like the protocol docs.
 
 pub(crate) fn tools_list() -> serde_json::Value {
     serde_json::from_str::<serde_json::Value>(TOOLS)
         .unwrap_or_else(|_| serde_json::json!({ "tools": [] }))
 }
 
-/// Tool definitions, kept as JSON so the schemas read like the protocol docs.
+/// Tool definitions. Short on purpose: every word is paid for on every request.
 const TOOLS: &str = r##"{
   "tools": [
     {
-      "name": "penwise_page_png",
-      "description": "Render a Penwise page (the user's handwriting/drawing) as a PNG image.",
+      "name": "look",
+      "description": "Read the owner's marks on the board. Returns compact text (project, board, round, frames, one line per open mark: kind, colour meaning, handwriting, selector, file:line, key styles; the owner's variant picks) and one numbered overview image per frame. Returned marks move new -> seen. Takes the latest sent round, else the open one.",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "scale": { "type": "number", "description": "Pixels per page pixel, 0.05–4 (default 1; 0.5 for a smaller image)." },
-          "page": { "type": "string", "description": "Page id; defaults to the active page." }
+          "mark": { "type": "string", "description": "A mark id: its full bundle and crops." },
+          "frame": { "type": "string", "description": "Only the marks on this frame id." },
+          "images": { "type": "string", "enum": ["overview", "none"], "description": "overview (default) or none." }
         }
       }
     },
     {
-      "name": "penwise_page_status",
-      "description": "Stroke and page counts for the active page.",
+      "name": "show",
+      "description": "Show the owner something, exactly one of: frame (a route of the project on the board), ghost (a temporary patch on a frame), variants (2-4 patched copies beside a frame), sketch (strokes on the agent layer), image (a local PNG), focus (move the owner's view). The owner's device follows the result.",
       "inputSchema": {
         "type": "object",
-        "properties": { "page": { "type": "string", "description": "Page id; defaults to the active page." } }
+        "minProperties": 1,
+        "maxProperties": 1,
+        "properties": {
+          "frame": {
+            "type": "object",
+            "description": "Open a route as a frame; an existing frame with the same route and preset is reused.",
+            "properties": {
+              "route": { "type": "string", "description": "Path and query, starting with /." },
+              "preset": { "type": "string", "enum": ["desktop", "tablet", "phone"], "description": "Default desktop." },
+              "extent": { "type": "string", "enum": ["full", "viewport"], "description": "Default full (the whole page)." }
+            },
+            "required": ["route"]
+          },
+          "ghost": {
+            "type": "object",
+            "description": "Show a patch live on a frame, or clear it. patch = {css?, dom?: [{op: set_text|set_html|set_attr|remove|insert|replace, selector, value|html|name}]}.",
+            "properties": {
+              "frame": { "type": "string", "description": "Frame id." },
+              "patch": { "type": "object" },
+              "clear": { "type": "boolean" }
+            },
+            "required": ["frame"]
+          },
+          "variants": {
+            "type": "object",
+            "description": "Create 2-4 variants beside a frame for the owner to pick from, or remove them.",
+            "properties": {
+              "frame": { "type": "string", "description": "Frame id." },
+              "options": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 4,
+                "items": {
+                  "type": "object",
+                  "properties": { "label": { "type": "string" }, "patch": { "type": "object" } },
+                  "required": ["label", "patch"]
+                }
+              },
+              "clear": { "type": "boolean" }
+            },
+            "required": ["frame"]
+          },
+          "sketch": {
+            "type": "object",
+            "description": "Draw polylines on the board (agent layer).",
+            "properties": {
+              "strokes": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "points": { "type": "array", "items": { "type": "array", "items": { "type": "number" } }, "description": "[[x, y], ...] in px." },
+                    "color": { "type": "string", "description": "#RRGGBB" },
+                    "width": { "type": "number" }
+                  },
+                  "required": ["points"]
+                }
+              },
+              "near": { "type": "string", "description": "Frame id: points are then relative to its top-left corner." }
+            },
+            "required": ["strokes"]
+          },
+          "image": {
+            "type": "object",
+            "description": "Place a local PNG on the board.",
+            "properties": {
+              "path": { "type": "string", "description": "Local PNG file." },
+              "x": { "type": "number" },
+              "y": { "type": "number" },
+              "label": { "type": "string" }
+            },
+            "required": ["path"]
+          },
+          "focus": {
+            "type": "object",
+            "description": "Move the owner's view to a frame or a page.",
+            "properties": {
+              "frame": { "type": "string", "description": "Frame id." },
+              "page": { "type": "string", "description": "Page id." }
+            }
+          }
+        }
       }
     },
     {
-      "name": "penwise_annotate",
-      "description": "Draw polylines on the user's page (marks appear as a separate agent layer and can be cleared).",
+      "name": "resolve",
+      "description": "Report what you did. marks: set each mark done, reopened or seen. round: n closes round n, the number look shows (the frame freezes into history and moves right; ghosts and variants clear). true means the latest sent round; an open round needs its number. The round also closes when its last open mark is done.",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "page": { "type": "string", "description": "Page id; defaults to the active page." },
-          "strokes": {
+          "marks": {
             "type": "array",
             "items": {
               "type": "object",
               "properties": {
-                "points": {
-                  "type": "array",
-                  "description": "Page-pixel points [[x, y], …]; two or more make a line.",
-                  "items": { "type": "array", "items": { "type": "number" } }
-                },
-                "color": { "type": "string", "description": "#RRGGBB or #AARRGGBB (default red)" },
-                "width": { "type": "number", "description": "Stroke width in page px (default 3)" }
+                "id": { "type": "string" },
+                "status": { "type": "string", "enum": ["done", "reopened", "seen"] },
+                "note": { "type": "string" }
               },
-              "required": ["points"]
-            }
-          }
-        },
-        "required": ["strokes"]
-      }
-    },
-    {
-      "name": "penwise_clear_agent_marks",
-      "description": "Remove every mark this or another agent drew on the page (the user's own ink is untouched).",
-      "inputSchema": {
-        "type": "object",
-        "properties": { "page": { "type": "string", "description": "Page id; defaults to the active page." } }
-      }
-    },
-    {
-      "name": "penwise_place_image",
-      "description": "Place a picture on the page (a screenshot, a component cut-out, a reference). Ink draws over it and page PNGs include it.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "path": { "type": "string", "description": "Local PNG file to upload and place." },
-          "asset": { "type": "string", "description": "An already-uploaded asset id, instead of path." },
-          "x": { "type": "number", "description": "Left edge in page px." },
-          "y": { "type": "number", "description": "Top edge in page px." },
-          "w": { "type": "number", "description": "Width in page px; defaults to the picture's own width." },
-          "h": { "type": "number", "description": "Height in page px; defaults to the picture's own height." },
-          "label": { "type": "string", "description": "What it is: a URL, a component name." },
-          "page": { "type": "string", "description": "Page id; defaults to the active page." }
-        },
-        "required": ["x", "y"]
-      }
-    },
-    {
-      "name": "penwise_list_images",
-      "description": "The pictures placed on a page, with their ids, assets, positions and labels.",
-      "inputSchema": {
-        "type": "object",
-        "properties": { "page": { "type": "string", "description": "Page id; defaults to the active page." } }
-      }
-    },
-    {
-      "name": "penwise_remove_image",
-      "description": "Remove one placed picture by id.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "id": { "type": "string", "description": "Picture id from penwise_list_images." },
-          "page": { "type": "string", "description": "Page id; defaults to the active page." }
-        },
-        "required": ["id"]
-      }
-    },
-    {
-      "name": "penwise_list_pages",
-      "description": "List notebooks and their pages, with the active page id.",
-      "inputSchema": { "type": "object", "properties": {} }
-    },
-    {
-      "name": "penwise_create_page",
-      "description": "Create a page (defaults: next free title, A4 portrait, blank).",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "title": { "type": "string" },
-          "background": { "type": "string", "enum": ["blank", "ruled", "grid", "dots"] },
-          "kind": { "type": "object", "description": "{\"t\":\"fixed\",\"width\":W,\"height\":H} or {\"t\":\"infinite\"}" },
-          "notebook": { "type": "string" }
-        }
-      }
-    },
-    {
-      "name": "penwise_page_text",
-      "description": "Handwriting on a page as text, read by a local vision model (cached until refresh).",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "page": { "type": "string", "description": "Page id; defaults to the active page." },
-          "refresh": { "type": "boolean", "description": "Re-read the page instead of returning the cache." }
-        }
-      }
-    },
-    {
-      "name": "penwise_search",
-      "description": "Search the handwriting of every page already read as text.",
-      "inputSchema": {
-        "type": "object",
-        "properties": { "query": { "type": "string", "description": "Words to look for, case-insensitive." } },
-        "required": ["query"]
-      }
-    },
-    {
-      "name": "penwise_create_notebook",
-      "description": "Create an empty notebook to group pages.",
-      "inputSchema": {
-        "type": "object",
-        "properties": { "title": { "type": "string" } },
-        "required": ["title"]
-      }
-    },
-    {
-      "name": "penwise_switch_page",
-      "description": "Make a page the active one for the HTTP tools and tell the tablet and browser windows to follow.",
-      "inputSchema": {
-        "type": "object",
-        "properties": { "page": { "type": "string" } },
-        "required": ["page"]
-      }
-    },
-    {
-      "name": "penwise_projects",
-      "description": "Linked design projects: id, name, root, kind (static or proxy), dev origin, port, notebook. Use the id in the frame and mark tools.",
-      "inputSchema": { "type": "object", "properties": {} }
-    },
-    {
-      "name": "penwise_frame_open",
-      "description": "Open a project route as a live frame on a page. Without `page`, the project's \"<name> review\" notebook page is used (created if missing) and the frame goes right of the existing ones.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "project": { "type": "string", "description": "Project id from penwise_projects; defaults to PENWISE_PROJECT from the MCP config." },
-          "route": { "type": "string", "description": "Same-origin path on the project, e.g. \"/\" or \"/work?tag=one\"." },
-          "preset": { "type": "string", "enum": ["phone", "tablet", "desktop", "custom"], "description": "Frame size preset (phone 390×844, tablet 834×1194, desktop 1440×900)." },
-          "page": { "type": "string", "description": "Page id; defaults to the project's review page." }
-        },
-        "required": ["route", "preset"]
-      }
-    },
-    {
-      "name": "penwise_frame_snapshot",
-      "description": "PNG of a frame's live page at its size preset; `ink` includes the owner's marks (default true).",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "frame": { "type": "string", "description": "Frame item id." },
-          "ink": { "type": "boolean", "description": "Include the owner's ink (default true)." }
-        },
-        "required": ["frame"]
-      }
-    },
-    {
-      "name": "penwise_marks",
-      "description": "Mark bundles for what the owner drew on a frame: kind guess (from/to elements for arrows), colour meaning, OCR text, the element (selector, role, text, styles, rect, source file:line rules) and crop images. Advances the agent's checkpoint.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "project": { "type": "string", "description": "Only marks on this project's frames; defaults to PENWISE_PROJECT from the MCP config." },
-          "page": { "type": "string", "description": "Only marks on this page." },
-          "frame": { "type": "string", "description": "Only marks on this frame." },
-          "status": { "type": "string", "enum": ["new", "seen", "done", "reopened", "all"], "description": "Status filter; the default is new plus reopened." },
-          "since": { "type": "string", "description": "\"last\" (default) = created or changed since this agent's previous check; \"none\" = no checkpoint filter." },
-          "agent": { "type": "string", "description": "Checkpoint name, so several agents each see their own new marks (default \"agent\")." },
-          "images": { "type": "string", "enum": ["none", "with_ink", "all"], "description": "Image blocks to return: with_ink (default), all (with_ink + context), or none." }
-        }
-      }
-    },
-    {
-      "name": "penwise_mark_status",
-      "description": "Set a mark's status: seen after reading it, done after the edit landed, reopened when it needs another look.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "id": { "type": "string", "description": "Mark id from penwise_marks." },
-          "status": { "type": "string", "enum": ["seen", "done", "reopened", "new"] },
-          "note": { "type": "string", "description": "Optional note for the owner." }
-        },
-        "required": ["id", "status"]
-      }
-    },
-    {
-      "name": "penwise_ghost",
-      "description": "Show a temporary patch live on a frame before editing any file: CSS plus simple DOM ops (no JS). Reports ops whose selector matched nothing. `clear` removes the ghost.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "frame": { "type": "string", "description": "Frame item id from penwise_frame_open." },
-          "patch": {
-            "type": "object",
-            "description": "P1 patch: {css, dom: [{op, selector, html?, name?, value?}]}, up to 64 KiB. Ops: replace, remove, insert_before, insert_after, append, prepend, set_attr, remove_attr, set_text, add_class, remove_class.",
-            "properties": {
-              "css": { "type": "string", "description": "Stylesheet applied as one <style data-pw-patch>." },
-              "dom": { "type": "array", "items": { "type": "object" } }
+              "required": ["id", "status"]
             }
           },
-          "clear": { "type": "boolean", "description": "Remove the frame's patch instead of setting one." }
-        },
-        "required": ["frame"]
+          "round": { "type": "integer", "minimum": 1, "description": "The round number from look." }
+        }
       }
     },
     {
-      "name": "penwise_variants",
-      "description": "Propose 2–4 variants as frames beside the base frame, each with a label and its own patch. The owner taps one on the tablet or PC; read it back with penwise_choice.",
+      "name": "notes",
+      "description": "The owner's plain notes (not the design board): list pages, read handwriting as text, search, or get a page as PNG.",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "frame": { "type": "string", "description": "The base frame's item id." },
-          "variants": {
-            "type": "array",
-            "minItems": 2,
-            "maxItems": 4,
-            "items": {
-              "type": "object",
-              "properties": {
-                "label": { "type": "string", "description": "Short label the owner sees (≤ 80 characters)." },
-                "patch": { "type": "object", "description": "The variant's P1 patch." }
-              },
-              "required": ["label", "patch"]
-            }
-          }
-        },
-        "required": ["frame", "variants"]
-      }
-    },
-    {
-      "name": "penwise_choice",
-      "description": "Which variant the owner picked (or null), the frames of the group, and the mark bundles they drew on the variants, with crop images.",
-      "inputSchema": {
-        "type": "object",
-        "properties": { "group": { "type": "string", "description": "Group id returned by penwise_variants." } },
-        "required": ["group"]
-      }
-    },
-    {
-      "name": "penwise_variants_clear",
-      "description": "Remove a variant group's frames. The owner's marks on them are kept as done.",
-      "inputSchema": {
-        "type": "object",
-        "properties": { "group": { "type": "string", "description": "Group id returned by penwise_variants." } },
-        "required": ["group"]
+          "query": { "type": "string", "description": "Search the pages already read." },
+          "page": { "type": "string", "description": "Page id (default: the active page)." },
+          "png": { "type": "boolean", "description": "Return the page as a PNG instead of text." }
+        }
       }
     }
   ]

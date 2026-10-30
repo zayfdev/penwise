@@ -1,10 +1,10 @@
 //! JNI exports of [`SyncCore`] (session half): lifecycle, `Hello`, `receive`, `pollPush`, persistence.
-//! Names are `Java_dev_penwise_core_Native_sync*`; see `sync_core` for the semantics and the blob layouts.
+//! Names are `Java_dev_penwise_core_NativeSync_sync*`; see `sync_core` for the semantics and the blob layouts.
 #![allow(unsafe_code)] // `#[unsafe(no_mangle)]` entry points.
 
 use jni::EnvUnowned;
 use jni::objects::{JByteArray, JObject, JString};
-use jni::sys::{jint, jlong};
+use jni::sys::{jboolean, jint, jlong};
 use penwise_proto::{ClientKind, DeviceId};
 
 use crate::error::SyncError;
@@ -15,7 +15,7 @@ use crate::stroke::FfiError;
 use crate::sync_core::SyncCore;
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_syncNew<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeSync_syncNew<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     device: JByteArray<'local>,
@@ -29,7 +29,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_syncNew<'local>(
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_syncRestore<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeSync_syncRestore<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     state: JByteArray<'local>,
@@ -42,7 +42,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_syncRestore<'local>(
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_syncFree<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeSync_syncFree<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -54,7 +54,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_syncFree<'local>(
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_syncExportState<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeSync_syncExportState<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -66,7 +66,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_syncExportState<'local>(
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_syncDevice<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeSync_syncDevice<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -79,7 +79,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_syncDevice<'local>(
 
 /// `kind`: `ClientKind::code` (0 tablet, 1 browser, 2 agent).
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_syncHello<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeSync_syncHello<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -100,7 +100,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_syncHello<'local>(
 
 /// One server frame in, the `Outcome` blob out (layout in `sync_core::outcome`).
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_syncReceive<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeSync_syncReceive<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -116,7 +116,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_syncReceive<'local>(
 
 /// The next `PushOps` frame, or an empty array when nothing may be sent now.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_syncPollPush<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeSync_syncPollPush<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -128,7 +128,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_syncPollPush<'local>(
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_syncOffline<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeSync_syncOffline<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -140,7 +140,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_syncOffline<'local>(
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_syncHeadSeq<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeSync_syncHeadSeq<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -152,7 +152,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_syncHeadSeq<'local>(
 
 /// `[pending ops, dead letters]`.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_syncOutboxCounts<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeSync_syncOutboxCounts<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -168,7 +168,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_syncOutboxCounts<'local>(
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_syncCatalog<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeSync_syncCatalog<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -181,7 +181,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_syncCatalog<'local>(
 
 /// Stamps and queues the edit list (`encode_edits` layout) for `page`; returns the op count.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_syncCommitEdits<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeSync_syncCommitEdits<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -199,7 +199,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_syncCommitEdits<'local>(
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_syncSwitchPage<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeSync_syncSwitchPage<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -212,9 +212,41 @@ pub extern "system" fn Java_dev_penwise_core_Native_syncSwitchPage<'local>(
     })
 }
 
+/// `Focus` frame (ask the other devices to show `page` and fit frame `item`; an empty `item` fits the page's
+/// content). Empty when the server's `Welcome` did not report protocol 2: an older server would drop it.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_penwise_core_NativeSync_syncFocus<'local>(
+    mut env: EnvUnowned<'local>,
+    _this: JObject<'local>,
+    handle: jlong,
+    page: JByteArray<'local>,
+    item: JByteArray<'local>,
+) -> JByteArray<'local> {
+    guarded(&mut env, |env| {
+        let page = crate::jni_util::page_in(env, &page)?;
+        let item = crate::jni_util::opt_id_in(env, &item)?.map(penwise_core::item::ItemId);
+        let frame = handle_ref::<SyncCore>(handle)?.focus(page, item)?;
+        bytes_out(env, frame.as_deref().unwrap_or_default())
+    })
+}
+
+/// True when this connection's `Welcome` reported protocol 2 or newer (`Focus` may be sent).
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_penwise_core_NativeSync_syncServerSupportsFocus<'local>(
+    mut env: EnvUnowned<'local>,
+    _this: JObject<'local>,
+    handle: jlong,
+) -> jboolean {
+    guarded(&mut env, |_env| {
+        Ok(jboolean::from(
+            handle_ref::<SyncCore>(handle)?.server_supports_focus(),
+        ))
+    })
+}
+
 /// `Watch` frame; an empty `page` stops watching.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_syncWatch<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeSync_syncWatch<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -228,7 +260,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_syncWatch<'local>(
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_syncPing<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeSync_syncPing<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,

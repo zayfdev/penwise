@@ -927,3 +927,148 @@ async fn layout_and_keys_work_on_the_patched_dom() {
     inspect.shutdown().await;
     server.shutdown().await;
 }
+
+/// The `pw:scroll` message that reports scroll `y`.
+async fn scroll_at(inspect: &Inspect, page: &Page, y: f64) -> Value {
+    wait_message(inspect, page, "pw:scroll", |message| {
+        message["y"].as_f64() == Some(y)
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_scroll_after_wheel_input_is_labelled_user_and_after_quiet_page() {
+    if !chromium_installed() {
+        tracing::warn!("chromium is not installed; bridge scroll cause test skipped");
+        return;
+    }
+    let server = project().await;
+    let (inspect, page) = open(&server).await;
+
+    inspect
+        .eval(
+            &page,
+            "window.dispatchEvent(new WheelEvent('wheel', {deltaY: 120})); window.scrollTo(0, 300); 1",
+        )
+        .await
+        .expect("wheel");
+    let user = scroll_at(&inspect, &page, 300.0).await;
+    assert_eq!(user["cause"], "user", "{user}");
+    assert!(user.get("id").is_none());
+    let layout = wait_layout(&inspect, &page, |message| {
+        message["scroll"][1].as_f64() == Some(300.0)
+    })
+    .await;
+    assert_eq!(layout["cause"], "user", "{layout}");
+
+    // Input counts for 250 ms (plus the momentum after it): later, the same call is the page's own doing.
+    tokio::time::sleep(Duration::from_millis(700)).await;
+    inspect
+        .eval(&page, "window.scrollTo(0, 340); 1")
+        .await
+        .expect("programmatic");
+    let page_scroll = scroll_at(&inspect, &page, 340.0).await;
+    assert_eq!(page_scroll["cause"], "page", "{page_scroll}");
+
+    page.close().await;
+    inspect.shutdown().await;
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn pw_scroll_to_is_a_request_that_echoes_its_id_even_when_the_page_is_already_there() {
+    if !chromium_installed() {
+        tracing::warn!("chromium is not installed; bridge scroll request test skipped");
+        return;
+    }
+    let server = project().await;
+    let (inspect, page) = open(&server).await;
+
+    inspect
+        .eval(
+            &page,
+            "document.documentElement.style.scrollBehavior = 'smooth'; \
+             window.PenwiseBridge.receive({t: 'pw:scrollTo', x: 0, y: 420, id: 7}); window.scrollY",
+        )
+        .await
+        .expect("request");
+    let answered = scroll_at(&inspect, &page, 420.0).await;
+    assert_eq!(answered["cause"], "request", "{answered}");
+    assert_eq!(answered["id"], 7);
+    // `instant` means the scroll had landed by the time the call returned, smooth-scroll CSS or not.
+    let at = inspect.eval(&page, "window.scrollY").await.expect("y");
+    assert_eq!(at.as_f64(), Some(420.0));
+
+    // Asking for where the page already is still gets an answer, or the host would wait for it forever.
+    let before = messages(&inspect, &page, "pw:scroll").await.len();
+    inspect
+        .eval(
+            &page,
+            "window.PenwiseBridge.receive({t: 'pw:scrollTo', x: 0, y: 420, id: 8}); 1",
+        )
+        .await
+        .expect("again");
+    let mut echoed = Value::Null;
+    for _ in 0..100 {
+        let all = messages(&inspect, &page, "pw:scroll").await;
+        if let Some(found) = all.iter().skip(before).find(|m| m["id"] == 8) {
+            echoed = found.clone();
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(echoed["cause"], "request", "{echoed}");
+
+    page.close().await;
+    inspect.shutdown().await;
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn scroll_into_view_and_a_smooth_scroll_lerp_are_the_pages_own() {
+    if !chromium_installed() {
+        tracing::warn!("chromium is not installed; bridge scroll page-cause test skipped");
+        return;
+    }
+    let server = project().await;
+    let (inspect, page) = open(&server).await;
+
+    inspect
+        .eval(
+            &page,
+            "var far = document.createElement('div'); far.style.cssText = \
+             'position:absolute;top:1500px;height:10px;width:10px'; document.body.appendChild(far); \
+             far.scrollIntoView({block: 'start', behavior: 'instant'}); window.scrollY",
+        )
+        .await
+        .expect("scrollIntoView");
+    let landed = inspect.eval(&page, "window.scrollY").await.expect("y");
+    let y = landed.as_f64().expect("scroll position");
+    let into_view = scroll_at(&inspect, &page, y).await;
+    assert_eq!(into_view["cause"], "page", "{into_view}");
+
+    // A library's lerp: a requestAnimationFrame loop nudging the scroll position.
+    inspect
+        .eval(
+            &page,
+            "new Promise(function (done) { var y = 1000; function step() { y += 9; \
+               window.scrollTo(0, y); if (y < 1180) requestAnimationFrame(step); else done(1); } step(); })",
+        )
+        .await
+        .expect("lerp");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let lerp: Vec<Value> = messages(&inspect, &page, "pw:scroll")
+        .await
+        .into_iter()
+        .filter(|m| m["y"].as_f64().is_some_and(|y| y >= 1000.0))
+        .collect();
+    assert!(!lerp.is_empty());
+    assert!(
+        lerp.iter().all(|m| m["cause"] == "page"),
+        "no input touched the page: {lerp:?}"
+    );
+
+    page.close().await;
+    inspect.shutdown().await;
+    server.shutdown().await;
+}

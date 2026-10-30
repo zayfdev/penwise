@@ -23,6 +23,12 @@ export interface Probe {
       strokes: string[];
       rect: [number, number, number, number] | null;
     }[];
+    live: {
+      frame: string | null;
+      window: [number, number, number, number] | null;
+      iframes: number;
+    };
+    stills: Record<string, string[]>;
   };
 }
 declare global {
@@ -74,6 +80,14 @@ export function useHarness() {
     return created.page.id;
   }
 
+  /** An infinite board, as design work is: "Fit" fits whatever is on it, however tall frames grow. */
+  async function createInfinitePage(title: string): Promise<string> {
+    const created = (await api("POST", "/pages", { title, kind: { t: "infinite" } })) as {
+      page: { id: string };
+    };
+    return created.page.id;
+  }
+
   async function pagePng(page: string): Promise<Buffer> {
     const response = await fetch(`${h.server.origin}/page.png?page=${page}&scale=1`, {
       headers: auth(),
@@ -120,9 +134,37 @@ export function useHarness() {
     },
     api,
     createPage,
+    createInfinitePage,
     pagePng,
     openViewer,
   };
+}
+
+/**
+ * Focuses the `index`-th frame like an owner would: a double click on its box (the mouse reaches the still, which
+ * fits the frame to the stage width and gives it the live iframe). Resolves when the iframe exists and the
+ * camera glide has ended.
+ */
+export async function focusFrame(viewer: Page, index = 0): Promise<void> {
+  await viewer
+    .locator("#frames .frame")
+    .nth(index)
+    .dblclick({ position: { x: 20, y: 20 } });
+  await viewer.waitForFunction(() => window.__penwise?.state().live.frame != null, undefined, {
+    timeout: 10_000,
+  });
+  let last = "";
+  await expect
+    .poll(
+      async () => {
+        const view = JSON.stringify(await viewer.evaluate(() => window.__penwise?.state().view));
+        const rested = view === last;
+        last = view;
+        return rested;
+      },
+      { interval: 200, timeout: 10_000 },
+    )
+    .toBe(true);
 }
 
 export const settle = (viewer: Page) =>

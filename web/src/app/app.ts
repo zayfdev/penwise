@@ -7,7 +7,6 @@ import { byId } from "../dom";
 import { AddFrameForm } from "../frames/add-form";
 import { FrameController } from "../frames/controller";
 import { coreApi } from "../frames/core-api";
-import type { Project } from "../frames/model";
 import { attachHistoryKeys } from "../input/keys";
 import { PenInput } from "../input/pen";
 import { Api, fetchLocalToken } from "../net/api";
@@ -28,16 +27,15 @@ import { fitView, type Viewport, type ViewTransform } from "../view";
 import { MessageKind, type Received, type Viewer, type Wasm } from "../wasm";
 import { Actions } from "./actions";
 import { choosePage, findPage, type NotebookGroup, readCatalog } from "./catalog";
+import { DesignControls } from "./design";
 import { type FollowMode, PendingSwitch, planReceived, SnapshotTracker } from "./follow";
 import { historyState, stepHistory } from "./history";
 import { exposeProbe } from "./probe";
+import { Projects } from "./projects";
 import { Unsent } from "./unsent";
 
 /** All layers of a page (core `LayerSet` bits). */
 const ALL_LAYERS = 0b111;
-
-/** How often missing projects are refetched while a frame refers to one, ms. */
-const PROJECTS_RETRY_MS = 2_000;
 
 /** The running viewer. */
 export class App {
@@ -55,6 +53,8 @@ export class App {
   private readonly stage: HTMLElement;
   private readonly actions: Actions;
   private readonly unsent: Unsent;
+  private readonly design: DesignControls;
+  private readonly projects: Projects;
   private token = "";
   private groups: NotebookGroup[] = [];
   private current: string | null = null;
@@ -70,9 +70,6 @@ export class App {
   private readonly images: ImageCache;
   private connState: ConnectionState = "closed";
   private readonly snapshots = new SnapshotTracker();
-  /** Linked projects (`GET /projects`), for frame URLs. */
-  private projects: readonly Project[] = [];
-  private projectsAt = 0;
 
   constructor(
     private readonly wasm: Wasm,
@@ -93,8 +90,16 @@ export class App {
     this.unsent.restoreOrIdentify(device, entropy);
     this.token = resolveToken(location.search, localStorage) ?? "";
     this.api = new Api(() => this.token);
+    this.projects = new Projects(
+      () => this.api.projects(),
+      (projects) => {
+        this.frameForm.render(projects);
+        this.frames.refresh();
+      },
+    );
     this.frameForm = new AddFrameForm(byId("frames-panel", HTMLElement), {
       add: (project, route, preset) => this.frames.addFrame(project, route, preset),
+      send: (project) => void this.sendRound(project),
     });
     this.actions = new Actions(this.api, {
       created: (id) => {
@@ -105,7 +110,7 @@ export class App {
         this.token = token;
         this.unlock.hide();
         this.connection.start();
-        void this.refreshProjects();
+        void this.projects.refresh();
       },
       problem: (message) => this.status.problem(message),
     });
@@ -131,21 +136,53 @@ export class App {
       byId("frames", HTMLElement),
       byId("frame-chips", HTMLElement),
       byId("mark-chips", HTMLElement),
-      { host: () => location.hostname, token: () => this.token },
+      { host: () => location.hostname, token: () => this.token, now: () => Date.now() },
       {
         viewer: this.viewer,
         core: coreApi(this.viewer),
         page: () => this.current,
         view: () => this.pageView.transform,
         origin: () => this.stage.getBoundingClientRect(),
-        projects: () => this.projects,
+        projects: () => this.projects.list,
         snapshotBusy: () => this.snapshots.inProgress,
         flush: () => this.connection.flush(),
         repaint: () => this.pageView.invalidateCommitted(),
         changed: () => this.afterLocalEdit(),
         problem: (message) => this.status.problem(message),
+        fit: (rect, mode) => this.design.camera.fit(rect, mode),
+        follow: (dy) => this.design.follow(dy),
+        fetchStill: (id, etag) => this.api.still(id, etag),
+        frameHit: (id, x, y) => this.api.frameHit(id, x, y),
+        focused: (frame) => this.design.announceFocus(frame),
       },
     );
+    this.design = new DesignControls({
+      stage: this.stage,
+      view: () => this.pageView.transform,
+      viewport: () => this.viewport,
+      apply: (view) => this.viewChanged(view),
+      moved: () => {
+        this.userMoved = true;
+      },
+      drawing: () => this.pen.drawing,
+      current: () => this.current,
+      frames: () => this.frames.current,
+      pageTitle: (page) => findPage(this.groups, page)?.title ?? null,
+      show: (page) => {
+        this.pendingSwitch.request(page);
+        this.applyPendingSwitch();
+      },
+      focusItem: (item) => {
+        this.refitOnData = false;
+        return this.frames.focusItem(item);
+      },
+      contentView: () => this.contentView(),
+      snapshotBusy: () => this.snapshots.inProgress,
+      leading: () => this.mode === "lead",
+      focusFrame: (page, item) => this.viewer.focus(page, item),
+      send: (frame) => this.connection.send(frame),
+      problem: (message) => this.status.problem(message),
+    });
     this.pen = new PenInput({
       viewer: this.viewer,
       wasm,
@@ -161,7 +198,10 @@ export class App {
         this.pageView.invalidateLive();
         this.applyPendingSwitch();
       },
-      committedChanged: () => this.afterLocalEdit(),
+      committedChanged: () => {
+        this.design.moves.inked();
+        this.afterLocalEdit();
+      },
       now: () => Date.now(),
       problem: (message) => this.status.problem(message),
       schedule: (callback) => requestAnimationFrame(callback),
@@ -194,11 +234,15 @@ export class App {
       pen: this.pen,
       view: () => this.pageView.transform,
       setView: (view) => {
+        this.design.camera.cancel();
         this.userMoved = true;
+        this.frames.userMoved();
         this.viewChanged(view);
       },
       resized: (viewport, dpr) => this.resized(viewport, dpr),
       pointer: (type) => this.frames.setPointer(type),
+      interrupt: () => this.design.camera.cancel(),
+      doubleClick: (x, y) => this.frames.doubleClick(x, y),
     });
     attachHistoryKeys(window, (redo) => this.step(redo));
     window.addEventListener("beforeunload", (event) => this.unsent.warn(event));
@@ -212,6 +256,8 @@ export class App {
       frameBuilds: this.frames.frameBuilds,
       states: this.frames.states,
       marks: this.frames.currentMarks,
+      live: this.frames.liveState,
+      stills: this.frames.stillUrls,
     }));
   }
 
@@ -227,7 +273,7 @@ export class App {
     if (this.token === "")
       this.unlock.show("Enter the pairing code shown by the server or the tablet.");
     else this.connection.start();
-    void this.refreshProjects();
+    void this.projects.refresh();
   }
 
   private makeConnection(): Connection {
@@ -275,14 +321,18 @@ export class App {
   private onReceived(received: Received): void {
     if (received.kind === MessageKind.Welcome) this.images.clearFailed();
     if (received.kind === MessageKind.Welcome && received.page) this.hint = received.page;
+    this.design.moves.observe(received);
     const ended = this.snapshots.observe(received);
+    if (ended !== null) this.design.moves.snapshotEnded(ended);
     const plan = planReceived(received, this.current, this.mode, ended, this.snapshots.inProgress);
     if (plan.refreshCatalog) this.groups = readCatalog(this.viewer);
     if (plan.catalogReady || (plan.refreshCatalog && !findPage(this.groups, this.current))) {
       const chosen = choosePage(this.groups, this.current, this.hint);
       if (chosen !== this.current) this.showPage(chosen);
     }
-    if (plan.switchTo !== null) this.pendingSwitch.request(plan.switchTo);
+    if (plan.switchTo !== null && plan.move !== null) {
+      this.design.moves.offer(plan.switchTo, plan.move, plan.focusItem, received.device ?? null);
+    }
     this.applyPendingSwitch();
     this.applyPendingSelect();
     if (plan.refreshCatalog) this.sidebar.render(this.groups, this.current);
@@ -292,6 +342,7 @@ export class App {
       this.refreshFrames();
     }
     if (plan.repaintLive) this.pageView.invalidateLive();
+    this.design.moves.apply();
     this.refreshHistory();
     this.refreshStatus();
   }
@@ -322,7 +373,9 @@ export class App {
       return;
     }
     this.pen.abort();
+    this.design.camera.cancel();
     this.current = page;
+    if (page !== null) this.design.moves.opened(page);
     this.userMoved = false;
     this.refitOnData = true;
     this.connection.watch(page);
@@ -333,11 +386,12 @@ export class App {
     this.pageView.invalidateLive();
     this.refreshHistory();
     this.refreshFrames();
-    void this.refreshProjects();
+    void this.projects.refresh();
   }
 
   private userSelect(page: string): void {
     this.pendingSwitch.clear();
+    this.design.moves.cancel();
     if (this.mode === "follow") {
       this.mode = "free";
       byId("tool-mode", HTMLSelectElement).value = "free";
@@ -370,6 +424,23 @@ export class App {
     this.frames.setView(view, this.viewport);
   }
 
+  /** The view that fits the shown page's content (the board view), or `null` before the page is known. */
+  private contentView(): ViewTransform | null {
+    const page = findPage(this.groups, this.current);
+    const bounds = this.current ? this.viewer.content_bounds(this.current, ALL_LAYERS) : undefined;
+    this.refitOnData = false;
+    return page ? fitView(page, bounds, this.viewport) : null;
+  }
+
+  /** "Send": closes the open round of the live frame's project (else the form's choice). */
+  private async sendRound(project: string): Promise<void> {
+    const liveId = this.frames.liveState.frame;
+    const live = this.frames.current.find((frame) => frame.id === liveId);
+    this.frameForm.setSending(true);
+    this.frameForm.setSendStatus(await this.actions.sendRound(live?.project ?? project));
+    this.frameForm.setSending(false);
+  }
+
   /** The pen committed a stroke (or undo/redo changed the page): repaint and refresh buttons. */
   private afterLocalEdit(): void {
     this.pageView.invalidateCommitted();
@@ -380,26 +451,7 @@ export class App {
 
   /** Reads the shown page's frames and marks and feeds the bridges what the core watches. */
   private refreshFrames(): void {
-    const frames = this.frames.refresh();
-    const missing = frames.some(
-      (frame) => !this.projects.some((project) => project.id === frame.project),
-    );
-    if (missing && Date.now() - this.projectsAt > PROJECTS_RETRY_MS) void this.refreshProjects();
-  }
-
-  /** `GET /projects`: the iframe URLs and the sidebar's list of projects to link. */
-  private async refreshProjects(): Promise<void> {
-    this.projectsAt = Date.now();
-    let projects: readonly Project[];
-    try {
-      projects = await this.api.projects();
-    } catch {
-      // Not paired yet, or a server without projects: keep the last list; frames needing it stay unrendered.
-      return;
-    }
-    this.projects = projects;
-    this.frameForm.render(projects);
-    this.frames.refresh();
+    this.projects.ensure(this.frames.refresh());
   }
 
   private step(redo: boolean): void {

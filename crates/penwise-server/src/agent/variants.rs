@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use axum::Json;
 use axum::extract::{Path, State};
 use penwise_core::edit::Edit;
-use penwise_core::item::{ItemId, VariantSpec, Z_STEP, group_frames, variant_frames};
+use penwise_core::item::{ItemId, Scene, VariantSpec, Z_STEP, group_frames, variant_frames};
 use penwise_core::marks::{FrameLayouts, MarkEntry, MarkStatus, MarkView, set_mark_status};
 use penwise_proto::{ItemRef, PageId};
 use serde::Deserialize;
@@ -127,6 +127,64 @@ pub(crate) async fn show(
     })))
 }
 
+/// What clearing a variant group does: the edits (marks `done`, then the frames deleted), how many frames go,
+/// which frames and which marks were moved to `done`.
+pub(crate) struct ClearPlan {
+    pub(crate) edits: Vec<Edit>,
+    pub(crate) frames: usize,
+    pub(crate) deleted: Vec<ItemId>,
+    pub(crate) marks: Vec<ItemId>,
+}
+
+/// The edits that clear `group` from `scene`; `None` when the group has no live frame. Marks drawn on the
+/// variants become `done` first, so the ink stays in the page's log and history. A variant that carries a mark
+/// in `protected` (drawn after the round was sent) is kept, and so are its marks. Shared by `DELETE
+/// /variants/<group>` and the round resolve, which batches it with its other edits.
+///
+/// # Errors
+/// 400 when the scene refuses a status edit.
+pub(crate) fn clear_plan(
+    scene: &Scene,
+    group: &str,
+    protected: &BTreeSet<ItemId>,
+) -> Result<Option<ClearPlan>, ApiError> {
+    let ids = group_frames(scene, group);
+    if ids.is_empty() {
+        return Ok(None);
+    }
+    let entries = MarkView::new(scene, &FrameLayouts::new(), true).mark_entries();
+    let kept: BTreeSet<ItemId> = entries
+        .iter()
+        .filter(|entry| protected.contains(&entry.id))
+        .map(|entry| entry.frame)
+        .collect();
+    let doomed: Vec<ItemId> = ids
+        .iter()
+        .copied()
+        .filter(|frame| !kept.contains(frame))
+        .collect();
+    let wanted: BTreeSet<ItemId> = doomed.iter().copied().collect();
+    let marks: Vec<ItemId> = entries
+        .into_iter()
+        .filter(|entry| wanted.contains(&entry.frame))
+        .map(|entry| entry.id)
+        .collect();
+    let mut edits = Vec::new();
+    for mark in &marks {
+        edits.extend(
+            set_mark_status(scene, *mark, MarkStatus::Done)
+                .map_err(|error| ApiError::bad_request(error.to_string()))?,
+        );
+    }
+    edits.extend(doomed.iter().map(|frame| Edit::Delete(*frame)));
+    Ok(Some(ClearPlan {
+        edits,
+        frames: doomed.len(),
+        deleted: doomed,
+        marks,
+    }))
+}
+
 /// `DELETE /variants/<group>` — removes the variant frames, their marks left `done`.
 pub(crate) async fn clear(
     State(app): State<AppState>,
@@ -135,34 +193,17 @@ pub(crate) async fn clear(
     let (page, view) = locate(&app, &group)
         .await?
         .ok_or_else(|| ApiError::not_found("unknown variant group"))?;
-    let scene = view.replica.scene();
-    let ids = group_frames(scene, &group);
-    if ids.is_empty() {
-        return Err(ApiError::not_found("unknown variant group"));
-    }
-    let wanted: BTreeSet<ItemId> = ids.iter().copied().collect();
-    let marks: Vec<ItemId> = MarkView::new(scene, &FrameLayouts::new(), true)
-        .mark_entries()
-        .into_iter()
-        .filter(|entry| wanted.contains(&entry.frame))
-        .map(|entry| entry.id)
-        .collect();
+    let plan = clear_plan(view.replica.scene(), &group, &BTreeSet::new())?
+        .ok_or_else(|| ApiError::not_found("unknown variant group"))?;
     let mut author = Author::new(&app.storage);
-    for mark in &marks {
-        for edit in set_mark_status(scene, *mark, MarkStatus::Done)
-            .map_err(|error| ApiError::bad_request(error.to_string()))?
-        {
-            author.item(page, edit).await?;
-        }
-    }
-    for frame in &ids {
-        author.item(page, Edit::Delete(*frame)).await?;
+    for edit in plan.edits {
+        author.item(page, edit).await?;
     }
     author.commit().await?;
     Ok(Json(json!({
         "ok": true,
-        "removed": ids.len(),
-        "marks": marks.len(),
+        "removed": plan.frames,
+        "marks": plan.marks.len(),
     })))
 }
 

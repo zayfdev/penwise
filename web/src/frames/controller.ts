@@ -6,31 +6,25 @@
  * the chips the core reports. It never computes where ink lands.
  */
 
-import { toPage, type Viewport, type ViewTransform } from "../view";
+import { type FitMode, type PageRect, toPage, type Viewport, type ViewTransform } from "../view";
 import type { Viewer } from "../wasm";
+import { Binder } from "./binding";
 import {
   type BindingMode,
+  type Hit,
   type Layout,
   layoutJson,
-  type PatchFailure,
-  type Rect,
   type StrokeBinding,
 } from "./bridge-messages";
 import type { CoreApi } from "./core-api";
+import { FrameEdits } from "./edits";
+import type { WindowRect } from "./hit";
 import { FrameLayer, type FrameLayerEnv } from "./layer";
-import { type Mark, MarkLayer, type MarkStatus, parseMarks } from "./marks";
-import {
-  type Frame,
-  frameAt,
-  normalizeRoute,
-  type Project,
-  parseFrames,
-  presetSize,
-} from "./model";
+import { LiveCoordinator } from "./live";
+import { type Mark, MarkLayer, parseMarks } from "./marks";
+import { type Frame, frameAt, type Project, parseFrames } from "./model";
 import { framesAreStale } from "./refresh";
-
-/** Inset of a frame added from the sidebar, CSS px from the visible top-left. */
-const FRAME_INSET_PX = 32;
+import type { StillFetch } from "./still-store";
 
 /** What the controller needs from the app. */
 export interface FrameDeps {
@@ -51,13 +45,29 @@ export interface FrameDeps {
   /** An edit landed: repaint, refresh history/status and the chips. */
   changed(): void;
   problem(message: string): void;
+  /** Glides the camera to `rect` (`fitRect`). */
+  fit(rect: PageRect, mode: FitMode): void;
+  /** The live page scrolled by itself: pans the camera by `dy` page px so its window stays on screen. */
+  follow(dy: number): void;
+  /** The server's still of a frame (`GET /frames/{hex}/still`; the argument is the frame's `hex`). */
+  fetchStill: StillFetch;
+  /** The server's hit for a document point of a frame (`GET /frames/{hex}/hit`; the argument is `hex`). */
+  frameHit(hex: string, x: number, y: number): Promise<Hit>;
+  /** The owner focused `frame` by hand (double click): lead mode tells the tablet. */
+  focused(frame: Frame): void;
 }
 
 /** Iframes, bridge data, bindings and mark chips of the shown page. */
 export class FrameController {
   private readonly layer: FrameLayer;
   private readonly markLayer: MarkLayer;
+  /** The page's frames as the core reports them (boxes included). */
   private frames: readonly Frame[] = [];
+  private readonly live: LiveCoordinator;
+  private readonly edits: FrameEdits;
+  private readonly binder: Binder;
+  private view: ViewTransform = { scale: 1, originX: 0, originY: 0 };
+  private viewport: Viewport = { width: 1, height: 1 };
   /** The page `frames` was read from (a snapshot is only stale for that page). */
   private framesPage: string | null = null;
   private marks: readonly Mark[] = [];
@@ -71,17 +81,50 @@ export class FrameController {
     env: FrameLayerEnv,
     private readonly deps: FrameDeps,
   ) {
+    this.edits = new FrameEdits(deps);
     this.layer = new FrameLayer(framesRoot, chipsRoot, env, {
-      preset: (frame, preset) => this.setPreset(frame, preset),
-      route: (frame, route) => this.setRoute(frame, route),
+      preset: (frame, preset) => this.edits.setPreset(frame, preset),
+      route: (frame, route) => this.edits.setRoute(frame, route),
       layout: (frame, layout) => this.layout(frame, layout),
-      choose: (frame) => this.setChosen(frame),
-      patched: (frame, ok, failed) => this.patched(frame, ok, failed),
+      scrolled: (_frame, dy) => this.deps.follow(dy),
+      choose: (frame) => this.edits.setChosen(frame),
+      patched: (frame, ok, failed) => this.edits.patched(frame, ok, failed),
+    });
+    this.live = new LiveCoordinator({
+      layer: this.layer,
+      core: deps.core,
+      frames: () => this.frames,
+      view: () => this.view,
+      viewport: () => this.viewport,
+      fetchStill: deps.fetchStill,
+      timers: {
+        set: (callback, ms) => window.setTimeout(callback, ms),
+        clear: (handle) => window.clearTimeout(handle),
+      },
+      reread: () => this.reread(),
+      layoutChanged: (repaint) => {
+        this.refreshMarks();
+        if (repaint) this.deps.repaint();
+      },
+      problem: (message) => this.deps.problem(message),
+    });
+    this.live.startPolling();
+    this.binder = new Binder({
+      layer: this.layer,
+      core: deps.core,
+      live: this.live,
+      frames: () => this.frames,
+      view: () => this.view,
+      origin: () => deps.origin(),
+      mode: () => this.mode,
+      frameHit: (hex, x, y) => deps.frameHit(hex, x, y),
+      repaint: () => deps.repaint(),
+      problem: (message) => deps.problem(message),
     });
     this.markLayer = new MarkLayer(
       marksRoot,
       {
-        status: (id, status) => this.setStatus(id, status),
+        status: (id, status) => this.edits.setStatus(id, status),
         replay: (frame, state) => this.layer.replay(frame, state),
       },
       (frame) => this.layer.stateOf(frame),
@@ -136,17 +179,91 @@ export class FrameController {
       return this.frames;
     }
     this.framesPage = page;
-    this.frames = page === null ? [] : parseFrames(this.deps.viewer.frames(page));
+    const previous = this.frames;
+    this.frames = this.read(page);
+    const ids = new Set(this.frames.map((frame) => frame.id));
+    for (const old of previous) if (!ids.has(old.id)) this.live.frameGone(old.id);
     this.layer.render(this.frames, this.deps.projects());
+    this.live.restoreStills(this.frames);
     this.refreshMarks();
     for (const frame of this.frames) this.layer.watch(frame.id, this.watchKeys(frame.id));
+    this.live.poke();
     return this.frames;
+  }
+
+  private read(page: string | null): readonly Frame[] {
+    return page === null ? [] : parseFrames(this.deps.viewer.frames(page));
+  }
+
+  /**
+   * The core's layouts changed (a bridge layout, a still, a demotion): its frames' boxes may have changed with
+   * them, so read them again and place what moved.
+   */
+  private reread(): void {
+    const page = this.deps.page();
+    if (page !== this.framesPage) return;
+    this.frames = this.read(page);
+    this.layer.render(this.frames, this.deps.projects());
+    this.layer.renderStills();
   }
 
   /** Follows the canvas view; chips and mark chips move with it. */
   setView(view: ViewTransform, viewport: Viewport): void {
+    this.view = view;
+    this.viewport = viewport;
     this.layer.setView(view);
     this.markLayer.setView(view, viewport);
+    this.live.poke();
+  }
+
+  /** The owner panned or zoomed by hand: an explicit focus no longer pins the live frame. */
+  userMoved(): void {
+    this.live.release();
+  }
+
+  /**
+   * A double click at a client point: the frame under it is focused (fit to the stage width, live). Only where
+   * mouse input reaches frames; `false` when it hit no frame.
+   */
+  doubleClick(clientX: number, clientY: number): boolean {
+    if (!this.layer.interactive) return false;
+    const origin = this.deps.origin();
+    const [x, y] = toPage(this.view, clientX - origin.left, clientY - origin.top);
+    const frame = frameAt(this.frames, x, y);
+    if (frame === null) return false;
+    this.focusFrame(frame);
+    this.deps.focused(frame);
+    return true;
+  }
+
+  /** A `Focus` message: fit frame `item` to the stage and make it live. `false` when it is not a frame here. */
+  focusItem(item: string): boolean {
+    const frame = this.frames.find((f) => f.id === item);
+    if (frame === undefined) return false;
+    this.focusFrame(frame);
+    return true;
+  }
+
+  private focusFrame(frame: Frame): void {
+    this.live.focusFrame(frame.id);
+    this.deps.fit({ x: frame.x, y: frame.y, w: frame.cssW, h: frame.boxH }, "width");
+  }
+
+  /** The frame with the live iframe, and its window in board px (probe and e2e). */
+  get liveState(): { frame: string | null; window: WindowRect | null; iframes: number } {
+    const frame = this.layer.liveId();
+    return {
+      frame,
+      window: frame === null ? null : this.live.windowOf(frame),
+      iframes: this.layer.iframeCount(),
+    };
+  }
+
+  /** The still images in each frame's box now (probe and e2e). */
+  get stillUrls(): Record<string, readonly string[]> {
+    return Object.fromEntries(
+      this.frames.map((frame) => [frame.id, this.layer.stillUrls(frame.id)]),
+    );
   }
 
   /** "Bind to element" (default) or "Pin to area" for strokes started over a frame. */
@@ -161,39 +278,9 @@ export class FrameController {
     this.refreshMarks();
   }
 
-  /**
-   * The binding of a stroke starting at a client point: the frame under it and, in bound mode, the element
-   * under the point. The bridge's answer arrives while the stroke is drawn; without one the core pins it to
-   * the area (contract K1).
-   */
+  /** The binding of a stroke starting at a client point: the frame under it and, in bound mode, its element. */
   bindingAt(clientX: number, clientY: number): StrokeBinding | null {
-    const origin = this.deps.origin();
-    const [x, y] = toPage(this.deps.view(), clientX - origin.left, clientY - origin.top);
-    const frame = frameAt(this.frames, x, y);
-    if (frame === null) return null;
-    const mode = this.mode;
-    let key: string | null = null;
-    if (mode === "bound") {
-      this.layer.hit(frame.id, x - frame.x, y - frame.y, (hit) => {
-        key = hit.key;
-        // The core converts the samples to element-local coordinates at commit: it needs the rect first.
-        if (hit.key !== null && hit.rect !== null) this.mergeHitRect(frame, hit.key, hit.rect);
-      });
-    }
-    return { frame: frame.id, mode, key: () => key };
-  }
-
-  /** Puts the hit element's rect into the core's layout, so an immediate bound commit places the stroke. */
-  private mergeHitRect(frame: Frame, key: string, rect: Rect): void {
-    const layout = this.layer.mergeRects(frame.id, { [key]: rect });
-    if (layout === null) return;
-    try {
-      if (this.deps.core.set_frame_layout(frame.id, layoutJson(layout, frame.preset))) {
-        this.deps.repaint();
-      }
-    } catch (error) {
-      this.deps.problem(`element rect not applied: ${String(error)}`);
-    }
+    return this.binder.bindingAt(clientX, clientY);
   }
 
   /** Commits the open stroke: with a binding for frame strokes, plain for canvas strokes. */
@@ -207,82 +294,7 @@ export class FrameController {
 
   /** Adds a frame on the shown page at the visible top-left (`add_frame`). */
   addFrame(project: string, route: string, preset: string): void {
-    const page = this.deps.page();
-    if (page === null) {
-      this.deps.problem("Open a page before adding a frame.");
-      return;
-    }
-    const size = presetSize(preset) ?? presetSize("desktop");
-    if (size === null) return;
-    const [x, y] = toPage(this.deps.view(), FRAME_INSET_PX, FRAME_INSET_PX);
-    const json = JSON.stringify({
-      project,
-      route: normalizeRoute(route),
-      preset,
-      cssW: size.cssW,
-      cssH: size.cssH,
-      x: Math.round(x),
-      y: Math.round(y),
-    });
-    try {
-      this.deps.viewer.add_frame(page, json, Date.now());
-    } catch (error) {
-      this.deps.problem(`frame not added: ${String(error)}`);
-      return;
-    }
-    this.edit();
-  }
-
-  private setPreset(frame: Frame, preset: string): void {
-    const size = presetSize(preset) ?? { cssW: frame.cssW, cssH: frame.cssH };
-    try {
-      this.deps.viewer.set_frame_preset(frame.id, preset, size.cssW, size.cssH, Date.now());
-    } catch (error) {
-      this.deps.problem(`preset not changed: ${String(error)}`);
-      return;
-    }
-    this.edit();
-  }
-
-  /** The owner picked a variant: it becomes the chosen frame of its group (the core un-picks the others). */
-  private setChosen(frame: Frame): void {
-    try {
-      this.deps.core.set_frame_chosen(frame.id, true, Date.now());
-    } catch (error) {
-      this.deps.problem(`variant not chosen: ${String(error)}`);
-      return;
-    }
-    this.edit();
-  }
-
-  /** A patch op the bridge could not apply (bad selector, refused attribute): say which, once. */
-  private patched(frame: Frame, ok: boolean, failed: readonly PatchFailure[]): void {
-    if (ok || failed.length === 0) return;
-    const first = failed[0];
-    const reason = first && first.reason !== "" ? `: ${first.reason}` : "";
-    this.deps.problem(
-      `ghost on ${frame.label || frame.route} has ${failed.length} failed op${failed.length === 1 ? "" : "s"}${reason}`,
-    );
-  }
-
-  private setRoute(frame: Frame, route: string): void {
-    try {
-      this.deps.viewer.set_frame_route(frame.id, normalizeRoute(route), Date.now());
-    } catch (error) {
-      this.deps.problem(`route not changed: ${String(error)}`);
-      return;
-    }
-    this.edit();
-  }
-
-  private setStatus(id: string, status: MarkStatus): void {
-    try {
-      this.deps.core.set_mark_status(id, status, Date.now());
-    } catch (error) {
-      this.deps.problem(`mark not updated: ${String(error)}`);
-      return;
-    }
-    this.edit();
+    this.edits.addFrame(project, route, preset);
   }
 
   /** A bridge layout: merge it into the core and repaint only what the core says changed. */
@@ -296,6 +308,8 @@ export class FrameController {
     }
     this.refreshMarks();
     if (changed) this.deps.repaint();
+    this.reread();
+    this.live.layoutReported(frame);
   }
 
   /** Reads the core's marks and redraws the chips (also after a layout or a status change). */
@@ -320,11 +334,5 @@ export class FrameController {
     } catch {
       return [];
     }
-  }
-
-  /** A frame or mark edit: send it, then repaint the frames and chips. */
-  private edit(): void {
-    this.deps.flush();
-    this.deps.changed();
   }
 }

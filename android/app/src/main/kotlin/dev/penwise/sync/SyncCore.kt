@@ -1,6 +1,6 @@
 package dev.penwise.sync
 
-import dev.penwise.core.Native
+import dev.penwise.core.NativeSync
 import dev.penwise.ink.EditSink
 
 private const val UPDATE_TITLE = 1
@@ -45,67 +45,67 @@ class SyncCore private constructor(
     }
 
     /** This device's 16-byte id. */
-    fun device(): ByteArray = guarded { Native.syncDevice(handle) }
+    fun device(): ByteArray = guarded { NativeSync.syncDevice(handle) }
 
     /** The `Hello` frame for a new connection. */
-    fun hello(token: String): ByteArray = guarded { Native.syncHello(handle, token, KIND_TABLET, clock()) }
+    fun hello(token: String): ByteArray = guarded { NativeSync.syncHello(handle, token, KIND_TABLET, clock()) }
 
     /** Applies one server frame; the caller sends [Outcome.replies] and then polls [pollPush]. */
     fun receive(frame: ByteArray): Outcome {
-        val outcome = guarded { Outcome.parse(Native.syncReceive(handle, frame, clock())) }
+        val outcome = guarded { Outcome.parse(NativeSync.syncReceive(handle, frame, clock())) }
         if (outcome.mutated) mutated()
         return outcome
     }
 
     /** The next `PushOps` frame, or `null` when nothing may be sent now. */
-    fun pollPush(): ByteArray? = guarded { Native.syncPollPush(handle) }.takeIf { it.isNotEmpty() }
+    fun pollPush(): ByteArray? = guarded { NativeSync.syncPollPush(handle) }.takeIf { it.isNotEmpty() }
 
     /** The socket is gone: nothing is in flight any more. */
-    fun offline() = guarded { Native.syncOffline(handle) }
+    fun offline() = guarded { NativeSync.syncOffline(handle) }
 
     /** Highest applied server sequence number. */
-    fun headSeq(): Long = guarded { Native.syncHeadSeq(handle) }
+    fun headSeq(): Long = guarded { NativeSync.syncHeadSeq(handle) }
 
     /** Ops waiting for an `Ack` / ops the server refused for good. */
     fun outbox(): OutboxCounts =
-        guarded { Native.syncOutboxCounts(handle) }.let { OutboxCounts(pending = it[0], deadLetters = it[1]) }
+        guarded { NativeSync.syncOutboxCounts(handle) }.let { OutboxCounts(pending = it[0], deadLetters = it[1]) }
 
     /** The notebook and page lists. */
-    fun catalog(): Catalog = Catalog.parse(guarded { Native.syncCatalog(handle) })
+    fun catalog(): Catalog = Catalog.parse(guarded { NativeSync.syncCatalog(handle) })
 
     /** The persistable state blob (clock, outbox, replica, server pin). */
-    fun exportState(): ByteArray = guarded { Native.syncExportState(handle) }
+    fun exportState(): ByteArray = guarded { NativeSync.syncExportState(handle) }
 
     /**
      * Like [exportState], but the lock is held only to clone the state; the postcard encoding runs outside it, so
      * the pen and render threads never wait on it.
      */
-    fun exportStateOffLock(): ByteArray = Native.syncStateEncode(guarded { Native.syncStateBegin(handle) })
+    fun exportStateOffLock(): ByteArray = NativeSync.syncStateEncode(guarded { NativeSync.syncStateBegin(handle) })
 
     /** Changes whenever the persistable state changed (the persister skips writes when it did not). */
-    fun revision(): Long = guarded { Native.syncRevision(handle) }
+    fun revision(): Long = guarded { NativeSync.syncRevision(handle) }
 
     /** True once the replica holds everything the server had at its `Welcome` (or a snapshot ended). */
-    fun caughtUp(): Boolean = guarded { Native.syncCaughtUp(handle) }
+    fun caughtUp(): Boolean = guarded { NativeSync.syncCaughtUp(handle) }
 
     /** Ops the server refused for good, oldest first. */
-    fun deadLetters(): List<DeadLetter> = DeadLetter.parseAll(guarded { Native.syncDeadLetters(handle) })
+    fun deadLetters(): List<DeadLetter> = DeadLetter.parseAll(guarded { NativeSync.syncDeadLetters(handle) })
 
     /** The stored bytes of one dead letter (for export); empty when unknown. */
-    fun deadLetterBytes(opId: ByteArray): ByteArray = guarded { Native.syncDeadLetterBytes(handle, opId) }
+    fun deadLetterBytes(opId: ByteArray): ByteArray = guarded { NativeSync.syncDeadLetterBytes(handle, opId) }
 
     /** Forgets a dead letter once the user exported or dismissed it. */
     fun removeDeadLetter(opId: ByteArray) {
-        guarded { Native.syncDeadLetterRemove(handle, opId) }
+        guarded { NativeSync.syncDeadLetterRemove(handle, opId) }
         mutated()
     }
 
     /** True while a `Welcome` named a different server and the core waits for [resolveServerChange]. */
-    fun serverChangePending(): Boolean = guarded { Native.syncServerChangePending(handle) }
+    fun serverChangePending(): Boolean = guarded { NativeSync.syncServerChangePending(handle) }
 
     /** Answers the "different server" question: `keep` re-sends the tablet's ink to it, otherwise it is dropped. */
     fun resolveServerChange(keep: Boolean): Outcome {
-        val outcome = guarded { Outcome.parse(Native.syncResolveServerChange(handle, keep, clock())) }
+        val outcome = guarded { Outcome.parse(NativeSync.syncResolveServerChange(handle, keep, clock())) }
         mutated()
         return outcome
     }
@@ -120,7 +120,19 @@ class SyncCore private constructor(
     override fun committed() = mutated()
 
     /** `SwitchPage` frame: the browser follows the tablet. */
-    fun switchPage(page: ByteArray): ByteArray = guarded { Native.syncSwitchPage(handle, page) }
+    fun switchPage(page: ByteArray): ByteArray = guarded { NativeSync.syncSwitchPage(handle, page) }
+
+    /** True when the connected server's `Welcome` reported protocol 2 or newer, so [focus] may be sent. */
+    fun supportsFocus(): Boolean = guarded { NativeSync.syncServerSupportsFocus(handle) }
+
+    /**
+     * `Focus` frame: the other devices show [page] and fit frame [item] (`null` = the page's content). `null` when the
+     * server is too old to understand it.
+     */
+    fun focus(
+        page: ByteArray,
+        item: ByteArray?,
+    ): ByteArray? = guarded { NativeSync.syncFocus(handle, page, item ?: EMPTY) }.takeIf { it.isNotEmpty() }
 
     /** `StrokeDelta` preview frame. */
     @Suppress("LongParameterList")
@@ -133,13 +145,13 @@ class SyncCore private constructor(
         start: Int,
         samples: FloatArray,
         times: IntArray,
-    ): ByteArray = guarded { Native.syncLiveDelta(handle, page, stroke, brush, scale, seed, start, samples, times) }
+    ): ByteArray = guarded { NativeSync.syncLiveDelta(handle, page, stroke, brush, scale, seed, start, samples, times) }
 
     /** `StrokeCancel` frame. */
     fun liveCancel(
         page: ByteArray,
         stroke: ByteArray,
-    ): ByteArray = guarded { Native.syncLiveCancel(handle, page, stroke) }
+    ): ByteArray = guarded { NativeSync.syncLiveCancel(handle, page, stroke) }
 
     /** New notebook; returns its hex id. [id] pins a deterministic id (legacy import), `null` mints one. */
     fun createNotebook(
@@ -147,7 +159,8 @@ class SyncCore private constructor(
         position: Long,
         id: String? = null,
     ): String {
-        val made = guarded { Native.syncCreateNotebook(handle, id?.let(Ids::bytes) ?: EMPTY, title, position, clock()) }
+        val made =
+            guarded { NativeSync.syncCreateNotebook(handle, id?.let(Ids::bytes) ?: EMPTY, title, position, clock()) }
         mutated()
         return Ids.hex(made)
     }
@@ -162,7 +175,7 @@ class SyncCore private constructor(
         if (title != null) flags = flags or UPDATE_TITLE
         if (deleted != null) flags = flags or UPDATE_DELETED or (if (deleted) DELETED_VALUE else 0)
         val bytes = requireNotNull(Ids.bytes(id)) { "bad notebook id" }
-        guarded { Native.syncUpdateNotebook(handle, bytes, flags, title.orEmpty(), 0L, clock()) }
+        guarded { NativeSync.syncUpdateNotebook(handle, bytes, flags, title.orEmpty(), 0L, clock()) }
         mutated()
     }
 
@@ -179,7 +192,7 @@ class SyncCore private constructor(
         val notebookId = requireNotNull(Ids.bytes(notebook)) { "bad notebook id" }
         val made =
             guarded {
-                Native.syncCreatePage(
+                NativeSync.syncCreatePage(
                     handle,
                     id?.let(Ids::bytes) ?: EMPTY,
                     notebookId,
@@ -209,7 +222,7 @@ class SyncCore private constructor(
         if (deleted != null) flags = flags or UPDATE_DELETED or (if (deleted) DELETED_VALUE else 0)
         val bytes = requireNotNull(Ids.bytes(id)) { "bad page id" }
         guarded {
-            Native.syncUpdatePage(handle, bytes, flags, title.orEmpty(), position ?: 0L, background ?: 0, clock())
+            NativeSync.syncUpdatePage(handle, bytes, flags, title.orEmpty(), position ?: 0L, background ?: 0, clock())
         }
         mutated()
     }
@@ -219,7 +232,7 @@ class SyncCore private constructor(
         pageText: String,
         file: ByteArray,
     ): ImportReport {
-        val counts = guarded { Native.syncImportLegacyPage(handle, pageText, file, clock()) }
+        val counts = guarded { NativeSync.syncImportLegacyPage(handle, pageText, file, clock()) }
         mutated()
         return ImportReport(
             added = counts[0],
@@ -233,7 +246,7 @@ class SyncCore private constructor(
         synchronized(lock) {
             if (closed) return
             closed = true
-            Native.syncFree(handle)
+            NativeSync.syncFree(handle)
         }
     }
 
@@ -243,20 +256,20 @@ class SyncCore private constructor(
             device: ByteArray,
             entropy: Long,
             clock: () -> Long = System::currentTimeMillis,
-        ): SyncCore = SyncCore(Native.syncNew(device, entropy), clock)
+        ): SyncCore = SyncCore(NativeSync.syncNew(device, entropy), clock)
 
         /** Rebuilds from [exportState]; throws `RuntimeException` for a corrupt blob. */
         fun restore(
             state: ByteArray,
             entropy: Long,
             clock: () -> Long = System::currentTimeMillis,
-        ): SyncCore = SyncCore(Native.syncRestore(state, entropy), clock)
+        ): SyncCore = SyncCore(NativeSync.syncRestore(state, entropy), clock)
 
         /** Deterministic id (hex) of a legacy `nb_…` notebook. */
-        fun legacyNotebookId(text: String): String = Ids.hex(Native.syncLegacyId(0, text))
+        fun legacyNotebookId(text: String): String = Ids.hex(NativeSync.syncLegacyId(0, text))
 
         /** Deterministic id (hex) of a legacy `pg_…` page. */
-        fun legacyPageId(text: String): String = Ids.hex(Native.syncLegacyId(1, text))
+        fun legacyPageId(text: String): String = Ids.hex(NativeSync.syncLegacyId(1, text))
     }
 }
 

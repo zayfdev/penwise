@@ -402,14 +402,65 @@ async fn frames_open_creates_the_review_page_side_by_side_and_snapshots_png() {
         .expect("project notebook");
     assert_eq!(review.notebook, project.id);
 
-    // Side by side: the desktop frame starts to the right of the phone frame.
+    // Each screen (route + preset) is a lane. A new screen starts a new lane at the board's left edge,
+    // 200 px under the lowest box; it never goes to the right of another lane's frame.
     let view = rig.view(page).await;
     let scene = view.replica.scene();
     let phone = scene.get(first_frame).expect("phone frame");
     let desktop = scene.get(second_frame).expect("desktop frame");
-    assert_eq!(phone.transform.e, 0.0);
-    assert_eq!(desktop.transform.e, 390.0 + 40.0, "a 40 px gap");
-    assert_eq!(phone.transform.f, desktop.transform.f);
+    assert_eq!((phone.transform.e, phone.transform.f), (0.0, 0.0));
+    assert_eq!(
+        (desktop.transform.e, desktop.transform.f),
+        (0.0, 844.0 + 200.0),
+        "a second preset of the route is a new lane under the phone's box"
+    );
+
+    // Another route is another screen: a third lane under the desktop box (1044 + 900 + 200).
+    let third = post(
+        &format!("{base}/frames/open"),
+        json!({ "project": "prj_harness", "route": "/other.html" }),
+    )
+    .await;
+    assert_eq!(third.status(), reqwest::StatusCode::OK);
+    let third: Value = third.json().await.expect("third json");
+    let third_frame = ItemId::from_hex(third["frame"].as_str().expect("frame")).expect("hex");
+    let view = rig.view(page).await;
+    let scene = view.replica.scene();
+    let other = scene.get(third_frame).expect("third frame");
+    assert_eq!(
+        (other.transform.e, other.transform.f),
+        (0.0, 1044.0 + 900.0 + 200.0),
+        "a new screen goes in a new lane, never right of another lane's frame"
+    );
+
+    // The same screen again continues its own lane: right of its rightmost frame, on its row.
+    let again = post(
+        &format!("{base}/frames/open"),
+        json!({ "project": "prj_harness", "route": "/", "preset": "phone" }),
+    )
+    .await;
+    let again: Value = again.json().await.expect("again json");
+    let again_frame = ItemId::from_hex(again["frame"].as_str().expect("frame")).expect("hex");
+    let view = rig.view(page).await;
+    let beside = view.replica.scene().get(again_frame).expect("phone again");
+    assert_eq!(
+        (beside.transform.e, beside.transform.f),
+        (390.0 + 40.0, 0.0),
+        "same screen, same lane, one gap to the right"
+    );
+    let _ = other;
+    let other = view.replica.scene().get(third_frame).expect("third frame");
+    match &other.kind {
+        ItemKind::Frame(frame) => {
+            assert_eq!(
+                frame.preset,
+                penwise_core::item::FramePreset::Desktop,
+                "preset defaults to desktop"
+            );
+            assert_eq!(frame.extent, penwise_core::item::FrameExtent::Full);
+        }
+        other => panic!("not a frame: {other:?}"),
+    }
 
     // A snapshot is the frame at its preset size.
     let response = reqwest::get(format!(
@@ -421,7 +472,14 @@ async fn frames_open_creates_the_review_page_side_by_side_and_snapshots_png() {
     assert_eq!(response.status(), reqwest::StatusCode::OK);
     assert_eq!(response.headers()["content-type"], "image/png");
     let png = response.bytes().await.expect("bytes");
-    assert_eq!(png_size(&png), (390, 844));
+    // A frame opens full length: the snapshot is the whole document at the preset width, never shorter than
+    // the viewport (the fixture page is taller than a phone screen).
+    let (width, height) = png_size(&png);
+    assert_eq!(width, 390);
+    assert!(
+        height > 844,
+        "the whole document, not the first screen: {height}"
+    );
 
     let plain = reqwest::get(format!(
         "{base}/frames/{}/snapshot.png?ink=false",
@@ -430,7 +488,9 @@ async fn frames_open_creates_the_review_page_side_by_side_and_snapshots_png() {
     .await
     .expect("snapshot");
     assert_eq!(plain.status(), reqwest::StatusCode::OK);
-    assert_eq!(png_size(&plain.bytes().await.expect("bytes")), (1440, 900));
+    let (width, height) = png_size(&plain.bytes().await.expect("bytes"));
+    assert_eq!(width, 1440);
+    assert!(height >= 900, "never shorter than the viewport: {height}");
 }
 
 /* ------------------------------------------------------------------ ghosts and variants (M4, P4) */
@@ -475,7 +535,7 @@ async fn a_ghost_sets_clears_and_reports_failed_selectors() {
     // The snapshot is the patched page: the same frame without its patch renders different pixels.
     let patched = snapshot().await;
     assert_ne!(patched, before, "the snapshot shows the patch");
-    assert_eq!(png_size(&patched), (390, 844));
+    assert_eq!(png_size(&patched).0, 390);
 
     // The stored text is the sanitized P1 JSON.
     let view = rig.view(page).await;

@@ -3,8 +3,8 @@
  *
  * Contract (docs/design-harness-spec.md §6.2, C3):
  *   out: {t:"pw:hello", url, docW, docH, vw, vh}              on load
- *        {t:"pw:scroll", x, y, docW, docH}                     one per frame (rAF, timer fallback)
- *        {t:"pw:layout", scroll, doc, viewport, state, rects}  the element layout marks are drawn against
+ *        {t:"pw:scroll", x, y, docW, docH, cause, id?}         one per frame (rAF, timer fallback)
+ *        {t:"pw:layout", scroll, doc, viewport, state, rects, cause, id?}  the element layout marks are drawn against
  *        {t:"pw:hit", id, key, selector, rect}                 in answer to a hit request
  *        {t:"pw:route", route}                                 when the location changes
  *        {t:"pw:replayed", state, ok}                          in answer to a replay request
@@ -13,8 +13,12 @@
  *        {t:"pw:watch", keys:[...]}                            replace the watched element keys
  *        {t:"pw:replay", state}                                replay a recorded click recipe
  *        {t:"pw:patch", patch, on}                             on=true applies, on=false reverts
- *        {t:"pw:scrollTo", x, y}
+ *        {t:"pw:scrollTo", x, y, id?}                          scrolls with behavior "instant"
  *        {t:"pw:navigate", route}                              same-origin path; a full navigation
+ *
+ * `cause` says who moved the page: "user" (wheel/touch/key/pointer input in the page within the last 250 ms or
+ * while a pointer is down, plus the momentum after it), "request" (the scroll `pw:scrollTo` asked for; `id` is
+ * echoed), else "page" (restores, anchors, scrollIntoView, smooth-scroll libraries).
  *
  * `pw:layout` fields are viewport CSS px (unscaled, unrounded): `scroll` and `doc` in document coordinates,
  * `viewport` in CSS px, `rects` a map of element key → `[x,y,w,h]` relative to the viewport, or `null` when the
@@ -207,9 +211,15 @@
     var pos = scrollPos();
     var size = docSize();
     var key = pos.x + "," + pos.y + "," + size.w + "," + size.h;
-    if (key === lastScroll) return;
+    if (key === lastScroll) {
+      // Nothing to report, but the scroll event that scheduled this run is answered.
+      takeCause({});
+      return;
+    }
     lastScroll = key;
-    send({ t: "pw:scroll", x: pos.x, y: pos.y, docW: size.w, docH: size.h });
+    var message = { t: "pw:scroll", x: pos.x, y: pos.y, docW: size.w, docH: size.h };
+    takeCause(message);
+    send(message);
   }
 
   // rAF is throttled away in a hidden tab or a background WebView; a timer keeps both streams alive there.
@@ -240,6 +250,70 @@
   }
 
   var scheduleScroll = scheduler(scrollNow);
+
+  /* ------------------------------------------------------------------ who scrolled */
+
+  var USER_WINDOW_MS = 250;
+  var MOMENTUM_MS = 120;
+  var REQUEST_MS = 2000;
+  var RANK = { page: 1, user: 2, request: 3 };
+  var lastInput = 0;
+  var pointerDown = false;
+  var momentumUntil = 0;
+  var request = null;
+  var cause = "page";
+  var causeId = null;
+  // Messages still owed the label of the latest scroll event: one `pw:scroll` and one `pw:layout`.
+  var causeOwed = 0;
+
+  function noteInput() {
+    lastInput = Date.now();
+  }
+
+  function pointerStart() {
+    pointerDown = true;
+    noteInput();
+  }
+
+  function pointerEnd() {
+    pointerDown = false;
+    noteInput();
+  }
+
+  function pointerMove() {
+    if (pointerDown) noteInput();
+  }
+
+  // Called for every scroll event: keeps the strongest cause of the burst (request > user > page).
+  function labelScroll() {
+    var now = Date.now();
+    var next = "page";
+    var id = null;
+    if (request && now < request.until) {
+      next = "request";
+      id = request.id;
+      request = null;
+    } else if (pointerDown || now - lastInput < USER_WINDOW_MS || now < momentumUntil) {
+      next = "user";
+      momentumUntil = now + MOMENTUM_MS;
+    }
+    if (causeOwed <= 0 || RANK[next] >= RANK[cause]) {
+      cause = next;
+      causeId = id;
+    }
+    causeOwed = 2;
+  }
+
+  // The label for the message being built now ("page" when no scroll event is waiting for one).
+  function takeCause(message) {
+    if (causeOwed <= 0) {
+      message.cause = "page";
+      return;
+    }
+    causeOwed -= 1;
+    message.cause = cause;
+    if (cause === "request" && causeId !== null && causeId !== undefined) message.id = causeId;
+  }
 
   /* ------------------------------------------------------------------ element keys */
 
@@ -502,16 +576,21 @@
       viewport: viewport,
       state: state
     });
-    if (!changed && fields === lastFields) return;
+    if (!changed && fields === lastFields) {
+      takeCause({});
+      return;
+    }
     lastFields = fields;
-    send({
+    var layout = {
       t: "pw:layout",
       scroll: [pos.x, pos.y],
       doc: [size.w, size.h],
       viewport: viewport,
       state: state,
       rects: rects
-    });
+    };
+    takeCause(layout);
+    send(layout);
   }
 
   var scheduleLayout = scheduler(layoutNow);
@@ -1006,20 +1085,39 @@
 
   /* ------------------------------------------------------------------ hits and messages */
 
-  function hit(id, x, y) {
+  // The element under a viewport point as `{key, selector, rect}` (rect viewport-relative), all `null` when
+  // there is none. The server's headless page asks for it directly (`GET /frames/<id>/hit`).
+  function hitAt(x, y) {
     var element = document.elementFromPoint(x, y);
-    if (!element) {
-      send({ t: "pw:hit", id: id, key: null, selector: null, rect: null });
-      return;
-    }
+    if (!element) return { key: null, selector: null, rect: null };
     var rect = rectOf(element);
-    send({
-      t: "pw:hit",
-      id: id,
+    return {
       key: keyOf(element),
       selector: selectorOf(element),
       rect: [rect[0], rect[1], rect[2], rect[3]]
-    });
+    };
+  }
+
+  function hit(id, x, y) {
+    var found = hitAt(x, y);
+    send({ t: "pw:hit", id: id, key: found.key, selector: found.selector, rect: found.rect });
+  }
+
+  // `pw:scrollTo`: an instant scroll the host asked for. Its scroll events are labelled "request" with the host's
+  // `id`; when the page is already there no event comes, so the answer is forced.
+  function scrollToRequest(data) {
+    var before = scrollPos();
+    var x = Number(data.x) || 0;
+    var y = Number(data.y) || 0;
+    request = { id: data.id === undefined ? null : data.id, until: Date.now() + REQUEST_MS };
+    window.scrollTo({ left: x, top: y, behavior: "instant" });
+    var after = scrollPos();
+    if (after.x === before.x && after.y === before.y) {
+      labelScroll();
+      lastScroll = "";
+    }
+    scheduleScroll();
+    scheduleLayout();
   }
 
   function receive(data) {
@@ -1040,9 +1138,7 @@
     } else if (data.t === "pw:patch") {
       patchMessage(data.patch, data.on !== false);
     } else if (data.t === "pw:scrollTo") {
-      window.scrollTo(Number(data.x) || 0, Number(data.y) || 0);
-      scheduleScroll();
-      scheduleLayout();
+      scrollToRequest(data);
     } else if (data.t === "pw:navigate") {
       var target = typeof data.route === "string" ? data.route : "";
       // Same-origin paths only: the bridge never turns into an open redirect.
@@ -1060,6 +1156,8 @@
     receive: receive,
     resolveKey: resolveKey,
     selectorOf: selectorOf,
+    keyOf: keyOf,
+    hitAt: hitAt,
     stateOf: function () {
       return state;
     },
@@ -1091,6 +1189,16 @@
     scheduleLayout();
   }
 
+  var PASSIVE = { passive: true, capture: true };
+  ["wheel", "touchstart", "touchmove", "keydown"].forEach(function (name) {
+    window.addEventListener(name, noteInput, PASSIVE);
+  });
+  window.addEventListener("pointerdown", pointerStart, PASSIVE);
+  window.addEventListener("pointermove", pointerMove, PASSIVE);
+  ["pointerup", "pointercancel", "touchend", "touchcancel"].forEach(function (name) {
+    window.addEventListener(name, pointerEnd, PASSIVE);
+  });
+  window.addEventListener("scroll", labelScroll, { passive: true });
   window.addEventListener("scroll", onViewportChange, { passive: true });
   window.addEventListener("resize", onViewportChange, false);
   if (window.ResizeObserver && document.documentElement) {

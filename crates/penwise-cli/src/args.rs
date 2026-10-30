@@ -21,6 +21,8 @@ pub enum Command {
     },
     /// `status`.
     Status,
+    /// `inbox`: the one-line notice for a sent round (an agent's prompt hook).
+    Inbox,
     Help,
     Version,
 }
@@ -31,7 +33,8 @@ pub const USAGE: &str =
        penwise link [dir] [--yes] [--no-adapter]
                                        link a project folder (default: the current folder)
        penwise unlink [dir]            drop the link and its registry entry
-       penwise status                  linked projects and whether their dev servers answer";
+       penwise status                  linked projects and whether their dev servers answer
+       penwise inbox                   one line when a sent round waits for the agent (prompt hook)";
 
 /// Parses `args` (the program name already removed).
 ///
@@ -46,6 +49,7 @@ pub fn parse(args: &[String]) -> Result<Command, Error> {
         "link" => parse_link(rest),
         "unlink" => parse_unlink(rest),
         "status" => no_more(rest).map(|()| Command::Status),
+        "inbox" => no_more(rest).map(|()| Command::Inbox),
         "--help" | "-h" | "help" => Ok(Command::Help),
         "--version" | "-V" => Ok(Command::Version),
         other => Err(unknown(other)),

@@ -52,6 +52,7 @@ class InkSurfaceView
         /** The surface is above the window and carries ink only: live pages are drawn by the window below it. */
         private var overFrames = false
         private val viewListener: (ViewTransform) -> Unit = { onViewChanged() }
+        private var camera: CameraChoreographer? = null
 
         /** Runs on the UI thread whenever the stylus touches down (the canvas is about to be written on). */
         var onPenDown: () -> Unit = {}
@@ -138,6 +139,7 @@ class InkSurfaceView
             viewport.setViewSize(width.toFloat(), height.toFloat())
             viewport.setPage(pageStyle)
             viewport.observers.add(viewListener)
+            camera = CameraChoreographer(viewport).also { viewport.driver = it }
             current.onChanged = ::redrawPage
             images?.onChanged = {
                 callback?.invalidate()
@@ -149,6 +151,9 @@ class InkSurfaceView
             scene?.onChanged = null
             images?.onChanged = null
             viewport.observers.remove(viewListener)
+            camera?.stop()
+            viewport.driver = null
+            camera = null
             fingers.cancel()
             viewport.setGesturing(false)
             holder.removeCallback(this)
@@ -182,8 +187,15 @@ class InkSurfaceView
 
         override fun onTouchEvent(event: MotionEvent): Boolean {
             predictor?.record(event)
+            // Any touch takes the camera: a flight stops where it is.
+            if (event.actionMasked == MotionEvent.ACTION_DOWN ||
+                event.actionMasked == MotionEvent.ACTION_POINTER_DOWN
+            ) {
+                viewport.flight.cancel()
+            }
             val stylus = controller?.onTouchEvent(event) ?: false
             if (stylus) {
+                pen.lastDrawAt = event.eventTime
                 onPenInput.onPenInput(event.eventTime)
                 pen.nearUntil = event.eventTime + HOVER_HOLD_MS
                 if (isPenDown(event)) onPenDown()

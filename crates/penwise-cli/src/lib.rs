@@ -14,6 +14,7 @@ pub mod client;
 pub mod detect;
 pub mod diff;
 pub mod error;
+pub mod inbox;
 pub mod launcher;
 pub mod link;
 pub mod mcp_config;
@@ -42,6 +43,10 @@ pub fn run(args: &[String]) -> Result<(), Error> {
         }),
         Command::Unlink { dir } => unlink::run(&dir),
         Command::Status => status::run(),
+        Command::Inbox => {
+            inbox::run();
+            Ok(())
+        }
         Command::Help => {
             println!("{USAGE}");
             Ok(())

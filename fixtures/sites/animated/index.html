@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>animated</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body { margin: 0; background: #fff; height: 1200px; }
+  /* Never-ending animations: two captures a moment apart must still be the same picture. */
+  #spin  { position: absolute; left: 40px; top: 40px; width: 120px; height: 120px; background: #c0c;
+           animation: hue 700ms linear infinite alternate; }
+  #slide { position: absolute; left: 0; top: 200px; width: 200px; height: 40px; background: #0aa;
+           animation: slide 900ms ease-in-out infinite alternate; }
+  @keyframes hue   { from { background: #c0c; } to { background: #cc0; } }
+  @keyframes slide { from { left: 0; } to { left: 600px; } }
+</style>
+</head>
+<body>
+<div id="spin"></div>
+<div id="slide"></div>
+</body>
+</html>

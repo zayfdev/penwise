@@ -51,6 +51,11 @@ pub(crate) enum Command {
     Compact {
         reply: oneshot::Sender<Result<compact::Step, StorageError>>,
     },
+    Round {
+        op: super::rounds::RoundOp,
+        at_ms: u64,
+        reply: oneshot::Sender<Result<Option<super::Round>, StorageError>>,
+    },
 }
 
 /// Upserts one agent's read checkpoint (server-local metadata beside the op log).
@@ -190,6 +195,9 @@ impl Writer {
                 reply,
             } => {
                 let _ = reply.send(restore::run(self, page, to_seq));
+            }
+            Command::Round { op, at_ms, reply } => {
+                let _ = reply.send(super::rounds::apply(&mut self.conn, &op, at_ms));
             }
             Command::Compact { reply } => {
                 let _ = reply.send(compact::step(&mut self.conn, (self.now_ms)()));

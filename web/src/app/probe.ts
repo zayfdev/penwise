@@ -19,6 +19,14 @@ export interface ProbeState {
   readonly states: readonly string[];
   /** Marks of the shown page as the core reports them (`rect` is page coords, `null` when hidden). */
   readonly marks: readonly Mark[];
+  /** The frame with the live iframe, its window in board px, and how many iframes exist (live + warm). */
+  readonly live: {
+    readonly frame: string | null;
+    readonly window: readonly [number, number, number, number] | null;
+    readonly iframes: number;
+  };
+  /** The still strip images in each frame's box. */
+  readonly stills: Readonly<Record<string, readonly string[]>>;
 }
 
 /** Defines `window.__penwise` (non-writable). */

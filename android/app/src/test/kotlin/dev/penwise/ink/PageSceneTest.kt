@@ -1,6 +1,6 @@
 package dev.penwise.ink
 
-import dev.penwise.core.Native
+import dev.penwise.core.NativeSync
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -14,13 +14,13 @@ class PageSceneTest {
     @Test
     fun a_drawn_stroke_is_an_item_with_outline_render_data_and_reaches_the_outbox() {
         SceneHarness().use { h ->
-            val before = Native.syncOutboxCounts(h.sync)[0]
+            val before = NativeSync.syncOutboxCounts(h.sync)[0]
             val key = h.line(100f)
             assertEquals(listOf(key), h.items())
             val item = h.render(key)
             assertTrue(item.parts.single() is RenderPart.Outline)
             assertTrue("bounds cover the stroke", item.bounds.left < 20f && item.bounds.right > 600f)
-            assertEquals(before + 1, Native.syncOutboxCounts(h.sync)[0])
+            assertEquals(before + 1, NativeSync.syncOutboxCounts(h.sync)[0])
             assertTrue(h.scene.canUndo)
         }
     }
@@ -28,7 +28,7 @@ class PageSceneTest {
     @Test
     fun a_tool_edit_is_queued_in_the_same_call_that_applies_it() {
         SceneHarness().use { h ->
-            val before = Native.syncOutboxCounts(h.sync)[0]
+            val before = NativeSync.syncOutboxCounts(h.sync)[0]
             val samples =
                 FloatArray(10 * 5) {
                     if (it % 5 ==
@@ -58,11 +58,11 @@ class PageSceneTest {
             // Applied to the scene and queued on the core already: no second lock acquisition in between, so a
             // remote refresh can never overwrite the stroke before it is on its way to the server.
             assertEquals(1, h.scene.renderOrder().size / 16)
-            assertEquals(before + 1, Native.syncOutboxCounts(h.sync)[0])
+            assertEquals(before + 1, NativeSync.syncOutboxCounts(h.sync)[0])
             assertEquals(
                 "announcing it adds nothing",
                 before + 1,
-                Native.syncOutboxCounts(h.sync)[0].also {
+                NativeSync.syncOutboxCounts(h.sync)[0].also {
                     h.scene.commit(edits)
                 },
             )

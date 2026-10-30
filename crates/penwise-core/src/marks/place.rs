@@ -54,16 +54,12 @@ impl FrameState {
     /// live height (so ink below the synced hint is not clipped); otherwise the synced `doc_h` hint.
     #[must_use]
     pub fn box_size(&self) -> [f32; 2] {
-        let live = self
-            .layout
-            .as_ref()
-            .map(|layout| layout.doc[1])
-            .filter(|h| *h > 0.0);
+        let live = self.layout.as_ref().map(|layout| layout.doc[1]);
         match self.extent {
             FrameExtent::Viewport => self.size,
             FrameExtent::Full => [
                 self.size[0],
-                crate::item::full_box_height(self.size[1], live.unwrap_or(self.doc_h)),
+                crate::item::full_box_height(self.size[1], live, self.doc_h),
             ],
         }
     }

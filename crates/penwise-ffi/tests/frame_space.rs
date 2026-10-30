@@ -1,6 +1,11 @@
 //! Full-length frames on the tablet path (design harness v2): the frame JSON's new fields, the live window and
 //! board ↔ document points under a bridge layout, and `Focus` through the sync core. No socket.
-#![allow(clippy::unwrap_used, clippy::panic, clippy::float_cmp)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::float_cmp
+)]
 
 use penwise_core::item::ItemId;
 use penwise_ffi::scene_handle::SceneHandle;
@@ -204,4 +209,147 @@ fn focus_encodes_for_the_server_and_decodes_into_the_outcome() {
     let outcome = core.receive(&fit_page, NOW).unwrap();
     assert_eq!((outcome.page, outcome.focus_item), (Some(page), None));
     assert_eq!(outcome.encode()[2] & 0b10_0000, 0);
+}
+
+fn box_h(scene: &SceneHandle, frame: ItemId) -> f64 {
+    let listed = frames(scene);
+    let entry = listed
+        .iter()
+        .find(|f| frame_id(f) == frame)
+        .expect("listed frame");
+    entry["boxH"].as_f64().unwrap()
+}
+
+#[test]
+fn box_height_is_computed_by_core_from_the_layout_the_hint_and_the_limit() {
+    let (mut core, mut scene, page) = setup();
+    let added = scene
+        .add_frame(
+            r#"{"project":"site","route":"/","preset":"desktop","x":0,"y":0}"#,
+            NOW,
+        )
+        .unwrap();
+    scene.commit_into(&mut core, &added, NOW).unwrap();
+    let frame = frame_id(&frames(&scene)[0]);
+    assert_eq!(
+        box_h(&scene, frame),
+        900.0,
+        "unknown everywhere: the viewport"
+    );
+
+    // The server's hint (a synced field) applies while the layout says nothing.
+    let hint = penwise_core::item::set_doc_height(scene.scene(), frame, 4000).unwrap();
+    core.commit_edits(page, &hint, NOW).unwrap();
+    scene.reload(&core).unwrap();
+    assert_eq!(box_h(&scene, frame), 4000.0);
+
+    // The live layout's document height wins, even when it is shorter than the hint.
+    scene
+        .set_frame_layout(frame, r#"{"doc":[1440,2500]}"#)
+        .unwrap();
+    assert_eq!(box_h(&scene, frame), 2500.0);
+    // A layout height of 0 means unknown: back to the hint. A hostile one is clamped.
+    scene
+        .set_frame_layout(frame, r#"{"doc":[1440,0]}"#)
+        .unwrap();
+    assert_eq!(box_h(&scene, frame), 4000.0);
+    scene
+        .set_frame_layout(frame, r#"{"doc":[1440,1e30]}"#)
+        .unwrap();
+    assert_eq!(box_h(&scene, frame), 1_048_576.0);
+}
+
+#[test]
+fn hex_is_the_id_the_http_routes_take() {
+    let (_core, mut scene, _page) = setup();
+    scene
+        .add_frame(
+            r#"{"project":"site","route":"/","preset":"phone","x":0,"y":0}"#,
+            NOW,
+        )
+        .unwrap();
+    let listed = frames(&scene);
+    let id = frame_id(&listed[0]);
+    let hex = listed[0]["hex"].as_str().unwrap();
+    assert_eq!(hex, id.to_hex());
+    assert_eq!(hex.len(), 32);
+    assert!(
+        hex.bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    );
+}
+
+#[test]
+fn clearing_a_layout_replaces_it_entirely_for_the_next_one() {
+    let (_core, mut scene, _page) = setup();
+    scene
+        .add_frame(
+            r#"{"project":"site","route":"/","preset":"desktop","x":500,"y":100}"#,
+            NOW,
+        )
+        .unwrap();
+    let frame = frame_id(&frames(&scene)[0]);
+    let live = r#"{"preset":"desktop","scroll":[0,1200],"doc":[1440,6000],"viewport":[1440,900],"state":"click:menu","rects":{"k":[10,20,30,40]}}"#;
+    assert!(scene.set_frame_layout(frame, live).unwrap());
+    assert_eq!(box_h(&scene, frame), 6000.0);
+    assert_eq!(
+        scene.frame_live_window(frame),
+        Some([500.0, 1300.0, 1440.0, 900.0])
+    );
+
+    // Demote to the still: its layout replaces the live one, doc included (a merge would keep 6000 / 1200).
+    assert!(scene.clear_frame_layout(frame));
+    assert!(!scene.clear_frame_layout(frame), "nothing left to clear");
+    assert_eq!(
+        box_h(&scene, frame),
+        900.0,
+        "no layout: back to the viewport"
+    );
+    assert_eq!(
+        scene.frame_live_window(frame),
+        Some([500.0, 100.0, 1440.0, 900.0])
+    );
+    scene
+        .set_frame_layout(frame, r#"{"preset":"desktop","doc":[1440,3000]}"#)
+        .unwrap();
+    assert_eq!(box_h(&scene, frame), 3000.0);
+    assert_eq!(
+        scene.frame_live_window(frame),
+        Some([500.0, 100.0, 1440.0, 900.0]),
+        "the live scroll did not survive"
+    );
+    assert_eq!(scene.frame_keys(frame), "[]");
+}
+
+#[test]
+fn replacing_a_layout_is_one_step_and_a_bad_one_keeps_the_old() {
+    let (_core, mut scene, _page) = setup();
+    scene
+        .add_frame(
+            r#"{"project":"site","route":"/","preset":"desktop","x":500,"y":100}"#,
+            NOW,
+        )
+        .unwrap();
+    let frame = frame_id(&frames(&scene)[0]);
+    let live = r#"{"preset":"desktop","scroll":[0,1200],"doc":[1440,6000],"viewport":[1440,900],"state":"click:menu","rects":{"k":[10,20,30,40]}}"#;
+    scene.set_frame_layout(frame, live).unwrap();
+    assert!(
+        scene
+            .replace_frame_layout(frame, r#"{"preset":"desktop","doc":[1440,3000]}"#)
+            .unwrap()
+    );
+    assert_eq!(
+        box_h(&scene, frame),
+        3000.0,
+        "the still's document, not the live one's 6000"
+    );
+    assert_eq!(
+        scene.frame_live_window(frame),
+        Some([500.0, 100.0, 1440.0, 900.0]),
+        "the live scroll did not survive"
+    );
+    assert!(scene.frame_keys(frame).len() <= 2, "no stale rect keys");
+    // Unreadable input leaves the layout as it was.
+    assert!(scene.replace_frame_layout(frame, "nope").is_err());
+    assert_eq!(box_h(&scene, frame), 3000.0);
 }

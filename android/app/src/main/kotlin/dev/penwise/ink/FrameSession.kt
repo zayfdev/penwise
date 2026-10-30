@@ -1,23 +1,33 @@
 package dev.penwise.ink
 
 import android.util.Log
+import dev.penwise.R
 import dev.penwise.frames.DesignProject
 import dev.penwise.frames.FrameLayouts
 import dev.penwise.frames.FrameMarks
 import dev.penwise.frames.FramePreset
 import dev.penwise.frames.FrameProjection
 import dev.penwise.frames.FrameRoutes
+import dev.penwise.frames.FrameServer
 import dev.penwise.frames.FrameSpec
+import dev.penwise.frames.LayoutKind
+import dev.penwise.frames.RoundsClient
 import dev.penwise.frames.SceneFrame
 import dev.penwise.frames.SceneFrames
 import dev.penwise.frames.SceneMark
+import dev.penwise.frames.SendResult
+import dev.penwise.frames.WindowUpdate
 import dev.penwise.sync.Ids
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -26,6 +36,7 @@ import org.json.JSONObject
 /** A scene change can arrive in bursts (a frame dragged, a preset switched, a scroll frame); one read per burst. */
 private const val FRAMES_DEBOUNCE_MS = 60L
 private const val TAG = "PenwiseFrames"
+private const val WINDOW_BUFFER = 16
 
 /**
  * The design harness' view-model side (M1/M2): the open page's frames, ready for the frame layer, plus the marks and
@@ -61,6 +72,21 @@ internal class FrameSession(
     /** The element keys each frame's bound strokes need watched (`pw:watch`). */
     val watchKeys: StateFlow<Map<String, List<String>>> = _watchKeys.asStateFlow()
 
+    private val _server = MutableStateFlow<FrameServer?>(null)
+
+    /** The PC server's HTTP base and token (stills, hits, rounds); null while the tablet knows none. */
+    val server: StateFlow<FrameServer?> = _server.asStateFlow()
+
+    private val _windows = MutableSharedFlow<WindowUpdate>(extraBufferCapacity = WINDOW_BUFFER)
+
+    /** The live window the core computed after each live layout; the frame layer places its WebView with it. */
+    val windows: SharedFlow<WindowUpdate> = _windows.asSharedFlow()
+
+    private val _notices = MutableSharedFlow<Int>(extraBufferCapacity = 1)
+
+    /** Short messages for a toast (string resource ids). */
+    val notices: SharedFlow<Int> = _notices.asSharedFlow()
+
     private val _showDone = MutableStateFlow(false)
 
     /** Whether done marks are shown (the core hides them by default). */
@@ -73,7 +99,15 @@ internal class FrameSession(
     fun updateEndpoint(
         base: String?,
         token: String,
-    ) = projection.updateEndpoint(base, token)
+    ) {
+        projection.updateEndpoint(base, token)
+        _server.value = base?.let { FrameServer(it, token) }
+    }
+
+    private val _sweeps = MutableStateFlow(0)
+
+    /** Counts finished sweeps of the open page: a frame list that was waited for may be there now. */
+    val sweeps: StateFlow<Int> = _sweeps.asStateFlow()
 
     /** The page was left: its frames, marks and watch list must not stay under the ink. */
     fun clear() {
@@ -100,6 +134,7 @@ internal class FrameSession(
                 projection.updateItems(sweep.frames)
                 _marks.value = FrameMarks.parse(sweep.marks)
                 _watchKeys.value = sweep.watch
+                _sweeps.value += 1
             }
     }
 
@@ -181,21 +216,70 @@ internal class FrameSession(
     }
 
     /**
-     * Feeds one `pw:layout` message into the core (K1). The core repaints through the scene change when the visible
-     * output moved; the layout itself is local and never synced.
+     * Feeds one layout into the core (K1). The core repaints through the scene change when the visible output moved;
+     * the layout itself is local and never synced. A live report also asks the core where the window sits now; a
+     * demoted frame's still layout replaces the live one instead of merging into it.
      */
     fun setLayout(
         id: String,
         json: String,
+        kind: LayoutKind,
     ) {
         val scene = current() ?: return
         val bytes = Ids.bytes(id) ?: return
         scope.launch(io) {
             try {
-                scene.setFrameLayout(bytes, json)
+                // A demoted frame's still replaces the live layout in one native step; anything else merges.
+                if (kind ==
+                    LayoutKind.DEMOTED
+                ) {
+                    scene.replaceFrameLayout(bytes, json)
+                } else {
+                    scene.setFrameLayout(bytes, json)
+                }
+                // The live page's window moves with the scroll it just reported; the core says where it sits now.
+                if (kind == LayoutKind.LIVE) windowAfter(scene, bytes, id, json)
             } catch (_: IllegalStateException) {
                 Log.i(TAG, "page closed before the layout arrived")
             }
+        }
+    }
+
+    private fun windowAfter(
+        scene: PageScene,
+        bytes: ByteArray,
+        id: String,
+        json: String,
+    ) {
+        val window = scene.frameLiveWindow(bytes) ?: return
+        val scroll = JSONObject(json).optJSONArray("scroll")
+        _windows.tryEmit(
+            WindowUpdate(id, window, scroll?.optDouble(0)?.toFloat() ?: 0f, scroll?.optDouble(1)?.toFloat() ?: 0f),
+        )
+    }
+
+    private var focusedFrame: String? = null
+
+    /** The live frame changed (null: none is live); the Send button sends the round of its project. */
+    fun focused(frame: String?) {
+        focusedFrame = frame
+    }
+
+    /**
+     * Sends the open round of the focused frame's project, else of the page's first frame (spec §4): a `409` means
+     * nothing new was drawn, which is only a toast.
+     */
+    fun sendRound() {
+        val server = _server.value ?: return
+        val project = focusedFrame?.let { projection.item(it)?.project } ?: specs.value.firstOrNull()?.project ?: return
+        scope.launch(Dispatchers.IO) {
+            val message =
+                when (RoundsClient.send(server, project)) {
+                    SendResult.SENT -> R.string.round_sent
+                    SendResult.NOTHING_TO_SEND -> R.string.round_nothing_to_send
+                    SendResult.FAILED -> R.string.round_send_failed
+                }
+            _notices.tryEmit(message)
         }
     }
 

@@ -12,11 +12,14 @@
 //! with a loopback `Host` (the rule of `GET /pair/local`). Nothing else is served without it.
 
 mod bridge;
+mod encoding;
+mod hmr;
 mod inject;
 pub(crate) mod patch;
 mod proxy;
 pub mod registry;
 mod static_site;
+pub(crate) mod still;
 
 #[cfg(test)]
 mod tests;
@@ -54,6 +57,8 @@ const RELOAD_MESSAGE: &str = "{\"t\":\"pw:reload\"}";
 const COOKIE_MAX_AGE: u32 = 30 * 24 * 60 * 60;
 
 use bridge::BRIDGE_JS;
+pub(crate) use encoding::percent_decode;
+use encoding::{cookie_value, encode_cookie};
 
 /// What a project port serves.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,9 +76,19 @@ pub struct ProjectConfig {
     pub host: String,
     pub port: u16,
     pub target: Target,
+    /// Where page changes (a static project's file reload, a dev server's HMR update) are announced, with this
+    /// project's id. `None` for tests and tools that do not follow changes.
+    pub changes: Option<broadcast::Sender<String>>,
 }
 
 impl ProjectConfig {
+    /// This config announcing page changes on `changes`.
+    #[must_use]
+    pub fn with_changes(mut self, changes: broadcast::Sender<String>) -> Self {
+        self.changes = Some(changes);
+        self
+    }
+
     /// A static project on `host:port`.
     #[must_use]
     pub fn static_site(
@@ -87,6 +102,7 @@ impl ProjectConfig {
             host: host.into(),
             port,
             target: Target::Static(folder.into()),
+            changes: None,
         }
     }
 
@@ -103,6 +119,7 @@ impl ProjectConfig {
             host: host.into(),
             port,
             target: Target::Origin(origin.into()),
+            changes: None,
         }
     }
 }
@@ -139,6 +156,7 @@ impl ProjectEntry {
             host: self.host.unwrap_or_else(|| default_host.to_owned()),
             port: self.port,
             target,
+            changes: None,
         })
     }
 }
@@ -174,6 +192,8 @@ pub struct ProjectServer {
     pub target: Target,
     task: JoinHandle<()>,
     site: Option<Arc<Site>>,
+    /// Forwards the reload/HMR feed to [`ProjectConfig::changes`].
+    forwarder: Option<JoinHandle<()>>,
 }
 
 impl ProjectServer {
@@ -186,6 +206,14 @@ impl ProjectServer {
             Target::Static(folder) => (Some(Arc::new(Site::new(folder.clone())?)), None),
             Target::Origin(origin) => (None, Some(Arc::new(Proxy::new(origin)?))),
         };
+        let feed = match (&site, &proxy) {
+            (Some(site), _) => Some(site.subscribe()),
+            (None, Some(proxy)) => Some(proxy.subscribe()),
+            (None, None) => None,
+        };
+        let forwarder = feed
+            .zip(config.changes.clone())
+            .map(|(feed, sink)| tokio::spawn(forward_changes(config.id.clone(), feed, sink)));
         let state = Arc::new(App {
             token: Arc::new(token),
             site: site.clone(),
@@ -207,6 +235,7 @@ impl ProjectServer {
             target: config.target,
             task,
             site,
+            forwarder,
         })
     }
 
@@ -219,6 +248,9 @@ impl ProjectServer {
     /// Stops accepting and drops the router (which also stops a static project's watcher).
     pub async fn shutdown(self) {
         self.task.abort();
+        if let Some(forwarder) = &self.forwarder {
+            forwarder.abort();
+        }
         let _ = self.task.await;
         drop(self.site);
     }
@@ -226,7 +258,27 @@ impl ProjectServer {
     /// Stops the listener without awaiting (server `Drop` and registry teardown).
     pub fn abort(mut self) {
         self.task.abort();
+        if let Some(forwarder) = self.forwarder.take() {
+            forwarder.abort();
+        }
         self.site = None;
+    }
+}
+
+/// Relays one project's reload/HMR events to the shared change feed.
+async fn forward_changes(
+    project: String,
+    mut feed: broadcast::Receiver<()>,
+    sink: broadcast::Sender<String>,
+) {
+    loop {
+        match feed.recv().await {
+            // A lagged feed still means "something changed".
+            Ok(()) | Err(broadcast::error::RecvError::Lagged(_)) => {
+                let _ = sink.send(project.clone());
+            }
+            Err(broadcast::error::RecvError::Closed) => return,
+        }
     }
 }
 
@@ -410,69 +462,4 @@ fn deny() -> Response {
         "missing or wrong Penwise token (open /__penwise/enter?token=… or send X-Penwise-Token)",
     )
         .into_response()
-}
-
-/// Reads one cookie from any `Cookie` header.
-fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
-    headers
-        .get_all(header::COOKIE)
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .flat_map(|value| value.split(';'))
-        .find_map(|pair| {
-            let (key, value) = pair.split_once('=')?;
-            if key.trim().eq_ignore_ascii_case(name) {
-                percent_decode(value.trim())
-            } else {
-                None
-            }
-        })
-}
-
-/// Percent-encodes what a cookie value may not contain (and `%`, so decoding is unambiguous).
-fn encode_cookie(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for byte in value.bytes() {
-        let safe = byte.is_ascii_alphanumeric()
-            || matches!(
-                byte,
-                b'!' | b'#'
-                    | b'$'
-                    | b'&'
-                    | b'\''
-                    | b'*'
-                    | b'+'
-                    | b'-'
-                    | b'.'
-                    | b'^'
-                    | b'_'
-                    | b'`'
-                    | b'|'
-                    | b'~'
-            );
-        if safe {
-            out.push(char::from(byte));
-        } else {
-            let _ = std::fmt::Write::write_fmt(&mut out, format_args!("%{byte:02X}"));
-        }
-    }
-    out
-}
-
-/// Percent-decodes a URL path or cookie value; invalid escapes or non-UTF-8 are a hard `None`.
-pub(crate) fn percent_decode(value: &str) -> Option<String> {
-    let bytes = value.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'%' {
-            let hex = value.get(index + 1..index + 3)?;
-            out.push(u8::from_str_radix(hex, 16).ok()?);
-            index += 3;
-        } else {
-            out.push(bytes[index]);
-            index += 1;
-        }
-    }
-    String::from_utf8(out).ok()
 }

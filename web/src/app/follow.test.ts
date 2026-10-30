@@ -6,6 +6,7 @@ import { PendingSwitch, planReceived, type ReceivedView, SnapshotTracker } from 
 function received(partial: Partial<ReceivedView> & Pick<ReceivedView, "kind">): ReceivedView {
   return {
     page: undefined,
+    item: undefined,
     changed_pages: [],
     live_pages: [],
     catalog_changed: false,
@@ -69,6 +70,37 @@ describe("planReceived", () => {
     expect(planReceived(welcome, "p1", "follow", null, false).switchTo).toBe("p3");
     expect(planReceived(welcome, "p1", "lead", null, false).switchTo).toBe("p3");
     expect(planReceived(welcome, "p1", "free", null, false).switchTo).toBeNull();
+  });
+
+  it("follows Focus like SwitchPage and carries the frame to fit", () => {
+    const focus = received({ kind: MessageKind.Focus, page: "p9", item: "fr1" });
+    expect(planReceived(focus, "p1", "follow", null, false)).toMatchObject({
+      switchTo: "p9",
+      move: "focus",
+      focusItem: "fr1",
+    });
+    expect(planReceived(focus, "p1", "lead", null, false).move).toBe("focus");
+    expect(planReceived(focus, "p1", "free", null, false)).toMatchObject({
+      switchTo: null,
+      move: null,
+      focusItem: null,
+    });
+    // No item = fit the page's content.
+    const bare = received({ kind: MessageKind.Focus, page: "p9" });
+    expect(planReceived(bare, "p1", "follow", null, false)).toMatchObject({
+      move: "focus",
+      focusItem: null,
+    });
+  });
+
+  it("tells what asked for a page change", () => {
+    const sw = received({ kind: MessageKind.SwitchPage, page: "p9" });
+    const welcome = received({ kind: MessageKind.Welcome, page: "p3" });
+    expect(planReceived(sw, "p1", "follow", null, false).move).toBe("switch");
+    expect(planReceived(welcome, "p1", "follow", null, false).move).toBe("welcome");
+    expect(
+      planReceived(received({ kind: MessageKind.Pong }), "p1", "follow", null, false).move,
+    ).toBeNull();
   });
 
   it("a finished catalog snapshot refreshes the lists and says the catalog is ready", () => {

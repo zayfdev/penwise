@@ -7,6 +7,10 @@ use std::time::Duration;
 
 pub(crate) const DEFAULT_HOST: &str = "127.0.0.1";
 pub(crate) const DEFAULT_PORT: u16 = 7420;
+/// How long a request may wait for the server's answer.
+const READ_TIMEOUT: Duration = Duration::from_secs(180);
+/// How much of an error body is kept in the message.
+const MAX_ERROR_BODY: usize = 2000;
 
 pub(crate) struct Endpoint {
     pub(crate) host: String,
@@ -43,11 +47,6 @@ impl Endpoint {
         self.request("POST", path, Some(body.as_bytes()), "application/json")
     }
 
-    /// Minimal HTTP/1.1 DELETE with a JSON body.
-    pub(crate) fn delete(&self, path: &str, body: &str) -> Result<Vec<u8>, String> {
-        self.request("DELETE", path, Some(body.as_bytes()), "application/json")
-    }
-
     /// `POST` raw bytes (a PNG), used to upload pictures.
     pub(crate) fn post_bytes(
         &self,
@@ -67,10 +66,10 @@ impl Endpoint {
     ) -> Result<Vec<u8>, String> {
         let mut stream = TcpStream::connect((self.host.as_str(), self.port))
             .map_err(|e| format!("connect: {e}"))?;
-        // A mark bundle opens a headless page and may read handwriting (the server caps OCR at ~20 s), so the
-        // client waits longer than a plain page render.
+        // A look opens headless pages, reads handwriting and takes snapshots, and a resolve snapshots every frame
+        // of the round, so the client waits far longer than a plain page render.
         stream
-            .set_read_timeout(Some(Duration::from_secs(60)))
+            .set_read_timeout(Some(READ_TIMEOUT))
             .map_err(|e| e.to_string())?;
         let mut request = format!(
             "{method} {path} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n",
@@ -103,10 +102,14 @@ impl Endpoint {
             .ok_or("malformed HTTP response")?;
         let head = String::from_utf8_lossy(&raw[..split]);
         if !head.starts_with("HTTP/1.1 200") && !head.starts_with("HTTP/1.0 200") {
-            return Err(format!(
-                "server replied: {}",
-                head.lines().next().unwrap_or("")
-            ));
+            let status = head.lines().next().unwrap_or("");
+            let body = String::from_utf8_lossy(&raw[split + 4..]);
+            let body: String = body.trim().chars().take(MAX_ERROR_BODY).collect();
+            return Err(if body.is_empty() {
+                format!("server replied: {status}")
+            } else {
+                format!("server replied: {status}: {body}")
+            });
         }
         Ok(raw[split + 4..].to_vec())
     }

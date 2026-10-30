@@ -4,10 +4,13 @@ use axum::Json;
 use axum::Router;
 use axum::extract::{Path, State};
 use axum::routing::{get, patch, post};
+use penwise_core::item::{ItemId, ItemKind};
 use penwise_proto::notebook::{MAX_TITLE_BYTES, POSITION_STEP};
 use penwise_proto::{
-    Background, Catalog, NotebookChange, NotebookId, Page, PageChange, PageId, PageKind, PagePatch,
+    Background, Catalog, ItemRef, NotebookChange, NotebookId, Page, PageChange, PageId, PageKind,
+    PagePatch,
 };
+use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::AppState;
@@ -26,6 +29,7 @@ pub(super) fn routes() -> Router<AppState> {
         .route("/pages", get(list).post(create))
         .route("/pages/{id}", patch(update).delete(remove))
         .route("/pages/{id}/select", post(select))
+        .route("/pages/{id}/focus", post(focus))
 }
 
 async fn list(State(app): State<AppState>) -> Result<Json<Value>, ApiError> {
@@ -191,6 +195,47 @@ async fn select(
     // client makes with `ClientMsg::SwitchPage`.
     (app.announce_page)(page);
     Ok(Json(json!({ "active": page.to_string() })))
+}
+
+/// `POST /pages/<id>/focus {"item"?}`: every connected device switches to the page and fits the frame `item`
+/// (hex or ULID text); no item fits the page's content. Mirrors `select`, for the agent's camera.
+#[derive(Debug, Default, Deserialize)]
+struct FocusBody {
+    #[serde(default)]
+    item: Option<String>,
+}
+
+async fn focus(
+    State(app): State<AppState>,
+    Path(id): Path<String>,
+    body: Option<Json<FocusBody>>,
+) -> Result<Json<Value>, ApiError> {
+    let page = page_of(&app, Some(&id)).await?;
+    let item = match body.and_then(|Json(body)| body.item) {
+        Some(text) => Some(focus_target(&app, page, &text).await?),
+        None => None,
+    };
+    (app.announce_focus)(page, item);
+    Ok(Json(json!({
+        "page": page.to_string(),
+        "item": item.map(ItemId::to_hex),
+    })))
+}
+
+/// The frame a focus names: it must be a live frame of `page`.
+async fn focus_target(app: &AppState, page: PageId, text: &str) -> Result<ItemId, ApiError> {
+    let id = ItemId::from_hex(text)
+        .or_else(|| text.parse::<ItemRef>().ok().map(ItemId::from))
+        .ok_or_else(|| ApiError::bad_request("item is a frame id"))?;
+    let view = app
+        .storage
+        .page_view(page)
+        .await?
+        .ok_or_else(|| ApiError::not_found("unknown page"))?;
+    match view.replica.scene().get(id).map(|item| &item.kind) {
+        Some(ItemKind::Frame(_)) => Ok(id),
+        _ => Err(ApiError::not_found("unknown frame")),
+    }
 }
 
 #[cfg(test)]

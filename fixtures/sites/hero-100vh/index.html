@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>hero-100vh</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; background: #fff; color: #111; }
+  /* The hero is exactly one viewport tall: a still must keep the preset height, never the document height. */
+  .hero { height: 100vh; background: #c00; color: #fff; display: flex; align-items: center; justify-content: center; }
+  .hero h1 { font-size: 64px; margin: 0; }
+  .rest { height: 2100px; padding: 32px; background: #fff; }
+</style>
+</head>
+<body>
+<section class="hero"><h1>Hero</h1></section>
+<section class="rest"><p>Everything below the hero.</p></section>
+</body>
+</html>

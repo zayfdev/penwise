@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>infinite-feed</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; background: #fff; color: #111; }
+  .post { height: 500px; margin: 0 0 20px; padding: 16px; background: #eef; border: 2px solid #99c; }
+</style>
+</head>
+<body>
+<div id="feed"></div>
+<script>
+  // Appends 4000 px of posts whenever the reader gets within two screens of the end: the document never ends.
+  var feed = document.getElementById("feed");
+  var count = 0;
+  function more() {
+    for (var i = 0; i < 8; i += 1) {
+      count += 1;
+      var post = document.createElement("div");
+      post.className = "post";
+      post.textContent = "Post " + count;
+      feed.appendChild(post);
+    }
+  }
+  function check() {
+    var left = document.documentElement.scrollHeight - (window.scrollY + window.innerHeight);
+    if (left < window.innerHeight * 2) more();
+  }
+  more();
+  window.addEventListener("scroll", check, { passive: true });
+</script>
+</body>
+</html>

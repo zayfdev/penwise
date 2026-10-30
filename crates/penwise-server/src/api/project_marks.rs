@@ -89,13 +89,13 @@ fn entry_json(scene: &Scene, entry: &MarkEntry) -> Value {
 }
 
 #[derive(Debug, Deserialize)]
-struct StatusBody {
+pub(crate) struct StatusBody {
     status: String,
 }
 
 /// `POST /marks/<id>/status {"status"}` — one LWW status edit from the server device. Idempotent; a mark that
 /// is already in that status gets no op.
-async fn status(
+pub(crate) async fn status(
     State(app): State<AppState>,
     Path(mark_id): Path<String>,
     Json(body): Json<StatusBody>,

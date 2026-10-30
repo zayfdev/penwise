@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>noisy-image</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body { margin: 0; background: #fff; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<!-- Random pixels do not compress: the PNG of this strip is about 17 MB, a base64 DevTools message over 20 MB. -->
+<canvas id="noise" width="1440" height="4096"></canvas>
+<script>
+  var canvas = document.getElementById("noise");
+  var context = canvas.getContext("2d");
+  var image = context.createImageData(canvas.width, canvas.height);
+  // getRandomValues takes at most 65536 bytes per call.
+  for (var offset = 0; offset < image.data.length; offset += 65536) {
+    crypto.getRandomValues(image.data.subarray(offset, Math.min(offset + 65536, image.data.length)));
+  }
+  for (var alpha = 3; alpha < image.data.length; alpha += 4) image.data[alpha] = 255;
+  context.putImageData(image, 0, 0);
+</script>
+</body>
+</html>

@@ -24,6 +24,9 @@ pub(crate) const T0: u64 = 1_800_000_000_000;
 /// The ranges start at 17,421: tests never bind the production 7421+ ports.
 static NEXT_PORT_BASE: AtomicU16 = AtomicU16::new(17_421);
 
+/// `(page, frame)` of each announced camera move.
+pub(crate) type FocusLog = Vec<(PageId, Option<ItemId>)>;
+
 pub(crate) struct Rig {
     pub dir: TempDir,
     pub storage: Storage,
@@ -32,6 +35,8 @@ pub(crate) struct Rig {
     pub ocr_url: String,
     /// Pages announced through `announce_page` (`POST /pages/<id>/select`), in call order.
     pub announced: Arc<std::sync::Mutex<Vec<PageId>>>,
+    /// Camera moves announced through `announce_focus` (`POST /pages/<id>/focus`), in call order.
+    pub focused: Arc<std::sync::Mutex<FocusLog>>,
     now: Arc<AtomicU64>,
     ids: IdGen,
     device: DeviceId,
@@ -56,6 +61,7 @@ impl Rig {
             assets,
             ocr_url: String::new(),
             announced: Arc::default(),
+            focused: Arc::default(),
             now,
             ids,
             device,
@@ -85,7 +91,14 @@ impl Rig {
         &self,
         projects: Arc<crate::frames::registry::Registry>,
     ) -> AppState {
+        let inspect = Arc::new(crate::inspect::Inspect::new());
         AppState {
+            stills: Arc::new(crate::frames::still::Stills::new(
+                self.storage.clone(),
+                Arc::clone(&inspect),
+                Arc::clone(&projects),
+                self.dir.path().join("stills"),
+            )),
             storage: self.storage.clone(),
             token: Arc::new(String::new()),
             data_dir: Arc::new(self.dir.path().to_path_buf()),
@@ -94,7 +107,7 @@ impl Rig {
             urls: Arc::new(crate::urls::Urls::fixed(Vec::new())),
             assets: Arc::clone(&self.assets),
             ocr_url: Arc::new(self.ocr_url.clone()),
-            inspect: Arc::new(crate::inspect::Inspect::new()),
+            inspect,
             projects,
             announce_page: {
                 let announced = Arc::clone(&self.announced);
@@ -103,6 +116,15 @@ impl Rig {
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .push(page);
+                })
+            },
+            announce_focus: {
+                let focused = Arc::clone(&self.focused);
+                Arc::new(move |page, item| {
+                    focused
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .push((page, item));
                 })
             },
             images: Arc::new(crate::agent::ImageCache::default()),

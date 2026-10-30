@@ -1,5 +1,5 @@
 //! JNI exports of [`SceneHandle`]: lifecycle, mirroring, undo/redo and render data.
-//! Names are `Java_dev_penwise_core_Native_scene*`. Tools live in `jni_scene_tools`.
+//! Names are `Java_dev_penwise_core_NativeScene_scene*`. Tools live in `jni_scene_tools`.
 //!
 //! Tools (`jni_scene_tools`), undo and redo commit to the `SyncCore` in the same call and return the edits as
 //! an `encode_edits` blob (informational: they are already committed).
@@ -7,12 +7,12 @@
 
 use jni::EnvUnowned;
 use jni::objects::{JByteArray, JFloatArray, JObject, JString};
-use jni::sys::{jboolean, jint, jlong};
+use jni::sys::{jint, jlong};
 use penwise_core::item::LayerSet;
 
 use crate::jni_util::{
     bytes_in, bytes_out, floats_out, free_handle, guarded, handle_mut, handle_ref, into_handle,
-    item_in, page_in, string_in,
+    item_in, page_in,
 };
 use crate::render_floats::item_text;
 use crate::scene_handle::{SceneHandle, encode_edits};
@@ -25,7 +25,7 @@ pub(crate) fn layers_of(bits: jint) -> LayerSet {
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_sceneOpen<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeScene_sceneOpen<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     sync: jlong,
@@ -44,7 +44,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneOpen<'local>(
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_sceneFree<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeScene_sceneFree<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -57,7 +57,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneFree<'local>(
 
 /// Mirrors the changes listed in a `syncReceive` outcome blob.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_sceneRefresh<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeScene_sceneRefresh<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -72,7 +72,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneRefresh<'local>(
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_sceneReload<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeScene_sceneReload<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -85,7 +85,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneReload<'local>(
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_sceneNewItemId<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeScene_sceneNewItemId<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -99,7 +99,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneNewItemId<'local>(
 
 /// `open != 0` begins an undo gesture, `0` ends it.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_sceneGesture<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeScene_sceneGesture<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -118,7 +118,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneGesture<'local>(
 
 /// `bit0` can undo, `bit1` can redo.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_sceneHistory<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeScene_sceneHistory<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -130,7 +130,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneHistory<'local>(
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_sceneUndo<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeScene_sceneUndo<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -150,7 +150,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneUndo<'local>(
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_sceneRedo<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeScene_sceneRedo<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -171,7 +171,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneRedo<'local>(
 
 /// Live item ids on `layers` (bit set: 1 ink, 2 agent, 4 text) in paint order, 16 bytes each.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_sceneRenderOrder<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeScene_sceneRenderOrder<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -186,7 +186,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneRenderOrder<'local>(
 
 /// Render data of one item (layout in `render_floats`); empty when the item is not drawable.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_sceneItemFloats<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeScene_sceneItemFloats<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -203,7 +203,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneItemFloats<'local>(
 
 /// Ids whose render data changed since the last call: byte 0 is `1` when everything changed, then 16-byte ids.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_sceneTakeDirty<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeScene_sceneTakeDirty<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -216,7 +216,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneTakeDirty<'local>(
 
 /// Content of text item `id`; empty for any other item.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_sceneItemText<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeScene_sceneItemText<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -226,77 +226,5 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneItemText<'local>(
         let id = item_in(env, &id)?;
         let text = item_text(handle_ref::<SceneHandle>(handle)?.scene(), id).unwrap_or_default();
         Ok(env.new_string(text)?)
-    })
-}
-
-/// Every live frame as the C1 JSON array (`scene_handle/frames.rs`).
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_sceneFrames<'local>(
-    mut env: EnvUnowned<'local>,
-    _this: JObject<'local>,
-    handle: jlong,
-) -> JString<'local> {
-    guarded(&mut env, |env| {
-        let json = handle_ref::<SceneHandle>(handle)?.frames_json();
-        Ok(env.new_string(json)?)
-    })
-}
-
-/// Merges one `pw:layout` message into frame `frame_id`'s layout; true when the visible output changed.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_sceneSetFrameLayout<'local>(
-    mut env: EnvUnowned<'local>,
-    _this: JObject<'local>,
-    handle: jlong,
-    frame_id: JByteArray<'local>,
-    json: JString<'local>,
-) -> jboolean {
-    guarded(&mut env, |env| {
-        let frame = item_in(env, &frame_id)?;
-        let json = string_in(env, &json)?;
-        let changed = handle_mut::<SceneHandle>(handle)?.set_frame_layout(frame, &json)?;
-        Ok(jboolean::from(changed))
-    })
-}
-
-/// JSON array of the element keys frame `frame_id`'s bound strokes need the bridge to watch.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_sceneFrameKeys<'local>(
-    mut env: EnvUnowned<'local>,
-    _this: JObject<'local>,
-    handle: jlong,
-    frame_id: JByteArray<'local>,
-) -> JString<'local> {
-    guarded(&mut env, |env| {
-        let frame = item_in(env, &frame_id)?;
-        let keys = handle_ref::<SceneHandle>(handle)?.frame_keys(frame);
-        Ok(env.new_string(keys)?)
-    })
-}
-
-/// Every live mark as JSON (`scene_handle/marks.rs`).
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_sceneMarks<'local>(
-    mut env: EnvUnowned<'local>,
-    _this: JObject<'local>,
-    handle: jlong,
-) -> JString<'local> {
-    guarded(&mut env, |env| {
-        let json = handle_ref::<SceneHandle>(handle)?.marks_json();
-        Ok(env.new_string(json)?)
-    })
-}
-
-/// Sets the show-done view flag; true when the visible output changed.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_sceneSetShowDone<'local>(
-    mut env: EnvUnowned<'local>,
-    _this: JObject<'local>,
-    handle: jlong,
-    on: jboolean,
-) -> jboolean {
-    guarded(&mut env, |_env| {
-        let changed = handle_mut::<SceneHandle>(handle)?.set_show_done(on);
-        Ok(jboolean::from(changed))
     })
 }

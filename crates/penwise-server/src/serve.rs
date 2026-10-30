@@ -153,11 +153,13 @@ pub async fn serve(
         addr.ip().to_string(),
         config.project_port_base,
     ));
-    let announce_page: crate::api::PageAnnouncer = {
-        let hub = Arc::clone(&hub);
-        let by = storage.server_device();
-        Arc::new(move |page| hub.announce_switch_page(page, by))
-    };
+    let (announce_page, announce_focus) = announcers(&hub, storage.server_device());
+    let stills = Arc::new(crate::frames::still::Stills::new(
+        storage.clone(),
+        Arc::clone(&inspect),
+        Arc::clone(&projects),
+        config.data_dir.join("stills"),
+    ));
     let app = AppState {
         storage: storage.clone(),
         token,
@@ -174,8 +176,11 @@ pub async fn serve(
         inspect: Arc::clone(&inspect),
         projects: Arc::clone(&projects),
         announce_page,
+        announce_focus,
         images: Arc::new(crate::agent::ImageCache::default()),
+        stills: Arc::clone(&stills),
     };
+    stills.start();
     let router = Router::new()
         .merge(api::router(app))
         .merge(crate::sync::routes(Arc::clone(&hub)));
@@ -196,6 +201,21 @@ pub async fn serve(
         inspect,
         projects,
     })
+}
+
+/// The page-switch and camera-move broadcasts the HTTP API fires, authored by the server device.
+fn announcers(
+    hub: &Arc<Hub<Storage>>,
+    by: penwise_proto::DeviceId,
+) -> (crate::api::PageAnnouncer, crate::api::FocusAnnouncer) {
+    let switch_hub = Arc::clone(hub);
+    let focus_hub = Arc::clone(hub);
+    (
+        Arc::new(move |page| switch_hub.announce_switch_page(page, by)),
+        Arc::new(move |page, item| {
+            focus_hub.announce_focus(page, item.map(penwise_proto::ItemRef::from), by);
+        }),
+    )
 }
 
 /// Why [`serve`] failed.

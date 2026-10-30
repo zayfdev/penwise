@@ -115,12 +115,13 @@ was built from); if none resolves, it skips the adapter step silently and the li
 
 A frame is a live page at a chosen size. Open one:
 
-- from the agent: `penwise_frame_open {project, route: "/", preset: "phone"}`, or
+- from the agent: `show {frame: {route: "/", preset: "phone"}}` (the preset defaults to `desktop`; the project
+  comes from the `penwise link` config), or
 - from the tablet: **New frame**, then project, route and size.
 
-The frame appears on the project's `<name> review` page. If the tablet or PC window shows another page, select
-the review page; the agent can call `penwise_switch_page` for you. Presets: `phone` 390×844, `tablet`
-834×1194, `desktop` 1440×900. A frame keeps its preset at any canvas zoom.
+The frame appears on the project's `<name> review` page, and your tablet and PC window move to it. Asking for a
+route and preset that already has a frame reuses that frame. Presets: `phone` 390×844, `tablet` 834×1194,
+`desktop` 1440×900. A frame keeps its preset at any canvas zoom.
 
 ### 2. Use the page
 
@@ -169,30 +170,39 @@ recorded. If replay fails, the mark stays greyed; open the menu by hand and the 
 
 ### 6. Ask the agent
 
-Say "look at what I marked" in the terminal, or ask for a change. The agent calls `penwise_marks` and gets one
-bundle per mark:
+Marks you draw between two sends are one **round**. Tap **Send** to close the round, or just say "look at what I
+marked" in the terminal. An agent prompt hook that runs `penwise inbox` (spec v2 §6; `penwise link` does not
+write it yet) lets the agent hear about a sent round on your next prompt: `penwise inbox` prints
+`Penwise: round 3 sent — 4 marks on Desktop / (call look)`, and nothing when no sent round is waiting.
+
+The agent then calls `look` and gets compact text plus one numbered overview image per frame. A line per mark:
 
 ```
-id, status, frame, project, route, preset, state,
-binding ("bound" or "area"), rect,
-kind {guess, confidence, from, to}, colour,
-element {selector, tag, role, text, rect, styles, source},
-text (handwriting), text_status, images {with_ink, without_ink, context}
+2 <mark id> f1 arrow red/problem "less heavy" h1.hero-title → section#work · index.html:42 · styles.css:118 {font-size:72px; font-weight:800}
 ```
 
-`element` is `null` when the element is gone or cannot be found. A source entry with `kind: "component"` is the
-component file; an entry with `rule` is a CSS rule.
+That is the mark's number (the same number is on the overview image), id, frame, kind guess, colour meaning,
+your handwriting, the element, the element an arrow points at, source `file:line` entries (the component first
+when an adapter maps one) and a few computed styles. `look {mark: id}` returns the full bundle of one mark with
+its crops: `element` is `null` when the element is gone or cannot be found, a source entry with `kind:
+"component"` is the component file, and an entry with `rule` is a CSS rule.
 
-`penwise_marks` returns marks with status `new` or `reopened` by default, and only what changed since that
-agent's previous check. The agent's first call therefore returns everything new.
+`look` shows the latest sent round that is not resolved yet, else the round you are drawing now. The marks it
+returns change from `new` to `seen`, so a second `look` shows the same marks without calling them new.
 
 ### 7. Status
 
 Each mark carries a status. The chip colour shows it: blue = new, grey = seen, orange = reopened, green = done.
 
-- **Seen** — the agent read it.
-- **Done** — the edit landed. Done marks hide unless **Show done** is on.
+- **Seen** — the agent read it (`look` sets it).
+- **Done** — the edit landed (`resolve`). Done marks hide unless **Show done** is on.
 - **Reopened** — the change was wrong; look again.
+
+When every mark of a sent round is done, the round resolves: the frame with your ink freezes into a picture where
+the frame stood, the live frame moves one column to the right (history to the left, now in the middle, variants
+to the right) and takes everything to its right in its lane along, its ghost clears and the variants beside it
+go, unless you marked a variant after sending. The agent can also close a round with
+`resolve {round: n}` (the round number `look` shows).
 
 On the tablet, tap a chip for **Done**, **Reopen**, and **Replay state**. **Show done** is in the Marks drawer.
 On the PC, **Show done** is in the toolbar. Status changes sync and undo like any other edit.
@@ -201,51 +211,31 @@ On the PC, **Show done** is in the toolbar. Status changes sync and undo like an
 
 The agent must propose before it edits. Two ways:
 
-- **Ghost** — one temporary patch on the frame. The **Ghost** chip toggles it on and off, so you can compare
-  before and after.
-- **Variants** — 2 to 4 frames beside the base frame, each with a short label and its own patch. Tap **Use
-  this** on the one you want. The button changes to **Chosen**.
+- **Ghost** (`show {ghost}`) — one temporary patch on the frame. The **Ghost** chip toggles it on and off, so you
+  can compare before and after.
+- **Variants** (`show {variants}`) — 2 to 4 frames beside the base frame, each with a short label and its own
+  patch. Tap **Use this** on the one you want. The button changes to **Chosen**.
 
 A patch is CSS plus simple DOM ops: replace, remove, insert, append, prepend, set or remove an attribute, set
 text, add or remove a class. It cannot run JavaScript. Failed ops come back in the tool's `failed` list with an
 index and a reason, so a stale selector is visible.
 
-The agent reads your pick with `penwise_choice`. Then it edits the code. Live reload or HMR refreshes the frame;
+The agent reads your pick with `look` (the `picks:` section names the chosen frame). Then it edits the code. Live reload or HMR refreshes the frame;
 the **Reload** chip reloads it by hand.
 
 ## Agent tools
 
-Design tools:
+Four tools, all in `docs/mcp.md`. None takes a project argument: the project is `PENWISE_PROJECT`, which
+`penwise link` writes into the agent config.
 
 | Tool | Purpose |
 |---|---|
-| `penwise_projects` | List linked projects: id, root, kind, dev origin, port, notebook. |
-| `penwise_frame_open` | Open a project route as a live frame at a preset. |
-| `penwise_frame_snapshot` | PNG of a frame at its preset, with or without your ink. |
-| `penwise_marks` | Read mark bundles, with element source and crops; moves the checkpoint. |
-| `penwise_mark_status` | Set a mark to seen, done, reopened or new, with an optional note. |
-| `penwise_ghost` | Show or clear one temporary patch on a frame. |
-| `penwise_variants` | Create 2–4 labelled variant frames beside the base frame. |
-| `penwise_choice` | Read the picked variant and the ink drawn on the variants. |
-| `penwise_variants_clear` | Remove a variant group; its marks are kept as done. |
+| `look` | Read the round: compact text (frames, marks with kind, colour, handwriting, element, `file:line`, styles, your variant pick) and one numbered overview image per frame. `{mark}` gives one full bundle with crops. |
+| `show` | Put one thing on the board: `frame` (a route), `ghost`, `variants`, `sketch`, `image`, or `focus` (move your view). |
+| `resolve` | Set marks `done`, `reopened` or `seen`; close round `n` (`round: n` from `look`, or automatically with the last open mark). |
+| `notes` | Your plain notes: list pages, handwriting as text, search, a page as PNG. |
 
-Page tools, from the pen-and-paper side:
-
-| Tool | Purpose |
-|---|---|
-| `penwise_page_png` | PNG of a notebook page, your ink included. |
-| `penwise_page_status` | Stroke and page counts. |
-| `penwise_annotate` | Draw polylines on the agent layer of a page. |
-| `penwise_clear_agent_marks` | Remove every agent-drawn mark on a page. |
-| `penwise_place_image` | Put a picture on a page. |
-| `penwise_list_images` | List the pictures on a page. |
-| `penwise_remove_image` | Remove one placed picture. |
-| `penwise_list_pages` | List notebooks, pages and the active page. |
-| `penwise_create_page` | Create a page. |
-| `penwise_create_notebook` | Create an empty notebook. |
-| `penwise_page_text` | Read handwriting as text with a local vision model. |
-| `penwise_search` | Search the handwriting already read as text. |
-| `penwise_switch_page` | Make a page active and make the tablet and PC follow. |
+A round costs four calls: `look`, `show`, `look` (your pick), `resolve`.
 
 There is no MCP reload tool. Live reload and HMR handle edits; the tablet and PC have a **Reload** chip.
 
@@ -277,8 +267,12 @@ or the file is outside the project root. Static sites map HTML and CSS lines. A 
 (`/src/x.css`, `/@fs/…` under the root) to files; its HTML has no file line without the adapter. Next CSS
 stays URL-only.
 
-**The agent does not see the project.** Run `penwise_projects`. If the list is empty, run `penwise link` with
-the server up. Restart the agent after the CLI writes the MCP config.
+**The agent does not see the project.** Run `penwise status`. If the list is empty, run `penwise link` with the
+server up. Restart the agent after the CLI writes the MCP config; `look`, `show` and `resolve` need its
+`PENWISE_PROJECT` and say so when it is missing.
+
+**The agent does not hear about a sent round.** `penwise inbox` only prints while a sent round has not been
+looked at; run it by hand in the project folder to check. It prints nothing when the server is down.
 
 **A ghost changed nothing.** The agent's selector matched no element. Ask it to read the `failed` list and fix
 the selector. Nothing on the page changes when an op fails.

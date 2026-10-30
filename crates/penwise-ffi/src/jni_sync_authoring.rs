@@ -30,7 +30,7 @@ fn flag(flags: jint, bit: jint) -> bool {
 
 /// New notebook; an empty `id` mints one. Returns the id.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_syncCreateNotebook<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeSync_syncCreateNotebook<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -54,7 +54,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_syncCreateNotebook<'local>(
 
 /// Notebook update; flags: 1 title, 2 position, 4 deleted (value in 8).
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_syncUpdateNotebook<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeSync_syncUpdateNotebook<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -82,7 +82,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_syncUpdateNotebook<'local>(
 /// New page; an empty `id` mints one; empty `size` = infinite, else `[width, height]`. `background` is
 /// `Background::code`. Returns the id.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_syncCreatePage<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeSync_syncCreatePage<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -125,7 +125,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_syncCreatePage<'local>(
 
 /// Page update; flags: 1 title, 2 position, 4 deleted (value in 8), 16 background.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_syncUpdatePage<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeSync_syncUpdatePage<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -163,7 +163,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_syncUpdatePage<'local>(
 
 /// Imports an old `PWST` page file; returns `[added, alreadyPresent, skipped, seedCollisions]`.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_syncImportLegacyPage<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeSync_syncImportLegacyPage<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -196,9 +196,9 @@ pub extern "system" fn Java_dev_penwise_core_Native_syncImportLegacyPage<'local>
 #[unsafe(no_mangle)]
 #[allow(
     clippy::too_many_arguments,
-    reason = "the JNI signature is fixed by `Native.syncLiveDelta`"
+    reason = "the JNI signature is fixed by `NativeSync.syncLiveDelta`"
 )]
-pub extern "system" fn Java_dev_penwise_core_Native_syncLiveDelta<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeSync_syncLiveDelta<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -250,7 +250,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_syncLiveDelta<'local>(
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_syncLiveCancel<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeSync_syncLiveCancel<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -267,7 +267,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_syncLiveCancel<'local>(
 /// The deterministic id of a legacy `nb_…` notebook (`kind` 0) or `pg_…` page (`kind` 1), so the one-time
 /// import can create the ones the server's migration never saw under the id every device derives.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_syncLegacyId<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeSync_syncLegacyId<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     kind: jint,

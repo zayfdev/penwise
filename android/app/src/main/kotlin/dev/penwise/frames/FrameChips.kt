@@ -99,7 +99,7 @@ internal fun FrameChips(
             key(spec.id) {
                 val placement =
                     FrameGeometry.place(
-                        FrameRect(spec.x, spec.y, spec.cssWidth.toFloat(), spec.cssHeight.toFloat()),
+                        FrameRect(spec.x, spec.y, spec.cssWidth.toFloat(), spec.boxHeight.toFloat()),
                         transform,
                         density,
                     )

@@ -81,12 +81,23 @@ internal class FrameHits {
         return id
     }
 
+    /** Reserves an id for a request that is answered later (the server's hit for a point off the live window). */
+    fun reserve(): Int = (next++).also { pending += it }
+
     fun answer(
         id: Int,
         key: String,
         rect: List<Float>,
     ) {
         if (pending.remove(id)) answered[id] = HitAnswer(key, rect)
+    }
+
+    /** The server's answer to a [reserve]d request; nothing under the point is no answer. */
+    fun answer(
+        id: Int,
+        hit: HitAnswer?,
+    ) {
+        if (pending.remove(id) && hit != null) answered[id] = hit
     }
 
     /** The element under the point, or null when the page had nothing there (or has not answered). */

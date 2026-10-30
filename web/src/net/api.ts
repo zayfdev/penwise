@@ -4,7 +4,10 @@
  * JSON from the server and are checked before use (no trust in shapes).
  */
 
+import { type Hit, readHit } from "../frames/bridge-messages";
 import { type Project, readProjects } from "../frames/model";
+import { parseStill } from "../frames/still";
+import type { StillReply } from "../frames/still-store";
 
 /** Page templates offered by "new page" and their `/pages` bodies. */
 export type PageTemplate = "blank" | "ruled" | "grid" | "dots" | "infinite";
@@ -122,6 +125,51 @@ export class Api {
     });
     if (!response.ok) throw new ApiError(response.status, `asset ${hash}: ${response.status}`);
     return response.blob();
+  }
+
+  /**
+   * `GET /frames/{hex}/still` with `If-None-Match`: the server's picture of the frame's document. 304 =
+   * unchanged, 404 (or an unreadable body) = no still yet.
+   */
+  async still(hex: string, etag: string | null): Promise<StillReply> {
+    if (hex === "") return { kind: "none" };
+    const headers: Record<string, string> = { "X-Penwise-Token": this.token() };
+    if (etag !== null) headers["If-None-Match"] = etag;
+    const response = await this.fetchFn(`/frames/${hex}/still`, { headers });
+    if (response.status === 304) return { kind: "unchanged" };
+    if (!response.ok) return { kind: "none" };
+    const still = parseStill(await response.json());
+    return still === null
+      ? { kind: "none" }
+      : { kind: "fresh", still, etag: response.headers.get("ETag") };
+  }
+
+  /**
+   * `GET /frames/{id}/hit?x&y` — the element under a document point of a frame, for pen-downs outside the live
+   * window. The rect comes back in document coordinates. A failure answers "no element".
+   */
+  async frameHit(hex: string, x: number, y: number): Promise<Hit> {
+    if (hex === "") return { key: null, rect: null };
+    const query = new URLSearchParams({ x: String(Math.round(x)), y: String(Math.round(y)) });
+    const response = await this.fetchFn(`/frames/${hex}/hit?${query}`, {
+      headers: { "X-Penwise-Token": this.token() },
+    });
+    return response.ok ? readHit(await response.json()) : { key: null, rect: null };
+  }
+
+  /**
+   * `POST /projects/{project}/rounds/send` — closes the open round and opens the next (spec §4). Resolves
+   * `false` on 409 (no new marks since the last send).
+   */
+  async sendRound(project: string): Promise<boolean> {
+    const path = `/projects/${encodeURIComponent(project)}/rounds/send`;
+    const response = await this.fetchFn(path, {
+      method: "POST",
+      headers: { "X-Penwise-Token": this.token() },
+    });
+    if (response.status === 409) return false;
+    if (!response.ok) throw new ApiError(response.status, `POST ${path}: ${response.status}`);
+    return true;
   }
 
   private async json(method: string, path: string, body?: unknown): Promise<unknown> {

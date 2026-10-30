@@ -32,6 +32,21 @@ class FrameSceneTest {
     }
 
     @Test
+    fun a_full_length_frame_reports_its_extent_document_height_and_box() {
+        val json =
+            """[{"id":"00112233445566778899aabbccddeeff","project":"p","route":"/","preset":"desktop","cssW":1440,""" +
+                """"cssH":900,"extent":"full","docH":5200,"boxH":5200,"rect":[0,0,1440,5200]}]"""
+        val frame = SceneFrames.parse(json).single()
+        assertTrue(frame.full)
+        assertEquals(5200, frame.docHeight)
+        assertEquals(5200, frame.boxHeight)
+        // A v1 frame without the fields is a viewport frame whose box is its viewport.
+        val old = SceneFrames.parse("""[{"id":"00112233445566778899aabbccddeeff","project":"p","cssH":844}]""").single()
+        assertFalse(old.full)
+        assertEquals(844, old.boxHeight)
+    }
+
+    @Test
     fun a_frame_carries_its_patch_its_variant_label_and_the_choice() {
         val json =
             """[{"id":"00112233445566778899aabbccddeeff","project":"portfolio","route":"/","preset":"phone",""" +

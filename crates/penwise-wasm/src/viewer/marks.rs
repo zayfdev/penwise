@@ -80,6 +80,19 @@ impl Viewer {
         Ok(self.layouts.merge(frame, preset, &update))
     }
 
+    /// Drops `frame`'s layout entirely (scroll, document size, state and rects), so the next `set_frame_layout`
+    /// starts from nothing: a live frame demoted to its still replaces the live layout with the still's, never
+    /// merges into it. True when a layout existed (repaint).
+    ///
+    /// # Errors
+    /// `JsError` for a malformed frame id.
+    pub fn clear_frame_layout(&mut self, frame: &str) -> Result<bool, JsError> {
+        let frame = parse_item(frame)?;
+        let existed = self.layouts.get(frame).is_some();
+        self.layouts.remove(frame);
+        Ok(existed)
+    }
+
     /// Element keys of `frame`'s bound strokes as a JSON array (what to send with `pw:watch`).
     ///
     /// # Errors

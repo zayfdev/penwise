@@ -3,8 +3,10 @@
 //!
 //! The JSON is the contract the tablet and the PC window share (see `docs/design-harness-spec.md` C1, P2):
 //! `[{"id","project","route","preset","cssW","cssH","extent","docH","boxH","rect":[x,y,w,h],"patch","label",
-//! "group","chosen"}]`, ids as 32 lowercase hex, `extent` `"viewport"` or `"full"`, `docH` the server's measured
-//! document height (`0` = unknown), `boxH` the box height on the board (`FrameItem::box_size(None)`), `rect` in
+//! "group","chosen","hex"}]`, ids as 32 lowercase hex (`hex` repeats `id`: the form the HTTP routes take, e.g.
+//! `/frames/{hex}/still`), `extent` `"viewport"` or `"full"`, `docH` the server's measured document height
+//! (`0` = unknown), `boxH` the box height on the board computed by core from the frame's current layout
+//! (`FrameItem::box_size(layout doc)`, the size `Placement` clips with; clients never compute it), `rect` in
 //! page units, `patch` the P1 patch as an object (or `null`). Every tool
 //! applies its edits to the scene, records them as one undo step and returns them for
 //! [`SceneHandle::commit_into`], like the pen tools.
@@ -14,6 +16,7 @@ use penwise_core::item::{
     FrameExtent, FrameItem, FramePreset, FrameSize, FrameSpec, ItemId, ItemKind, Layer, LayerSet,
     add_frame, set_chosen,
 };
+use penwise_core::marks::frame_box_size;
 use serde::Deserialize;
 use serde_json::json;
 
@@ -39,6 +42,7 @@ impl SceneHandle {
     /// Every live frame as the C1 JSON array, in paint order (bottom → top).
     #[must_use]
     pub fn frames_json(&self) -> String {
+        let state = self.marks.borrow();
         let frames: Vec<serde_json::Value> = self
             .scene
             .render_order(LayerSet::ALL)
@@ -51,6 +55,7 @@ impl SceneHandle {
                 let rect = self.scene.bounds(id)?;
                 Some(json!({
                     "id": id.to_hex(),
+                    "hex": id.to_hex(),
                     "project": frame.project,
                     "route": frame.route,
                     "preset": frame.preset.as_str(),
@@ -58,7 +63,7 @@ impl SceneHandle {
                     "cssH": frame.css_h,
                     "extent": frame.extent.as_str(),
                     "docH": frame.doc_h,
-                    "boxH": frame.box_size(None)[1],
+                    "boxH": frame_box_size(&self.scene, &state.layouts, id)?[1],
                     "rect": [rect.min_x, rect.min_y, rect.width(), rect.height()],
                     "patch": patch_json(frame.patch.as_deref()),
                     "label": frame.label,

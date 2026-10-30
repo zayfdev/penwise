@@ -13,12 +13,17 @@ use hyper::body::Incoming;
 use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::{TokioExecutor, TokioIo};
+use tokio::sync::broadcast;
 
 use super::FrameError;
+use super::hmr::{self, Tap};
 use super::inject;
 
 /// Bodies above this are not buffered for injection (they are almost certainly not HTML).
 const MAX_HTML: usize = 32 * 1024 * 1024;
+
+/// HMR events buffered per listener (they only mean "something changed", so a lag loses nothing).
+const CHANGE_CAPACITY: usize = 16;
 
 type HttpClient = Client<HttpConnector, Body>;
 
@@ -32,6 +37,8 @@ pub struct Proxy {
     scheme: Scheme,
     authority: Authority,
     host: HeaderValue,
+    /// Fires when an HMR message passes through a tunnel (see [`hmr`]).
+    changes: broadcast::Sender<()>,
 }
 
 impl Proxy {
@@ -63,12 +70,20 @@ impl Proxy {
             scheme: Scheme::HTTP,
             authority,
             host,
+            changes: broadcast::channel(CHANGE_CAPACITY).0,
         })
+    }
+
+    /// A feed that fires when the dev server announces an HMR update or full reload to any connected page.
+    pub fn subscribe(&self) -> broadcast::Receiver<()> {
+        self.changes.subscribe()
     }
 
     /// Forwards one request and adapts the response.
     pub async fn forward(&self, mut request: Request<Body>) -> Response<Body> {
         let upgraded = is_upgrade(request.headers()).then(|| hyper::upgrade::on(&mut request));
+        let tap = (upgraded.is_some() && hmr::should_tap(request.uri().path(), request.headers()))
+            .then(|| Tap::new(self.changes.clone()));
         let head = request.method() == Method::HEAD;
         let (parts, body) = request.into_parts();
         let path_and_query = parts
@@ -90,7 +105,7 @@ impl Proxy {
         *upstream.headers_mut() = self.headers(&parts.headers);
 
         match self.client.request(upstream).await {
-            Ok(response) => self.respond(response, upgraded, head).await,
+            Ok(response) => self.respond(response, upgraded, head, tap).await,
             Err(error) => {
                 tracing::warn!(%error, origin = %self.authority, "dev server unreachable");
                 (
@@ -141,6 +156,7 @@ impl Proxy {
         mut response: Response<Incoming>,
         upgraded: Option<hyper::upgrade::OnUpgrade>,
         head: bool,
+        tap: Option<Tap>,
     ) -> Response<Body> {
         if response.status() == StatusCode::SWITCHING_PROTOCOLS {
             let upstream_upgrade = hyper::upgrade::on(&mut response);
@@ -151,12 +167,7 @@ impl Proxy {
             tokio::spawn(async move {
                 match tokio::try_join!(client_upgrade, upstream_upgrade) {
                     Ok((mine, theirs)) => {
-                        let (mut mine, mut theirs) = (TokioIo::new(mine), TokioIo::new(theirs));
-                        if let Err(error) =
-                            tokio::io::copy_bidirectional(&mut mine, &mut theirs).await
-                        {
-                            tracing::debug!(%error, "upgraded connection closed");
-                        }
+                        tunnel(TokioIo::new(mine), TokioIo::new(theirs), tap).await;
                     }
                     Err(error) => tracing::debug!(%error, "protocol upgrade failed"),
                 }
@@ -212,6 +223,25 @@ impl Proxy {
         *out.headers_mut() = out_headers;
         *out.version_mut() = parts.version;
         out
+    }
+}
+
+/// Copies both directions of an upgraded connection; the dev server's side is watched for HMR messages when
+/// `tap` is given. A clean end of one direction half-closes (the other may still drain); an *error* on either
+/// ends both, so a client that resets never leaves the dev-server socket open.
+async fn tunnel<A, B>(mine: A, theirs: B, tap: Option<Tap>)
+where
+    A: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+    B: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    let (mut mine_read, mut mine_write) = tokio::io::split(mine);
+    let (mut theirs_read, mut theirs_write) = tokio::io::split(theirs);
+    let copied = tokio::try_join!(
+        hmr::copy_tapped(&mut mine_read, &mut theirs_write, None),
+        hmr::copy_tapped(&mut theirs_read, &mut mine_write, tap),
+    );
+    if let Err(error) = copied {
+        tracing::debug!(%error, "upgraded connection closed");
     }
 }
 

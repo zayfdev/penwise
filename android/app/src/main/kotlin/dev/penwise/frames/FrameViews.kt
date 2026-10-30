@@ -3,6 +3,7 @@ package dev.penwise.frames
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Color
+import android.view.View
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -22,8 +23,8 @@ internal object FrameViews {
         spec: FrameSpec,
         density: Float,
         sink: (FrameMessage) -> Unit,
-    ): WebView {
-        val view = WebView(context)
+    ): FrameWebView {
+        val view = FrameWebView(context)
         with(view.settings) {
             javaScriptEnabled = true
             domStorageEnabled = true
@@ -37,6 +38,8 @@ internal object FrameViews {
             mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
         }
         view.setBackgroundColor(Color.WHITE)
+        // The page owns its edges: no glow or stretch where the window meets the end of the document.
+        view.overScrollMode = View.OVER_SCROLL_NEVER
         view.isVerticalScrollBarEnabled = false
         view.isHorizontalScrollBarEnabled = false
         view.webViewClient = WebViewClient()

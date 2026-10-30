@@ -11,6 +11,10 @@ class PenActivity {
     @Volatile
     var drawing = false
 
+    /** Uptime ms of the last stylus touch event: "the owner drew a moment ago" (the agent must not move the view). */
+    @Volatile
+    var lastDrawAt = 0L
+
     /** Until when (uptime ms) a hovering pen still counts as near. */
     @Volatile
     var nearUntil = 0L

@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Page } from "playwright-core";
 import { afterAll, describe, expect, it } from "vitest";
-import { settle, useHarness } from "./harness";
+import { focusFrame, settle, useHarness } from "./harness";
 
 const h = useHarness();
 
@@ -89,6 +89,7 @@ describe("marks in the PC window", () => {
     const project = await linkSite("marks static");
     const pageId = await pageWithFrame(project.id);
     const viewer = await h.openViewer(pageId);
+    await focusFrame(viewer);
 
     // The injected bridge reports the frame's layout; until then a bound stroke has nothing to bind to.
     await expect
@@ -125,6 +126,7 @@ describe("marks in the PC window", () => {
     const project = await linkSite("marks status");
     const pageId = await pageWithFrame(project.id);
     const viewer = await h.openViewer(pageId);
+    await focusFrame(viewer);
     await expect
       .poll(() => viewer.evaluate(() => window.__penwise?.state().layouts ?? 0), {
         timeout: 15_000,
@@ -159,6 +161,7 @@ describe("marks in the PC window", () => {
     const project = await linkSite("marks state", MENU_SITE);
     const pageId = await pageWithFrame(project.id);
     const viewer = await h.openViewer(pageId);
+    await focusFrame(viewer);
     const states = () => viewer.evaluate(() => window.__penwise?.state().states ?? []);
     await expect
       .poll(() => viewer.evaluate(() => window.__penwise?.state().layouts ?? 0), {

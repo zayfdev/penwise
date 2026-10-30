@@ -17,6 +17,10 @@ export interface StageDeps {
   resized(viewport: Viewport, dpr: number): void;
   /** The last pointer type seen anywhere on the window (`pen`/`mouse`/`touch`): frame input routing. */
   pointer(type: string): void;
+  /** Any input on the stage: a running camera glide stops where it is. */
+  interrupt(): void;
+  /** A double click at a client point (focuses the frame under it). */
+  doubleClick(clientX: number, clientY: number): void;
 }
 
 /** Wires `stage`'s events. */
@@ -30,6 +34,7 @@ export function attachStage(stage: HTMLElement, deps: StageDeps): void {
   window.addEventListener("pointermove", notePointer, true);
 
   stage.addEventListener("pointerdown", (event) => {
+    deps.interrupt();
     // Frame and mark chips are controls, not canvas: their clicks must not start a stroke.
     if (
       event.target instanceof Element &&
@@ -67,6 +72,7 @@ export function attachStage(stage: HTMLElement, deps: StageDeps): void {
     "wheel",
     (event) => {
       event.preventDefault();
+      deps.interrupt();
       const rect = rectOf();
       if (event.ctrlKey || event.metaKey) {
         const factor = Math.exp(-event.deltaY * 0.01);
@@ -79,6 +85,7 @@ export function attachStage(stage: HTMLElement, deps: StageDeps): void {
     },
     { passive: false },
   );
+  stage.addEventListener("dblclick", (event) => deps.doubleClick(event.clientX, event.clientY));
   const observer = new ResizeObserver(() => {
     const rect = rectOf();
     deps.resized({ width: rect.width, height: rect.height }, window.devicePixelRatio || 1);

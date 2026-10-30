@@ -6,8 +6,12 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import dev.penwise.BuildConfig
 import dev.penwise.R
+import dev.penwise.frames.AgentPage
 import dev.penwise.frames.DesignProject
+import dev.penwise.frames.FrameAgent
+import dev.penwise.frames.FrameControl
 import dev.penwise.frames.FrameSpec
+import dev.penwise.frames.MoveTarget
 import dev.penwise.frames.ProjectsClient
 import dev.penwise.frames.SceneMark
 import dev.penwise.sync.Ids
@@ -92,8 +96,36 @@ class PageViewModel(
     private val catalogDispatcher = catalogThread.asCoroutineDispatcher()
 
     /** Frames, marks and watched keys of the open page (the design harness); the core owns their truth. */
-    private val frameSession =
+    internal val frameSession =
         FrameSession(viewModelScope, catalogDispatcher, { _scene.value }, { action -> edit(action = action) })
+
+    /** Reaches the frame layer from outside the composition (agent camera moves). */
+    internal val frameControl = FrameControl()
+
+    /** Camera moves other devices ask for (`SwitchPage`, `Focus`), held back while the owner draws. */
+    internal val agent =
+        FrameAgent(
+            viewModelScope,
+            viewport,
+            pen,
+            frameControl,
+            AgentPage(
+                current = { shown },
+                open = ::selectPage,
+                title = { id ->
+                    _pages.value
+                        .page(id)
+                        ?.title
+                        .orEmpty()
+                },
+                specs = { frameSession.specs.value },
+            ),
+        )
+
+    init {
+        // A camera move that waited for a page's frames can go on once a sweep of them has finished.
+        viewModelScope.launch { frameSession.sweeps.collect { agent.framesChanged() } }
+    }
 
     /** The open page's frames, ready for the frame layer (each URL on the host sync uses now). */
     val frames: StateFlow<List<FrameSpec>> = frameSession.specs
@@ -150,6 +182,7 @@ class PageViewModel(
 
     private fun onOutcome(outcome: Outcome) {
         if (outcome.kind == Kind.WELCOME) serverPage = outcome.page?.let(Ids::hex)
+        remoteMove(outcome)
         // The core may have been answered since this frame was queued: only a still-held core asks the question.
         if (outcome.serverChanged && engine?.core?.serverChangePending() != false) syncUi.serverChanged.value = true
         if (!ready) return
@@ -161,6 +194,24 @@ class PageViewModel(
             } catch (_: IllegalStateException) {
                 Log.i(TAG, "scene closed while a frame arrived") // the page was just left.
             }
+        }
+    }
+
+    /** Another device switched page or asked for a frame to be fit: the camera follows unless the owner is drawing. */
+    private fun remoteMove(outcome: Outcome) {
+        val page = outcome.page?.let(Ids::hex) ?: return
+        if (outcome.kind != Kind.SWITCH_PAGE && outcome.kind != Kind.FOCUS) return
+        val target = MoveTarget(page, outcome.focusItem?.let(Ids::hex), label = "", fit = outcome.kind == Kind.FOCUS)
+        viewModelScope.launch { agent.offer(target) }
+    }
+
+    /** The owner double-tapped a frame: other devices may fit it too (only a server that speaks protocol 2). */
+    fun frameFocused(frame: String) {
+        val open = engine ?: return
+        val page = Ids.bytes(shown) ?: return
+        val item = Ids.bytes(frame) ?: return
+        viewModelScope.launch(catalogDispatcher) {
+            if (open.core.supportsFocus()) open.core.focus(page, item)?.let(open::send)
         }
     }
 
@@ -324,42 +375,6 @@ class PageViewModel(
         x: Float,
         y: Float,
     ) = frameSession.addFrame(project, route, preset, cssW, cssH, x, y)
-
-    /** Switches a frame's preset: its page reflows at the new width (one op, no reload). */
-    fun setFramePreset(
-        id: String,
-        preset: String,
-    ) = frameSession.setFramePreset(id, preset)
-
-    /**
-     * Points a frame at another route of its project. A link clicked inside the page reports its route through the
-     * same call: the page is already there, so the layer adopts the item without loading anything again.
-     */
-    fun setFrameRoute(
-        id: String,
-        route: String,
-    ) = frameSession.setFrameRoute(id, route)
-
-    /** Feeds one `pw:layout` message into the core; it repaints through the scene change when the output moved. */
-    fun setFrameLayout(
-        id: String,
-        json: String,
-    ) = frameSession.setLayout(id, json)
-
-    /** The owner's pick among a variant group: one undoable edit that un-chooses the rest. */
-    fun setFrameChosen(
-        id: String,
-        chosen: Boolean,
-    ) = frameSession.setFrameChosen(id, chosen)
-
-    /** Sets a mark's status; the core records one undoable edit and the chips follow. */
-    fun setMarkStatus(
-        markId: String,
-        status: String,
-    ) = frameSession.setMarkStatus(markId, status)
-
-    /** Shows or hides done marks; a local view flag, applied to every page the owner opens. */
-    fun setShowDone(on: Boolean) = frameSession.setShowDone(on)
 
     /** The HTTP base of the server the tablet reaches: the connected endpoint, or the first candidate while offline. */
     private fun syncHttpBase(): String? {

@@ -15,6 +15,7 @@ pub mod migrate;
 pub(crate) mod random;
 mod read;
 mod restore;
+mod rounds;
 mod rows;
 mod schema;
 mod snapshot;
@@ -31,6 +32,8 @@ use tokio::sync::{broadcast, oneshot};
 
 pub use compact::CompactReport;
 pub use error::{AppendError, Rejected, RestoreError, StorageError};
+pub(crate) use rounds::RoundOp;
+pub use rounds::{LedgerRow, Round, RoundStatus};
 pub use schema::SCHEMA_VERSION;
 pub use types::{
     AliasTarget, Appended, DEVICE_IDLE_DAYS, DeviceInfo, FaultPlan, NowMs, OpFilter, OpsPage,
@@ -270,6 +273,44 @@ impl Storage {
         page: PageId,
     ) -> Result<Vec<(penwise_core::item::ItemId, u64)>, StorageError> {
         self.read(move |conn| read::item_seqs(conn, page)).await
+    }
+
+    /// Every round of `project`, oldest first (design-harness spec v2 §4).
+    ///
+    /// # Errors
+    /// `Sqlite`, `Corrupt`.
+    pub async fn rounds(&self, project: String) -> Result<Vec<Round>, StorageError> {
+        self.read(move |conn| rounds::list(conn, &project)).await
+    }
+
+    /// Runs a change on the `rounds` table; `None` when the named round does not exist.
+    ///
+    /// # Errors
+    /// `Closed`, `Sqlite`.
+    pub(crate) async fn round_op(&self, op: RoundOp) -> Result<Option<Round>, StorageError> {
+        let at_ms = self.now_ms();
+        self.call(|reply| writer::Command::Round { op, at_ms, reply })
+            .await?
+    }
+
+    /// The live frame and mark items of `page` with their add and update seqs (the round ledger's view of a page).
+    ///
+    /// # Errors
+    /// `Sqlite`, `Corrupt`.
+    pub async fn frames_and_marks(&self, page: PageId) -> Result<Vec<LedgerRow>, StorageError> {
+        self.read(move |conn| rounds::frames_and_marks(conn, page))
+            .await
+    }
+
+    /// `(id, added_seq)` of every item row of `page`: the seq of the op that added each item.
+    ///
+    /// # Errors
+    /// `Sqlite`.
+    pub async fn item_added_seqs(
+        &self,
+        page: PageId,
+    ) -> Result<Vec<(penwise_core::item::ItemId, u64)>, StorageError> {
+        self.read(move |conn| rounds::added_seqs(conn, page)).await
     }
 
     /// Restores `page` to its state at `to_seq` by appending compensating ops from the server device in one

@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -20,9 +21,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import dev.penwise.ink.FrameHost
+import dev.penwise.ink.PageScene
 import dev.penwise.ink.PageStyle
 import dev.penwise.ink.PaperView
+import dev.penwise.ink.PenActivity
 import dev.penwise.ink.ViewportState
+import kotlinx.coroutines.flow.Flow
 
 private const val READOUT_SP = 11
 private const val READOUT_COLOR = 0xFF37474F
@@ -34,6 +38,16 @@ internal class FrameStageModel(
     val marks: List<SceneMark>,
     val watchKeys: Map<String, List<String>>,
     val actions: FrameStageActions,
+    val live: FrameStageLive,
+)
+
+/** What the stage needs for the live window and the stills: the server, the scene's frame space, the windows. */
+internal class FrameStageLive(
+    val server: FrameServer?,
+    val scene: PageScene,
+    val windows: Flow<WindowUpdate>,
+    val control: FrameControl,
+    val pen: PenActivity,
 )
 
 /** The stage's callbacks: frame item edits, the owner's variant pick, the core's layout feed and mark status. */
@@ -41,8 +55,10 @@ internal class FrameStageActions(
     val onPreset: (id: String, preset: String) -> Unit,
     val onRoute: (id: String, route: String) -> Unit,
     val onChoose: (id: String) -> Unit,
-    val onLayout: (id: String, json: String) -> Unit,
+    val onLayout: (id: String, json: String, kind: LayoutKind) -> Unit,
     val onMarkStatus: (id: String, status: String) -> Unit,
+    val onFocused: (id: String?) -> Unit,
+    val onUserFocus: (id: String) -> Unit,
 )
 
 /**
@@ -71,7 +87,17 @@ internal fun FrameStage(
     val context = LocalContext.current
     val layer = remember { FrameLayer(context) }
     // Leaving the page destroys the WebViews: a frame that comes back loads its route again.
-    DisposableEffect(layer) { onDispose { layer.release() } }
+    DisposableEffect(layer) {
+        model.live.control.layer = layer
+        onDispose {
+            model.live.control.layer = null
+            layer.release()
+        }
+    }
+    // The core says where the live window sits after each layout the live page reports.
+    LaunchedEffect(layer, model.live.windows) {
+        model.live.windows.collect { layer.setWindow(it.frameId, it.window, it.scrollX, it.scrollY) }
+    }
     var scroll by remember { mutableStateOf<FrameScroll?>(null) }
     // Each frame's current state recipe: a mark drawn in another one is dimmed and offers a replay.
     val states = remember { mutableStateOf<Map<String, String>>(emptyMap()) }
@@ -87,12 +113,17 @@ internal fun FrameStage(
                 it.bind(viewport)
                 it.setFrames(model.specs)
                 it.setWatch(model.watchKeys)
-                it.onScroll = { _, reported -> scroll = reported }
-                it.onRoute = model.actions.onRoute
-                it.onLayout = { id, json, state ->
-                    model.actions.onLayout(id, json)
+                it.callbacks.onScroll = { _, reported -> scroll = reported }
+                it.callbacks.onRoute = model.actions.onRoute
+                it.callbacks.onLayout = { id, json, kind, state ->
+                    model.actions.onLayout(id, json, kind)
                     if (states.value[id] != state) states.value = states.value + (id to state)
                 }
+                it.server = model.live.server
+                it.scene = model.live.scene
+                it.pen = model.live.pen
+                it.callbacks.onFocused = model.actions.onFocused
+                it.callbacks.onUserFocus = model.actions.onUserFocus
             },
             modifier = Modifier.fillMaxSize(),
         )

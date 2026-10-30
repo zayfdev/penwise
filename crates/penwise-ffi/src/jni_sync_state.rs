@@ -1,5 +1,5 @@
 //! JNI exports of [`SyncCore`]: sync status (caught up, revision), off-lock state persistence, dead letters and
-//! the server-change decision. Names are `Java_dev_penwise_core_Native_sync*`.
+//! the server-change decision. Names are `Java_dev_penwise_core_NativeSync_sync*`.
 #![allow(unsafe_code)] // `#[unsafe(no_mangle)]` entry points.
 
 use jni::EnvUnowned;
@@ -14,7 +14,7 @@ use crate::sync_core::{StateSnapshot, SyncCore, encode_dead_letters};
 
 /// True once the replica holds what the server had when the connection began ([`SyncCore::is_caught_up`]).
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_syncCaughtUp<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeSync_syncCaughtUp<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -26,7 +26,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_syncCaughtUp<'local>(
 
 /// Changes whenever the persistable state changed ([`SyncCore::revision`]).
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_syncRevision<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeSync_syncRevision<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -39,7 +39,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_syncRevision<'local>(
 /// Copies the persistable state (under the caller's lock); returns a snapshot handle for `syncStateEncode` or
 /// `syncStateDiscard`, which free it.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_syncStateBegin<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeSync_syncStateBegin<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -53,7 +53,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_syncStateBegin<'local>(
 
 /// Encodes and frees a snapshot; touches no `SyncCore`, so no lock is needed.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_syncStateEncode<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeSync_syncStateEncode<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     snapshot: jlong,
@@ -66,7 +66,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_syncStateEncode<'local>(
 
 /// Frees a snapshot without encoding it.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_syncStateDiscard<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeSync_syncStateDiscard<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     snapshot: jlong,
@@ -79,7 +79,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_syncStateDiscard<'local>(
 
 /// The dead letters blob ([`encode_dead_letters`]).
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_syncDeadLetters<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeSync_syncDeadLetters<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -92,7 +92,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_syncDeadLetters<'local>(
 
 /// Stored envelope bytes of one dead letter (empty when unknown), for export.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_syncDeadLetterBytes<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeSync_syncDeadLetterBytes<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -107,7 +107,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_syncDeadLetterBytes<'local>(
 
 /// Dismisses one dead letter.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_syncDeadLetterRemove<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeSync_syncDeadLetterRemove<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -122,7 +122,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_syncDeadLetterRemove<'local>
 
 /// True while a different server waits for the user's decision.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_syncServerChangePending<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeSync_syncServerChangePending<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -135,7 +135,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_syncServerChangePending<'loc
 /// Settles a held server change: `keep` re-queues every live notebook, page and item for the new server,
 /// otherwise they are dropped. Returns the `Outcome` blob (reconnect + every page changed).
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_syncResolveServerChange<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeSync_syncResolveServerChange<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,

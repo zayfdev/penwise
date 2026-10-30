@@ -12,8 +12,10 @@ import {
   type Hit,
   hitRequest,
   type Layout,
+  type Point,
   type Rect,
   replayMessage,
+  scrollToMessage,
   watchMessage,
 } from "./bridge-messages";
 
@@ -26,6 +28,8 @@ export class BridgeChannel {
   private nextHit = 1;
   private keys: string[] = [];
   private reported: Layout | null = null;
+  /** Every rect reported since the document loaded, in document coordinates. */
+  private docRects: Record<string, Rect | null> = {};
 
   /** `target` resolves the iframe's window each time (it changes identity only across process swaps). */
   constructor(private readonly target: () => Window | null) {}
@@ -58,21 +62,55 @@ export class BridgeChannel {
     this.postWatch();
   }
 
+  /** Asks the page to scroll to a document position (`pw:scrollTo`). */
+  scrollTo(x: number, y: number, id: number): void {
+    this.target()?.postMessage(scrollToMessage(x, y, id), "*");
+  }
+
   /** Rebuilds a recorded page state (`pw:replay`). */
   replay(state: string): void {
     this.target()?.postMessage(replayMessage(state), "*");
   }
 
-  /** Records a layout message and keeps it as the one later rect merges apply to. */
+  /**
+   * Records a layout message and keeps it as the one later rect merges apply to. Messages after the first carry
+   * only the rects that changed, and each is relative to the scroll of its own message, so the channel keeps
+   * every rect seen since the document loaded in document coordinates.
+   */
   store(layout: Layout): void {
-    this.reported = layout;
+    this.keepRects(layout.rects, layout.scroll);
+    this.reported = { ...layout, rects: this.rectsAt(layout.scroll) };
   }
 
-  /** Rect the bridge sent outside a layout (the hit answer) in the stored layout. */
+  /** Rect the bridge sent outside a layout (the hit answer, viewport coords) in the stored layout. */
   mergeRects(rects: Readonly<Record<string, Rect | null>>): Layout | null {
     if (!this.reported) return null;
-    this.reported = { ...this.reported, rects: { ...this.reported.rects, ...rects } };
+    this.keepRects(rects, this.reported.scroll);
+    this.reported = { ...this.reported, rects: this.rectsAt(this.reported.scroll) };
     return this.reported;
+  }
+
+  /**
+   * The stored layout as it stands at scroll zero: the same document facts (size, state, every rect), for a frame
+   * that no longer has a live page.
+   */
+  documentLayout(): Layout | null {
+    if (!this.reported) return null;
+    return { ...this.reported, scroll: [0, 0], rects: this.rectsAt([0, 0]) };
+  }
+
+  private keepRects(rects: Readonly<Record<string, Rect | null>>, scroll: Point): void {
+    for (const [key, rect] of Object.entries(rects)) {
+      this.docRects[key] = rect && [rect[0] + scroll[0], rect[1] + scroll[1], rect[2], rect[3]];
+    }
+  }
+
+  private rectsAt(scroll: Point): Record<string, Rect | null> {
+    const out: Record<string, Rect | null> = {};
+    for (const [key, rect] of Object.entries(this.docRects)) {
+      out[key] = rect && [rect[0] - scroll[0], rect[1] - scroll[1], rect[2], rect[3]];
+    }
+    return out;
   }
 
   /** A hit answer: resolves the stroke's binding; a stale id is ignored. */
@@ -86,6 +124,7 @@ export class BridgeChannel {
   /** A new document: no layout until it reports, and it needs the watch list again. */
   loaded(): void {
     this.reported = null;
+    this.docRects = {};
     this.postWatch();
   }
 

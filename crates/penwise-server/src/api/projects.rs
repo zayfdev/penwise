@@ -37,10 +37,18 @@ pub(crate) fn routes(token: Arc<String>) -> Router<AppState> {
         .route("/pages/{id}/frames", post(frame_create))
         .merge(super::project_marks::routes())
         .merge(crate::agent::routes())
+        .merge(crate::frames::still::routes())
+        .merge(crate::rounds::routes())
         .layer(middleware::from_fn_with_state(token, require))
 }
 
-/// Token, or a loopback peer with a loopback `Host`.
+/// Token, or a loopback peer with a loopback `Host` whose request does not come from another web origin.
+///
+/// The loopback rule exists so a local terminal tool needs no token; it must not let a web page the owner has
+/// open (a dev site on a project port, any site in a browser) drive the API with the owner's network position.
+/// Browsers label such requests, so a request that carries an `Origin` other than the server's own, or a
+/// `Sec-Fetch-Site` of `cross-site` or `same-site`, falls back to the token check. The PC viewer (same origin)
+/// and the CLI and MCP server (no `Origin`) keep working.
 async fn require(State(token): State<Arc<String>>, request: Request, next: Next) -> Response {
     let peer = request
         .extensions()
@@ -50,10 +58,23 @@ async fn require(State(token): State<Arc<String>>, request: Request, next: Next)
         .headers()
         .get(header::HOST)
         .and_then(|value| value.to_str().ok());
-    if super::same_machine(peer, host) {
+    if super::same_machine(peer, host) && !from_another_origin(request.headers()) {
         next.run(request).await
     } else {
         crate::auth::require(State(token), request, next).await
+    }
+}
+
+/// Whether the browser says this request was made by a page of another origin.
+fn from_another_origin(headers: &axum::http::HeaderMap) -> bool {
+    let text = |name: &str| headers.get(name).and_then(|value| value.to_str().ok());
+    if text("sec-fetch-site").is_some_and(|site| matches!(site, "cross-site" | "same-site")) {
+        return true;
+    }
+    match (text("origin"), text("host")) {
+        (None, _) => false,
+        (Some(origin), Some(host)) => origin != format!("http://{host}"),
+        (Some(_), None) => true,
     }
 }
 

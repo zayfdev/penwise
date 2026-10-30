@@ -5,7 +5,7 @@
 #![allow(unsafe_code)] // `#[unsafe(no_mangle)]` entry points.
 
 use jni::EnvUnowned;
-use jni::objects::{JByteArray, JFloatArray, JIntArray, JObject, JString};
+use jni::objects::{JByteArray, JFloatArray, JIntArray, JObject};
 use jni::sys::{jboolean, jfloat, jint, jlong};
 use penwise_core::Seed;
 use penwise_core::brush::Color;
@@ -15,7 +15,6 @@ use crate::error::SyncError;
 use crate::jni_scene::layers_of;
 use crate::jni_util::{
     bytes_in, bytes_out, floats_in, guarded, handle_mut, handle_ref, ids_in, ints_in, item_in,
-    string_in,
 };
 use crate::scene_handle::{
     SceneHandle, ShapeSpec, StrokeSpec, encode_edits, handle_from_code, pairs, shape_brush,
@@ -36,9 +35,9 @@ fn id_blob(ids: &[ItemId]) -> Vec<u8> {
 #[unsafe(no_mangle)]
 #[allow(
     clippy::too_many_arguments,
-    reason = "the JNI signature is fixed by `Native.sceneAddStroke`"
+    reason = "the JNI signature is fixed by `NativeScene.sceneAddStroke`"
 )]
-pub extern "system" fn Java_dev_penwise_core_Native_sceneAddStroke<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeScene_sceneAddStroke<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -80,7 +79,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneAddStroke<'local>(
 /// Commits a shape. `geometry` = `[x0, y0, x1, y1, kindParam]`, `style` = `[kind, constrain, preset, argb,
 /// fillArgb, hasFill]`.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_sceneAddShape<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeScene_sceneAddShape<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -126,9 +125,9 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneAddShape<'local>(
 #[unsafe(no_mangle)]
 #[allow(
     clippy::too_many_arguments,
-    reason = "the JNI signature is fixed by `Native.sceneResizeShape`"
+    reason = "the JNI signature is fixed by `NativeScene.sceneResizeShape`"
 )]
-pub extern "system" fn Java_dev_penwise_core_Native_sceneResizeShape<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeScene_sceneResizeShape<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -159,7 +158,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneResizeShape<'local>(
 
 /// One eraser chunk; `path` is interleaved x, y (page px).
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_sceneErase<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeScene_sceneErase<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -185,7 +184,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneErase<'local>(
 
 /// Ids selected by a lasso polygon (interleaved x, y), 16 bytes each, bottom → top.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_sceneLasso<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeScene_sceneLasso<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -201,7 +200,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneLasso<'local>(
 
 /// Ids hit at a tap, 16 bytes each, bottom → top.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_sceneHitTest<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeScene_sceneHitTest<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -217,7 +216,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneHitTest<'local>(
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_sceneDeleteItems<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeScene_sceneDeleteItems<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -239,7 +238,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneDeleteItems<'local>(
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_sceneMoveItems<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeScene_sceneMoveItems<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -264,7 +263,7 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneMoveItems<'local>(
 
 /// `layer`: `Layer::code` (0 ink, 1 agent, 2 text).
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_sceneSetLayer<'local>(
+pub extern "system" fn Java_dev_penwise_core_NativeScene_sceneSetLayer<'local>(
     mut env: EnvUnowned<'local>,
     _this: JObject<'local>,
     handle: jlong,
@@ -281,183 +280,6 @@ pub extern "system" fn Java_dev_penwise_core_Native_sceneSetLayer<'local>(
         let ids = item_list(&bytes_in(env, &ids)?)?;
         let scene = handle_mut::<SceneHandle>(handle)?;
         let edits = scene.set_layer(&ids, layer)?;
-        scene.commit_into(
-            handle_mut::<SyncCore>(core)?,
-            &edits,
-            now_ms.cast_unsigned(),
-        )?;
-        bytes_out(env, &encode_edits(&edits))
-    })
-}
-
-/// Places a frame from `{project,route,preset,cssW?,cssH?,x,y}` (C1); returns the edit blob.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_sceneAddFrame<'local>(
-    mut env: EnvUnowned<'local>,
-    _this: JObject<'local>,
-    handle: jlong,
-    json: JString<'local>,
-    core: jlong,
-    now_ms: jlong,
-) -> JByteArray<'local> {
-    guarded(&mut env, |env| {
-        let json = string_in(env, &json)?;
-        let scene = handle_mut::<SceneHandle>(handle)?;
-        let edits = scene.add_frame(&json, now_ms.cast_unsigned())?;
-        scene.commit_into(
-            handle_mut::<SyncCore>(core)?,
-            &edits,
-            now_ms.cast_unsigned(),
-        )?;
-        bytes_out(env, &encode_edits(&edits))
-    })
-}
-
-/// Switches a frame's preset and CSS size; `cssW`/`cssH` only matter for `custom`.
-#[unsafe(no_mangle)]
-#[allow(
-    clippy::too_many_arguments,
-    reason = "the JNI signature is fixed by `Native.sceneSetFramePreset`"
-)]
-pub extern "system" fn Java_dev_penwise_core_Native_sceneSetFramePreset<'local>(
-    mut env: EnvUnowned<'local>,
-    _this: JObject<'local>,
-    handle: jlong,
-    id: JByteArray<'local>,
-    preset: JString<'local>,
-    css_w: jint,
-    css_h: jint,
-    core: jlong,
-    now_ms: jlong,
-) -> JByteArray<'local> {
-    guarded(&mut env, |env| {
-        let preset = string_in(env, &preset)?;
-        let id = item_in(env, &id)?;
-        let (css_w, css_h) = (css_w.max(0).cast_unsigned(), css_h.max(0).cast_unsigned());
-        let scene = handle_mut::<SceneHandle>(handle)?;
-        let edits = scene.set_frame_preset(id, &preset, css_w, css_h)?;
-        scene.commit_into(
-            handle_mut::<SyncCore>(core)?,
-            &edits,
-            now_ms.cast_unsigned(),
-        )?;
-        bytes_out(env, &encode_edits(&edits))
-    })
-}
-
-/// Points a frame at another route; returns the edit blob.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_sceneSetFrameRoute<'local>(
-    mut env: EnvUnowned<'local>,
-    _this: JObject<'local>,
-    handle: jlong,
-    id: JByteArray<'local>,
-    route: JString<'local>,
-    core: jlong,
-    now_ms: jlong,
-) -> JByteArray<'local> {
-    guarded(&mut env, |env| {
-        let route = string_in(env, &route)?;
-        let id = item_in(env, &id)?;
-        let scene = handle_mut::<SceneHandle>(handle)?;
-        let edits = scene.set_frame_route(id, &route)?;
-        scene.commit_into(
-            handle_mut::<SyncCore>(core)?,
-            &edits,
-            now_ms.cast_unsigned(),
-        )?;
-        bytes_out(env, &encode_edits(&edits))
-    })
-}
-
-/// Marks variant frame `id` as the owner's pick (or un-marks it); choosing one un-chooses its group's others.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_sceneSetFrameChosen<'local>(
-    mut env: EnvUnowned<'local>,
-    _this: JObject<'local>,
-    handle: jlong,
-    id: JByteArray<'local>,
-    chosen: jboolean,
-    core: jlong,
-    now_ms: jlong,
-) -> JByteArray<'local> {
-    guarded(&mut env, |env| {
-        let id = item_in(env, &id)?;
-        let scene = handle_mut::<SceneHandle>(handle)?;
-        let edits = scene.set_frame_chosen(id, chosen)?;
-        scene.commit_into(
-            handle_mut::<SyncCore>(core)?,
-            &edits,
-            now_ms.cast_unsigned(),
-        )?;
-        bytes_out(env, &encode_edits(&edits))
-    })
-}
-
-/// Commits a stroke drawn on a frame (`bindingJson` = `{"frame":"<32hex>","mode":"bound"|"area","key":"…"?}`);
-/// samples are page coords. Returns the edit blob (the stroke plus its mark add/update).
-#[unsafe(no_mangle)]
-#[allow(
-    clippy::too_many_arguments,
-    reason = "the JNI signature is fixed by `Native.sceneAddBoundStroke`"
-)]
-pub extern "system" fn Java_dev_penwise_core_Native_sceneAddBoundStroke<'local>(
-    mut env: EnvUnowned<'local>,
-    _this: JObject<'local>,
-    handle: jlong,
-    id: JByteArray<'local>,
-    brush: JIntArray<'local>,
-    scale: jfloat,
-    seed: jlong,
-    samples: JFloatArray<'local>,
-    times: JIntArray<'local>,
-    binding_json: JString<'local>,
-    core: jlong,
-    now_ms: jlong,
-) -> JByteArray<'local> {
-    guarded(&mut env, |env| {
-        let (preset, argb) = match ints_in(env, &brush)?.as_slice() {
-            [preset, argb] => (*preset, *argb),
-            _ => return Err(SyncError::BadArgument("brush must be [preset, argb]").into()),
-        };
-        let (samples, times) = (floats_in(env, &samples)?, ints_in(env, &times)?);
-        let binding_json = string_in(env, &binding_json)?;
-        let spec = StrokeSpec {
-            id: item_in(env, &id)?,
-            preset: usize::try_from(preset).map_err(|_| SyncError::BadArgument("preset"))?,
-            argb: argb.cast_unsigned(),
-            scale,
-            seed: Seed::from_i64_wire(seed).get(),
-            samples: &samples,
-            times: &times,
-        };
-        let scene = handle_mut::<SceneHandle>(handle)?;
-        let edits = scene.add_bound_stroke(&spec, &binding_json, now_ms.cast_unsigned())?;
-        scene.commit_into(
-            handle_mut::<SyncCore>(core)?,
-            &edits,
-            now_ms.cast_unsigned(),
-        )?;
-        bytes_out(env, &encode_edits(&edits))
-    })
-}
-
-/// Sets a mark's status (`new`/`seen`/`done`/`reopened`); returns the edit blob.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_penwise_core_Native_sceneSetMarkStatus<'local>(
-    mut env: EnvUnowned<'local>,
-    _this: JObject<'local>,
-    handle: jlong,
-    mark_id: JByteArray<'local>,
-    status: JString<'local>,
-    core: jlong,
-    now_ms: jlong,
-) -> JByteArray<'local> {
-    guarded(&mut env, |env| {
-        let id = item_in(env, &mark_id)?;
-        let status = string_in(env, &status)?;
-        let scene = handle_mut::<SceneHandle>(handle)?;
-        let edits = scene.set_mark_status(id, &status)?;
         scene.commit_into(
             handle_mut::<SyncCore>(core)?,
             &edits,

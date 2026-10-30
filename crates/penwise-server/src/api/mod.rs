@@ -10,11 +10,11 @@
 
 mod author;
 mod error;
-mod marks;
+pub(crate) mod marks;
 mod notebooks;
 pub(crate) mod pages;
 mod pair;
-mod project_marks;
+pub(crate) mod project_marks;
 pub(crate) mod projects;
 mod resolve;
 mod restore;
@@ -31,6 +31,7 @@ use axum::middleware;
 use axum::response::Response;
 use axum::routing::{get, post};
 
+use penwise_core::item::ItemId;
 use penwise_proto::PageId;
 
 use crate::assets::Assets;
@@ -67,12 +68,20 @@ pub struct AppState {
     /// Broadcasts a page switch to the connected devices (`POST /pages/<id>/select` and the agent's
     /// `penwise_switch_page`).
     pub(crate) announce_page: PageAnnouncer,
+    /// Broadcasts a camera move (`Focus`) to the connected devices: `POST /pages/<id>/focus` and the agent's
+    /// `show` tool.
+    pub(crate) announce_focus: FocusAnnouncer,
     /// Mark crops built by `GET /marks`, served by `GET /marks/<id>/image/<kind>.png`.
     pub(crate) images: Arc<crate::agent::ImageCache>,
+    /// What a non-live frame shows: server-made stills of the whole document (contract v2 §4).
+    pub(crate) stills: Arc<crate::frames::still::Stills>,
 }
 
 /// Tells every sync session to switch to a page.
 pub(crate) type PageAnnouncer = Arc<dyn Fn(PageId) + Send + Sync>;
+
+/// Tells every sync session to switch to a page and fit an item (a frame; `None` = the page's content).
+pub(crate) type FocusAnnouncer = Arc<dyn Fn(PageId, Option<ItemId>) + Send + Sync>;
 
 /// The HTTP router (without `/sync`, which `serve` merges).
 pub fn router(app: AppState) -> Router {

@@ -123,7 +123,7 @@ internal object MarkPlacement {
         val left = max(rect.x, frame.x)
         val top = max(rect.y, frame.y)
         val right = min(rect.x + rect.width, frame.x + frame.cssWidth)
-        val bottom = min(rect.y + rect.height, frame.y + frame.cssHeight)
+        val bottom = min(rect.y + rect.height, frame.y + frame.boxHeight)
         if (right <= left || bottom <= top) return null
         val dimmed = mark.state.isNotEmpty() && mark.state != states[mark.frame].orEmpty()
         return MarkChip(

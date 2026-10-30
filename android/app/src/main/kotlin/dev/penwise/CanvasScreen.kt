@@ -30,10 +30,9 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import dev.penwise.frames.AddFrameDialog
 import dev.penwise.frames.DesignProject
+import dev.penwise.frames.FrameOverlays
 import dev.penwise.frames.FramePreset
 import dev.penwise.frames.FrameStage
-import dev.penwise.frames.FrameStageActions
-import dev.penwise.frames.FrameStageModel
 import dev.penwise.frames.MarksGuide
 import dev.penwise.ink.InkCanvas
 import dev.penwise.ink.PageList
@@ -81,10 +80,7 @@ fun CanvasScreen(
     val scene by page.scene.collectAsState()
     val open = scene ?: return
     val style = PageStyle.of(pages.page(pages.active))
-    val frameSpecs by page.frames.collectAsState()
     val projects by page.projects.collectAsState()
-    val marks by page.marks.collectAsState()
-    val watchKeys by page.watchKeys.collectAsState()
     val showDone by page.showDone.collectAsState()
     var canvasSize by remember { mutableStateOf(IntSize.Zero) }
     var showAddFrame by rememberSaveable { mutableStateOf(false) }
@@ -103,17 +99,11 @@ fun CanvasScreen(
                 onHome = onHome,
             )
         }
-    val stageActions =
-        FrameStageActions(
-            onPreset = page::setFramePreset,
-            onRoute = page::setFrameRoute,
-            onChoose = { page.setFrameChosen(it, true) },
-            onLayout = page::setFrameLayout,
-            onMarkStatus = page::setMarkStatus,
-        )
+    val stage = rememberFrameStageModel(page, open)
+    val overlay = rememberFrameOverlay(page)
     Box(modifier = Modifier.fillMaxSize().onSizeChanged { canvasSize = it }) {
         FrameStage(
-            model = FrameStageModel(frameSpecs, marks, watchKeys, stageActions),
+            model = stage,
             viewport = page.viewport,
             style = style,
             modifier = Modifier.fillMaxSize(),
@@ -132,6 +122,7 @@ fun CanvasScreen(
                 modifier = Modifier.fillMaxSize(),
             )
         }
+        FrameOverlays(overlay)
         GestureExclusionStrips()
         Column(
             modifier =
@@ -190,7 +181,7 @@ private fun CanvasDrawer(
                 state = page.tools,
                 zoomPercent = (zoom * PERCENT).roundToInt(),
                 showDone = showDone,
-                onShowDone = { page.setShowDone(!showDone) },
+                onShowDone = { page.frameSession.setShowDone(!showDone) },
                 onFit = page.viewport::reset,
                 onClear = actions.onClear,
                 onSync = actions.onSync,

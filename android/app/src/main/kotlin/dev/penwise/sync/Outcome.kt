@@ -10,6 +10,9 @@ private const val FLAG_RECONNECT = 2
 private const val FLAG_SNAPSHOT_DONE = 4
 private const val FLAG_PAGE = 8
 private const val FLAG_SERVER_CHANGED = 16
+private const val FLAG_FOCUS_ITEM = 32
+private const val FLAG_FOCUS_SUPPORTED = 64
+private const val CHANGE_BYTES = 2 * ID_BYTES
 
 /** What one received server frame did (the blob layout is documented in `sync_core/outcome.rs`). */
 class Outcome(
@@ -28,8 +31,12 @@ class Outcome(
     val applyErrors: Int,
     val acked: Int,
     val rejected: Int,
-    /** `Welcome.current_page` or `SwitchPage.page`. */
+    /** `Welcome.current_page`, `SwitchPage.page` or `Focus.page`. */
     val page: ByteArray?,
+    /** `Focus.item`: the frame to fit; null with [Kind.FOCUS] means "fit the page's content". */
+    val focusItem: ByteArray?,
+    /** A `Welcome` from a server that speaks protocol 2 or newer, so `Focus` may be sent. */
+    val focusSupported: Boolean,
     /** Frames to send back (Pong). */
     val replies: List<ByteArray>,
     /** The unparsed blob: `PageScene.refresh` takes it as is. */
@@ -59,6 +66,10 @@ class Outcome(
             val rejected = buffer.getInt()
             val page = if (flags and FLAG_PAGE != 0) ByteArray(ID_BYTES).also(buffer::get) else null
             val replies = List(buffer.getInt()) { ByteArray(buffer.getInt()).also(buffer::get) }
+            // The change list (page, item pairs) is read by the scene's own refresh; only its length matters here.
+            val changes = buffer.getInt()
+            buffer.position(buffer.position() + changes * CHANGE_BYTES)
+            val focusItem = if (flags and FLAG_FOCUS_ITEM != 0) ByteArray(ID_BYTES).also(buffer::get) else null
             return Outcome(
                 kind = kind,
                 code = code,
@@ -72,6 +83,8 @@ class Outcome(
                 acked = acked,
                 rejected = rejected,
                 page = page,
+                focusItem = focusItem,
+                focusSupported = flags and FLAG_FOCUS_SUPPORTED != 0,
                 replies = replies,
                 raw = raw,
             )
@@ -89,6 +102,9 @@ object Kind {
     const val SNAPSHOT_CHUNK = 5
     const val SNAPSHOT_END = 6
     const val SWITCH_PAGE = 9
+
+    /** `Focus`: switch to the page if needed, then fit the frame (or the page's content). */
+    const val FOCUS = 14
 
     /** Frames of a catch-up (ops or snapshot): the stream of them ends the first sync. */
     val CATCH_UP = setOf(OPS_SINCE, SNAPSHOT_BEGIN, SNAPSHOT_CHUNK, SNAPSHOT_END)

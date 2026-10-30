@@ -2,65 +2,114 @@ package dev.penwise.frames
 
 import android.content.Context
 import android.os.SystemClock
-import android.util.Log
-import android.view.InputDevice
 import android.view.MotionEvent
+import android.view.ViewConfiguration
 import android.widget.FrameLayout
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.findViewTreeLifecycleOwner
+import dev.penwise.ink.FitMode
 import dev.penwise.ink.FrameBinder
 import dev.penwise.ink.FrameHost
-import dev.penwise.ink.HitAnswer
+import dev.penwise.ink.PageRect
 import dev.penwise.ink.PageScene
+import dev.penwise.ink.PenActivity
 import dev.penwise.ink.PendingBinding
 import dev.penwise.ink.ViewTransform
 import dev.penwise.ink.ViewportState
-import dev.penwise.sync.Ids
 
 /**
- * The live pages under the ink layer (§6.4): one WebView per [FrameSpec], laid out at its preset size and moved by the
- * canvas [ViewportState] (position and scale, so panning and pinching carry the pages along), plus the routing that
- * keeps one finger for the page and everything else for the canvas.
+ * The frames under the ink layer (design harness v2): the server's stills of every frame at its box on the board, and
+ * on top of them at most one live WebView, the page of the focused frame, placed at the live window the core computes
+ * from the page's actual scroll. The frame that was live before stays warm (hidden, paused) for a quick return; older
+ * ones are destroyed. In the background the live page is paused and the stills stop polling.
  *
  * The WebViews are ordinary window views; the ink is a `SurfaceView` with `setZOrderOnTop`, above them. This view must
- * therefore not draw anything: the paper below the pages is [dev.penwise.ink.PaperView]'s job.
+ * therefore not draw anything itself: the paper below is [dev.penwise.ink.PaperView]'s job, the stills [StillView]'s.
  *
- * Input never reaches the WebViews through the view tree (the ink surface is above and takes every touch): a frame
- * gesture synthesises single-pointer events in the WebView's own coordinates and dispatches them, which is what keeps
- * scrolling and clicking native.
+ * The parts: [FrameLookup] (where the frames are), [LivePages] (the WebViews), [FrameStills], [FrameGestures] and
+ * [FramePenHits] (touch and pen), [WindowFollower] (the scroll link) and [LayerInbox] (the bridge's messages). This
+ * class wires them to the camera and decides who is live.
  */
 internal class FrameLayer(
     context: Context,
 ) : FrameLayout(context),
     FrameHost,
     FrameBinder {
-    private val entries = LinkedHashMap<String, FrameEntry>()
-    private val follow: (ViewTransform) -> Unit = { sync() }
+    private var specs: List<FrameSpec> = emptyList()
     private var viewport: ViewportState? = null
+    private val rule = FocusRule()
+    private val follow: (ViewTransform) -> Unit = {
+        sync()
+        if (!follower.linking) scheduleSettle()
+    }
 
     /** The element keys each frame's bound strokes need; a `pw:watch` goes out when this changes. */
     private var watch: Map<String, List<String>> = emptyMap()
-    private val hits = FrameHits()
+    private val settle = Runnable { settled() }
+    private var active = true
 
-    private var mode = Mode.IDLE
-    private var active: FrameEntry? = null
-    private var activePointer = MotionEvent.INVALID_POINTER_ID
-    private var downTime = 0L
-    private var localX = 0f
-    private var localY = 0f
+    /** What the layer tells the screen around it (set by the stage). */
+    val callbacks = LayerCallbacks()
 
-    /** Called on the UI thread whenever a page reports a new scroll offset (the ink layer reads it for area marks). */
-    var onScroll: ((String, FrameScroll) -> Unit)? = null
+    /** The pen, whose touch never carries the camera along with a page's scroll and ends a page's fling. */
+    var pen: PenActivity? = null
 
-    /**
-     * Called on the UI thread when the user's own navigation inside a page (a link click) lands on another route, at
-     * most once per settled navigation: the frame item's `route` follows, without a reload.
-     */
-    var onRoute: ((String, String) -> Unit)? = null
+    /** The scene's frame space, for a pen-down on a still (set from the UI thread). */
+    var scene: PageScene? = null
 
-    /**
-     * Called on the UI thread for every `pw:layout`: the frame id, the layout as the core takes it (its preset is
-     * filled here) and the page's state recipe ("" = the initial UI).
-     */
-    var onLayout: ((frameId: String, json: String, state: String) -> Unit)? = null
+    private val transform: () -> ViewTransform = { viewport?.transform ?: ViewTransform.IDENTITY }
+    private val lookup = FrameLookup({ specs }, transform) { pages.live }
+    private val stills =
+        FrameStills(context, lookup, callbacks, { pages.live?.spec?.id == it }) { lookup.visibleIds(width, height) }
+    private val follower =
+        WindowFollower(
+            camera = { viewport },
+            density = { density },
+            screenHeight = { height },
+            isLive = { it === pages.live },
+            penActive = { pen?.active() == true },
+            place = ::sync,
+            clock = { SystemClock.uptimeMillis() },
+        )
+    private val touch = LayerTouch(lookup, follower, this, transform, ::onDoubleTap)
+    private val gestures = FrameGestures(touch, ViewConfiguration.get(context).scaledTouchSlop.toFloat())
+    private val penHits = FramePenHits(LayerPenHost(lookup, stills, { scene }, density))
+    private val pages: LivePages =
+        LivePages(this, context, ::deliver, { entry, x, y -> follower.onScroll(entry, x, y) }) { gestures.release(it) }
+    private val inbox = LayerInbox(pages, stills, penHits, follower, this, { watch }, callbacks)
+    private val lifecycle =
+        LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_STOP -> setActive(false)
+                Lifecycle.Event.ON_START -> setActive(true)
+                else -> Unit
+            }
+        }
+
+    init {
+        addView(stills.view, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+    }
+
+    /** The PC server the stills and pen-down hits of non-live frames come from; null while none is known. */
+    var server: FrameServer?
+        get() = stills.server
+        set(value) {
+            stills.server = value
+        }
+
+    /** The live frame's id, or null. */
+    val focusedFrame: String? get() = pages.live?.spec?.id
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        findViewTreeLifecycleOwner()?.lifecycle?.addObserver(lifecycle)
+    }
+
+    override fun onDetachedFromWindow() {
+        findViewTreeLifecycleOwner()?.lifecycle?.removeObserver(lifecycle)
+        super.onDetachedFromWindow()
+    }
 
     /** Places the frames through [viewport]; from the UI thread. */
     fun bind(viewport: ViewportState) {
@@ -68,32 +117,35 @@ internal class FrameLayer(
         this.viewport?.observers?.remove(follow)
         this.viewport = viewport
         viewport.observers.add(follow)
+        stills.start()
         sync()
     }
 
     /**
-     * Shows [specs]: a new frame's WebView is opened, a frame whose URL changed is loaded again (or adopted when the
-     * page already shows that route), a resized frame is re-laid out, a moved one is translated, and a frame that is
-     * gone is destroyed. A frame that stays keeps its WebView and its page state (its scroll position included).
-     *
-     * A patch, label, group or choice change is none of those: every spec is taken, then the patch decisions go out
-     * and [sync] re-applies the variant dimming.
+     * The app is in front or not: in the background the live page is paused and the stills stop polling; both pick
+     * up again when it comes back.
      */
-    fun setFrames(specs: List<FrameSpec>) {
-        val plan = FrameDiff.plan(entries.values.map { it.spec }, specs)
-        if (!plan.isEmpty) {
-            for (id in plan.close) entries.remove(id)?.let { release(it) }
-            for (spec in plan.open) {
-                val view = FrameViews.open(context, spec, density) { message -> deliver(spec.id, message) }
-                entries[spec.id] = FrameEntry(spec, view)
-                addView(view)
-            }
-            for (spec in plan.load) entries[spec.id]?.let { load(it, spec) }
-            for (spec in plan.resize) entries[spec.id]?.let { resize(it, spec) }
-        }
-        for (spec in specs) entries[spec.id]?.let { it.spec = spec }
+    fun setActive(active: Boolean) {
+        if (this.active == active) return
+        this.active = active
+        pages.setRunning(active)
+        if (active) stills.resume() else stills.pause()
+    }
+
+    /**
+     * Shows [next]: a frame that is gone is closed (and its page destroyed when it was live or warm), a live or warm
+     * frame whose URL changed is loaded again, a resized one is re-laid out. A frame that stays keeps its WebView and
+     * its page state. Pages open when a frame gets the focus, never here.
+     */
+    fun setFrames(next: List<FrameSpec>) {
+        val plan = FrameDiff.plan(specs, next)
+        specs = next
+        for (id in plan.close) closeFrame(id)
+        pages.update(plan, next)
         sync()
-        for (entry in entries.values) sendPatch(entry)
+        for (entry in pages.all()) PageOps.sendPatch(entry)
+        scheduleSettle()
+        stills.refresh()
     }
 
     /** The Ghost chip's on/off toggle: a local before/after view of the frame's patch, never synced. */
@@ -101,60 +153,52 @@ internal class FrameLayer(
         id: String,
         on: Boolean,
     ) {
-        val entry = entries[id] ?: return
+        val entry = pages.entry(id) ?: return
         if (entry.patchOn == on) return
         entry.patchOn = on
-        sendPatch(entry)
+        PageOps.sendPatch(entry)
     }
 
     /**
-     * The element keys each frame's bound strokes need (`sceneFrameKeys`). Every frame gets the new list; the bridge
+     * The element keys each frame's bound strokes need (`sceneFrameKeys`). Every page gets the new list; the bridge
      * replies with a full layout message, so a key that changed its rect is re-read at once.
      */
     fun setWatch(keys: Map<String, List<String>>) {
         if (keys == watch) return
         watch = keys
-        for (entry in entries.values) sendWatch(entry)
+        for (entry in pages.all()) PageOps.sendWatch(entry, watch[entry.spec.id].orEmpty())
     }
 
-    /**
-     * A pen-down at ([windowX], [windowY]): the frame under it (null off every frame) and a `pw:hit?` on its way to
-     * the page. The answer is read when the stroke commits; no answer by then means an area binding.
-     */
-    override fun beginBinding(
-        windowX: Float,
-        windowY: Float,
-        bindToElement: Boolean,
-    ): PendingBinding? {
-        val index = FrameGeometry.at(windowX, windowY, placements())
-        if (index < 0) return null
-        val entry = entries.values.elementAt(index)
-        val x = entry.placement.toCssX(windowX, density)
-        val y = entry.placement.toCssY(windowY, density)
-        val id = hits.ask(entry.view, x, y)
-        return PendingBinding(
-            frame = entry.spec.id,
-            bindToElement = bindToElement,
-            answer = { hits.take(id) },
-            prime = { scene, hit -> primeLayout(entry, scene, hit) },
-            onDone = { hits.forget(id) },
-        )
-    }
-
-    /**
-     * The hit's element may be one the page never watched, so the core lacks its rect. Merge the rect the bridge just
-     * measured into the frame's last layout before the stroke commits (M2Core's first-draw flow).
-     */
-    private fun primeLayout(
-        entry: FrameEntry,
-        scene: PageScene,
-        hit: HitAnswer,
+    /** Fits frame [id] to the screen (animated) and makes it the live one: a double-tap, an agent's `Focus`. */
+    fun fitFrame(
+        id: String,
+        mode: FitMode = FitMode.FIT_WIDTH,
     ) {
-        val layout = entry.layout ?: return
-        val rect = FrameRect(hit.rect[0], hit.rect[1], hit.rect[2], hit.rect[3])
-        val merged = layout.copy(rects = layout.rects + (hit.key to rect))
-        val bytes = Ids.bytes(entry.spec.id) ?: return
-        scene.setFrameLayout(bytes, FrameLayouts.coreJson(merged, entry.spec.preset))
+        val spec = specs.firstOrNull { it.id == id } ?: return
+        viewport?.fitRect(PageRect(spec.x, spec.y, spec.cssWidth.toFloat(), spec.boxHeight.toFloat()), mode)
+        if (mode == FitMode.FIT_WIDTH) {
+            rule.explicit(id)
+            applyFocus(id)
+        }
+    }
+
+    /** The core's live window for frame [id], computed for the scroll [scrollX], [scrollY] the bridge had reported. */
+    fun setWindow(
+        id: String,
+        window: FloatArray,
+        scrollX: Float,
+        scrollY: Float,
+    ) {
+        val entry = pages.entry(id) ?: return
+        // Kept relative to the frame, so a frame that moves takes its window along.
+        entry.base = WindowBase(window[0] - entry.spec.x, window[1] - entry.spec.y, scrollX, scrollY, entry.spec.full)
+        sync()
+    }
+
+    /** Loads a frame's page again (the chip's reload), or asks the server for a fresh still of a frame not live. */
+    fun reload(id: String) {
+        val entry = pages.entry(id)
+        if (entry == null) stills.refresh(force = true) else PageOps.reload(entry)
     }
 
     /** Replays [state]'s recipe on [frameId]'s page (a mark chip's "Replay state"). */
@@ -162,314 +206,120 @@ internal class FrameLayer(
         frameId: String,
         state: String,
     ) {
-        entries[frameId]?.let { FrameCommands.replay(it.view, state) }
+        pages.entry(frameId)?.let { FrameCommands.replay(it.view, state) }
     }
 
-    private fun sendWatch(entry: FrameEntry) {
-        FrameCommands.watch(entry.view, watch[entry.spec.id].orEmpty())
-    }
-
-    /** Loads one frame's page again (the chip's reload); its scroll position comes back through the bridge. */
-    fun reload(id: String) {
-        val entry = entries[id] ?: return
-        entry.reportedRoute = entry.spec.route
-        entry.quietUntil = SystemClock.uptimeMillis() + LOAD_QUIET_MS
-        entry.view.reload()
-    }
-
-    /** Destroys the WebViews (page leave); opening a frame again creates a fresh one. */
+    /** Destroys the WebViews and stops the stills (page leave); a frame that comes back is opened again. */
     fun release() {
+        removeCallbacks(settle)
         viewport?.observers?.remove(follow)
         viewport = null
-        cancelFrame()
-        hits.clear()
-        mode = Mode.IDLE
-        for (entry in entries.values) release(entry)
-        entries.clear()
-    }
-
-    /** Takes one page's WebView down; its content is gone, so a frame that comes back loads again. */
-    private fun release(entry: FrameEntry) {
-        // A frame deleted under the finger: the page gets a cancel, never a click into a destroyed view.
-        if (active === entry) cancelFrame()
-        entry.routeRunnable?.let(::removeCallbacks)
-        entry.routeRunnable = null
-        entry.pendingRoute = null
-        removeView(entry.view)
-        entry.view.destroy()
+        gestures.reset()
+        penHits.clear()
+        stills.release()
+        rule.clear()
+        pages.destroyAll()
     }
 
     override fun route(
         event: MotionEvent,
         handOver: (MotionEvent) -> Unit,
-    ): Boolean =
-        when (mode) {
-            Mode.CANVAS -> {
-                // The canvas owns this sequence until every finger is up; a lone remaining finger must not click.
-                if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
-                    mode = Mode.IDLE
-                }
-                false
-            }
-
-            Mode.FRAME -> {
-                continueFrame(event, handOver)
-            }
-
-            Mode.IDLE -> {
-                begin(event)
-            }
-        }
+    ): Boolean = gestures.route(event, handOver)
 
     override fun cancel() {
-        cancelFrame()
-        if (mode == Mode.FRAME) mode = Mode.IDLE
+        // Called for every stylus event: nothing to do unless a finger gesture, a waiting tap or a fling is about.
+        if (!gestures.busy && !follower.engaged) return
+        gestures.cancel()
+        // The pen is down: a fling of the page ends with it.
+        follower.penDown(pages.live)
     }
 
-    /** One finger went down: it belongs to the page under it, or to nobody when it is outside every page. */
-    private fun begin(event: MotionEvent): Boolean {
-        if (event.actionMasked != MotionEvent.ACTION_DOWN || fingers(event) != 1) return false
-        val index = FrameGeometry.at(event.getX(0), event.getY(0), placements())
-        if (index < 0) return false
-        active = entries.values.elementAt(index)
-        activePointer = event.getPointerId(0)
-        downTime = event.downTime
-        forward(event, MotionEvent.ACTION_DOWN)
-        mode = Mode.FRAME
-        return true
+    override fun beginBinding(
+        windowX: Float,
+        windowY: Float,
+        bindToElement: Boolean,
+    ): PendingBinding? = penHits.begin(windowX, windowY, bindToElement)
+
+    /** A one-finger double-tap on [frameId]'s box: it is fitted and made live, and other devices may follow. */
+    private fun onDoubleTap(frameId: String) {
+        val live = pages.live
+        // A live page that already fills the screen gets its own double-tap.
+        if (live?.spec?.id == frameId && touch.isFitted(live)) return
+        fitFrame(frameId)
+        callbacks.onUserFocus?.invoke(frameId)
     }
 
-    private fun continueFrame(
-        event: MotionEvent,
-        handOver: (MotionEvent) -> Unit,
-    ): Boolean {
-        if (!FrameTouch.keepsFrame(fingers(event))) {
-            // A second finger takes the gesture: the page gets a cancel (no stray click), the canvas every finger down.
-            cancelFrame()
-            mode = Mode.CANVAS
-            handOver(event)
-            return false
-        }
-        if (event.actionMasked == MotionEvent.ACTION_CANCEL) {
-            cancelFrame()
-            mode = Mode.IDLE
-            return true
-        }
-        val action = if (event.actionMasked == MotionEvent.ACTION_UP) MotionEvent.ACTION_UP else MotionEvent.ACTION_MOVE
-        forward(event, action)
-        if (event.actionMasked == MotionEvent.ACTION_UP) {
-            active = null
-            mode = Mode.IDLE
-        }
-        return true
+    /** Makes [id] the live frame (null: none): the previous live page is parked warm, the one before it destroyed. */
+    private fun applyFocus(id: String?) {
+        val was = pages.live?.spec?.id
+        val left = pages.focus(id?.let(lookup::spec))
+        val now = pages.live?.spec?.id
+        if (now == was) return
+        left?.let { stills.demoted(it.spec.id) }
+        sync()
+        callbacks.onFocused?.invoke(now)
     }
 
-    /** Moves the page rect on screen: the page keeps its layout size, so its CSS breakpoints see the preset. */
+    private fun closeFrame(id: String) {
+        stills.forget(id)
+        if (rule.focused == id) rule.clear()
+        val wasLive = pages.live?.spec?.id == id
+        pages.close(id)
+        if (wasLive) callbacks.onFocused?.invoke(null)
+    }
+
+    /** Moves the live page to its window on screen: its page keeps the preset layout size, only its position scales. */
     private fun sync() {
-        val view = viewport?.transform ?: ViewTransform.IDENTITY
-        for (entry in entries.values) {
-            val placement = FrameGeometry.place(rect(entry.spec), view, density)
-            entry.placement = placement
-            entry.view.translationX = placement.left
-            entry.view.translationY = placement.top
-            entry.view.scaleX = placement.scale
-            entry.view.scaleY = placement.scale
-            // A variant the owner did not pick is dimmed until (and unless) it wins: the comparison stays on screen.
-            entry.view.alpha = if (isDimmed(entry.spec)) DIMMED_ALPHA else 1f
-        }
+        val view = transform()
+        stills.show(view)
+        val entry = pages.live ?: return
+        val placement = FrameGeometry.place(entry.window(), view, density)
+        entry.placement = placement
+        entry.view.translationX = placement.left
+        entry.view.translationY = placement.top
+        entry.view.scaleX = placement.scale
+        entry.view.scaleY = placement.scale
+        // A variant the owner did not pick is dimmed until (and unless) it wins: the comparison stays on screen.
+        entry.view.alpha = if (isDimmed(entry.spec)) DIMMED_ALPHA else 1f
     }
 
-    /** Sends the patch decision the page does not have yet; a silent no-op when it already shows that. */
-    private fun sendPatch(entry: FrameEntry) {
-        val message = entry.patches.next(entry.spec.patch, entry.patchOn) ?: return
-        FrameCommands.patch(entry.view, message)
+    private fun scheduleSettle() {
+        removeCallbacks(settle)
+        postDelayed(settle, SETTLE_MS)
     }
 
-    /** The item's page box (C1): `css_w × css_h` page units, whatever the display density. */
-    private fun rect(spec: FrameSpec): FrameRect =
-        FrameRect(spec.x, spec.y, spec.cssWidth.toFloat(), spec.cssHeight.toFloat())
-
-    private fun placements(): List<FramePlacement> = entries.values.map { it.placement }
-
-    /** A finger event in the active page's own coordinates; the WebView sees a normal single-pointer sequence. */
-    private fun forward(
-        event: MotionEvent,
-        action: Int,
-    ) {
-        val entry = active ?: return
-        val index = event.findPointerIndex(activePointer)
-        if (index < 0) return
-        localX = entry.placement.toLocalX(event.getX(index))
-        localY = entry.placement.toLocalY(event.getY(index))
-        dispatch(entry, action, event.eventTime)
-    }
-
-    private fun dispatch(
-        entry: FrameEntry,
-        action: Int,
-        time: Long,
-    ) {
-        val copy = MotionEvent.obtain(downTime, time, action, localX, localY, 0)
-        // A touchscreen finger, not SOURCE_UNKNOWN: the WebView reads the tool type to decide it is a finger, and the
-        // page's pointer events should say so too.
-        copy.source = InputDevice.SOURCE_TOUCHSCREEN
-        entry.view.dispatchTouchEvent(copy)
-        copy.recycle()
-    }
-
-    private fun cancelFrame() {
-        val entry = active ?: return
-        // The coordinates of the last event, at the time the gesture is abandoned.
-        dispatch(entry, MotionEvent.ACTION_CANCEL, SystemClock.uptimeMillis())
-        active = null
-    }
-
-    private enum class Mode {
-        /** Nothing of ours is down. */
-        IDLE,
-
-        /** One finger is working a page. */
-        FRAME,
-
-        /** A gesture that began on a page became a canvas gesture; the canvas owns it until every finger is up. */
-        CANVAS,
-    }
-
-    /**
-     * Points [entry] at [spec]: a page that already shows the spec's route (the user clicked a link; the item follows)
-     * adopts it without a reload, anything else (another project, another host, a route typed by the user) loads.
-     */
-    private fun load(
-        entry: FrameEntry,
-        spec: FrameSpec,
-    ) {
-        val adopted =
-            entry.reportedRoute == spec.route && FrameUrls.origin(entry.loadedUrl) == FrameUrls.origin(spec.url)
-        entry.spec = spec
-        if (adopted) {
-            entry.loadedUrl = spec.url
+    /** The camera has been still for a moment: the focus rule decides who is live, the window covers what is seen. */
+    private fun settled() {
+        val camera = viewport ?: return
+        if (camera.gesturing || camera.animating) {
+            scheduleSettle()
             return
         }
-        entry.loadedUrl = spec.url
-        entry.reportedRoute = spec.route
-        entry.quietUntil = SystemClock.uptimeMillis() + LOAD_QUIET_MS
-        entry.view.loadUrl(spec.url)
+        if (width > 0 && height > 0) {
+            val boxes = specs.map { lookup.boxOnScreen(it, camera.transform) }
+            applyFocus(rule.evaluate(boxes, width.toFloat(), height.toFloat()))
+        }
+        pages.live?.let(follower::align)
+        stills.refresh()
     }
 
-    /** A preset switch: the page keeps its document and reflows at the new width (its breakpoints see the preset). */
-    private fun resize(
-        entry: FrameEntry,
-        spec: FrameSpec,
-    ) {
-        entry.spec = spec
-        entry.view.layoutParams = LayoutParams((spec.cssWidth * density).toInt(), (spec.cssHeight * density).toInt())
-    }
-
-    /**
-     * A bridge message: logged, and the scroll offset kept on the entry for the ink layer (M2's area marks). A page's
-     * own navigation updates its item's route, once the clicking stops.
-     */
+    /** A bridge message, on the UI thread: the page's scroll, layout and route reports; hits and replies. */
     private fun deliver(
         frameId: String,
         message: FrameMessage,
     ) {
         // The bridge posts on the WebView's thread; views and state belong to the UI thread.
         post {
-            val entry = entries[frameId] ?: return@post
-            when (message) {
-                is FrameMessage.Hello -> {
-                    // The document size is known before the first scroll: the readout and M2's area marks want it now.
-                    entry.scroll = FrameScroll(entry.scroll.x, entry.scroll.y, message.docWidth, message.docHeight)
-                    FrameRoutes.ofUrl(message.url)?.let { entry.reportedRoute = it }
-                    onScroll?.invoke(frameId, entry.scroll)
-                    // A fresh document starts with no watched keys: ask for the marks' ones before the first layout.
-                    sendWatch(entry)
-                    // A fresh document also starts without the ghost/variant patch: apply it again at once.
-                    entry.patches.reset()
-                    sendPatch(entry)
-                    Log.i(
-                        TAG,
-                        "$frameId hello ${message.url} doc ${message.docWidth}x${message.docHeight} " +
-                            "view ${message.viewWidth}x${message.viewHeight}",
-                    )
-                }
-
-                is FrameMessage.Scroll -> {
-                    entry.scroll = FrameScroll(message.x, message.y, message.docWidth, message.docHeight)
-                    Log.d(TAG, "$frameId scroll ${message.x},${message.y} of ${message.docWidth}x${message.docHeight}")
-                    onScroll?.invoke(frameId, entry.scroll)
-                }
-
-                is FrameMessage.Route -> {
-                    queueRoute(entry, message.route)
-                }
-
-                is FrameMessage.Hit -> {
-                    hits.answer(message.id, message.key, message.rect)
-                    Log.d(TAG, "$frameId hit ${message.key} '${message.selector}' ${message.rect}")
-                }
-
-                is FrameMessage.Layout -> {
-                    entry.layout = message
-                    onLayout?.invoke(frameId, FrameLayouts.coreJson(message, entry.spec.preset), message.state)
-                }
-
-                is FrameMessage.Replayed -> {
-                    Log.i(TAG, "$frameId replay '${message.state}' ok=${message.ok}")
-                }
-
-                is FrameMessage.Patched -> {
-                    Log.i(TAG, "$frameId patched ok=${message.ok} failed=${message.failed}")
-                }
-            }
+            val entry = pages.entry(frameId) ?: return@post
+            FrameInbox.handle(entry, message, inbox)
         }
-    }
-
-    /**
-     * The page navigated by itself. Its item follows when the user stops: a menu that pushes several routes while it
-     * settles must not queue an op each, and the page is already there, so the item update reloads nothing.
-     */
-    private fun queueRoute(
-        entry: FrameEntry,
-        route: String,
-    ) {
-        val normalized = FrameRoutes.normalize(route) ?: return
-        // Already known (a repeated report of the same navigation) or ignored: nothing to tell the view model.
-        if (SystemClock.uptimeMillis() < entry.quietUntil) return
-        if (normalized == entry.reportedRoute || normalized == entry.spec.route) return
-        entry.reportedRoute = normalized
-        entry.pendingRoute = normalized
-        val runnable = entry.routeRunnable ?: Runnable { commitRoute(entry) }.also { entry.routeRunnable = it }
-        removeCallbacks(runnable)
-        postDelayed(runnable, ROUTE_DEBOUNCE_MS)
-    }
-
-    private fun commitRoute(entry: FrameEntry) {
-        val route = entry.pendingRoute ?: return
-        entry.pendingRoute = null
-        onRoute?.invoke(entry.spec.id, route)
-    }
-
-    /** The page's pointer types in this event: palms and canceled pointers never count. */
-    private fun fingers(event: MotionEvent): Int {
-        var count = 0
-        if (event.flags and MotionEvent.FLAG_CANCELED != 0) return 0
-        for (i in 0 until event.pointerCount) {
-            if (event.getToolType(i) == MotionEvent.TOOL_TYPE_FINGER) count++
-        }
-        return count
     }
 
     private val density: Float get() = resources.displayMetrics.density
 
     private companion object {
-        const val TAG = "PenwiseFrames"
-
-        /** How long a route report is held so a flurry of link clicks becomes one item update. */
-        const val ROUTE_DEBOUNCE_MS = 500L
-
-        /** Route reports right after a programmatic load describe the document being replaced. */
-        const val LOAD_QUIET_MS = 1_500L
+        /** The camera must rest this long before the focus rule looks at it again. */
+        const val SETTLE_MS = 150L
 
         /** A variant the owner did not pick: dimmed, so the picked one stands out at a glance. */
         const val DIMMED_ALPHA = 0.6f

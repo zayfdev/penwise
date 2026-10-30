@@ -1,6 +1,7 @@
 package dev.penwise.ink
 
-import dev.penwise.core.Native
+import dev.penwise.core.NativeFrames
+import dev.penwise.core.NativeScene
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
@@ -42,7 +43,7 @@ class PageScene(
     private val sink: EditSink,
     private val clock: () -> Long = System::currentTimeMillis,
 ) : AutoCloseable {
-    private var handle: Long = synchronized(lock) { Native.sceneOpen(syncHandle, page, entropy) }
+    private var handle: Long = synchronized(lock) { NativeScene.sceneOpen(syncHandle, page, entropy) }
 
     /** Called (on whichever thread changed the scene) after a change the screen must show. */
     @Volatile
@@ -74,37 +75,37 @@ class PageScene(
 
     /** Mirrors the changes of one `syncReceive` outcome blob that concern this page. */
     fun refresh(outcome: ByteArray) {
-        locked { Native.sceneRefresh(it, syncHandle, outcome) }
+        locked { NativeScene.sceneRefresh(it, syncHandle, outcome) }
         changed()
     }
 
     /** Re-reads the whole page from the replica (after a snapshot). */
     fun reload() {
-        locked { Native.sceneReload(it, syncHandle) }
+        locked { NativeScene.sceneReload(it, syncHandle) }
         changed()
     }
 
     // ---- gestures and history ----------------------------------------------------------------------------------
 
     /** Everything until [endGesture] is one undo step. */
-    fun beginGesture() = locked { Native.sceneGesture(it, 1) }
+    fun beginGesture() = locked { NativeScene.sceneGesture(it, 1) }
 
     fun endGesture() {
-        locked { Native.sceneGesture(it, 0) }
+        locked { NativeScene.sceneGesture(it, 0) }
         onHistoryChanged?.invoke()
     }
 
     /** Bit 0: can undo, bit 1: can redo. */
-    val history: Int get() = locked { Native.sceneHistory(it) }
+    val history: Int get() = locked { NativeScene.sceneHistory(it) }
 
     val canUndo: Boolean get() = history and 1 != 0
 
     val canRedo: Boolean get() = history and 2 != 0
 
     /** Undoes the newest still-valid step; true when something changed. */
-    fun undo(): Boolean = commitChange(tool { Native.sceneUndo(it, syncHandle, clock()) })
+    fun undo(): Boolean = commitChange(tool { NativeScene.sceneUndo(it, syncHandle, clock()) })
 
-    fun redo(): Boolean = commitChange(tool { Native.sceneRedo(it, syncHandle, clock()) })
+    fun redo(): Boolean = commitChange(tool { NativeScene.sceneRedo(it, syncHandle, clock()) })
 
     /** Deletes every item on the page (one undo step). */
     fun clearPage(): Boolean {
@@ -120,7 +121,7 @@ class PageScene(
     // ---- tools (each returns an edit blob) ---------------------------------------------------------------------
 
     /** A fresh item id to stamp on the live deltas and on the committed stroke. */
-    fun newItemId(): ByteArray = locked { Native.sceneNewItemId(it, clock()) }
+    fun newItemId(): ByteArray = locked { NativeScene.sceneNewItemId(it, clock()) }
 
     /** The finished pen stroke: [samples] interleaved x, y, pressure, tilt, azimuth, [times] µs since pen-down. */
     @Suppress("LongParameterList")
@@ -134,7 +135,17 @@ class PageScene(
         times: IntArray,
     ): ByteArray =
         tool {
-            Native.sceneAddStroke(it, id, intArrayOf(preset, argb), scale, seed, samples, times, syncHandle, clock())
+            NativeScene.sceneAddStroke(
+                it,
+                id,
+                intArrayOf(preset, argb),
+                scale,
+                seed,
+                samples,
+                times,
+                syncHandle,
+                clock(),
+            )
         }
 
     /** A shape dragged from ([x0], [y0]) to ([x1], [y1]); see [ShapeStyle]. */
@@ -147,7 +158,7 @@ class PageScene(
         style: ShapeStyle,
     ): ByteArray =
         tool {
-            Native.sceneAddShape(
+            NativeScene.sceneAddShape(
                 it,
                 id,
                 floatArrayOf(x0, y0, x1, y1, style.kind.param),
@@ -172,7 +183,7 @@ class PageScene(
         x: Float,
         y: Float,
         constrain: Boolean = false,
-    ): ByteArray = tool { Native.sceneResizeShape(it, id, handleCode, x, y, constrain, syncHandle, clock()) }
+    ): ByteArray = tool { NativeScene.sceneResizeShape(it, id, handleCode, x, y, constrain, syncHandle, clock()) }
 
     /** One eraser chunk; [path] is interleaved x, y in page px. Call inside a gesture, once per chunk. */
     fun erase(
@@ -180,42 +191,42 @@ class PageScene(
         radius: Float,
         precise: Boolean,
         layers: Int = Layers.INK,
-    ): ByteArray = tool { Native.sceneErase(it, path, radius, precise, layers, syncHandle, clock()) }
+    ): ByteArray = tool { NativeScene.sceneErase(it, path, radius, precise, layers, syncHandle, clock()) }
 
     /** Ids inside a lasso polygon (interleaved x, y), bottom to top, as a concatenation of 16-byte ids. */
     fun lasso(
         polygon: FloatArray,
         layers: Int = Layers.INK,
-    ): ByteArray = locked { Native.sceneLasso(it, polygon, layers) }
+    ): ByteArray = locked { NativeScene.sceneLasso(it, polygon, layers) }
 
     fun hitTest(
         x: Float,
         y: Float,
         tolerance: Float,
         layers: Int = Layers.INK,
-    ): ByteArray = locked { Native.sceneHitTest(it, x, y, tolerance, layers) }
+    ): ByteArray = locked { NativeScene.sceneHitTest(it, x, y, tolerance, layers) }
 
-    fun deleteItems(ids: ByteArray): ByteArray = tool { Native.sceneDeleteItems(it, ids, syncHandle, clock()) }
+    fun deleteItems(ids: ByteArray): ByteArray = tool { NativeScene.sceneDeleteItems(it, ids, syncHandle, clock()) }
 
     fun moveItems(
         ids: ByteArray,
         dx: Float,
         dy: Float,
-    ): ByteArray = tool { Native.sceneMoveItems(it, ids, dx, dy, syncHandle, clock()) }
+    ): ByteArray = tool { NativeScene.sceneMoveItems(it, ids, dx, dy, syncHandle, clock()) }
 
     /** [layer]: 0 ink, 1 agent, 2 text. */
     fun setLayer(
         ids: ByteArray,
         layer: Int,
-    ): ByteArray = tool { Native.sceneSetLayer(it, ids, layer, syncHandle, clock()) }
+    ): ByteArray = tool { NativeScene.sceneSetLayer(it, ids, layer, syncHandle, clock()) }
 
     // ---- frames (the design harness) ---------------------------------------------------------------------------
 
     /** The page's frame items as JSON: `[{"id","project","route","preset","cssW","cssH","rect":[x,y,w,h]}]`. */
-    fun frames(): String = locked { Native.sceneFrames(it) }
+    fun frames(): String = locked { NativeFrames.sceneFrames(it) }
 
     /** Adds a frame; [json] is `{project, route, preset, cssW, cssH, x, y}` with the position in page px. */
-    fun addFrame(json: String): ByteArray = tool { Native.sceneAddFrame(it, json, syncHandle, clock()) }
+    fun addFrame(json: String): ByteArray = tool { NativeFrames.sceneAddFrame(it, json, syncHandle, clock()) }
 
     /** Switches a frame's size preset (`cssW`/`cssH` matter for `custom` only). */
     fun setFramePreset(
@@ -223,13 +234,13 @@ class PageScene(
         preset: String,
         cssW: Int,
         cssH: Int,
-    ): ByteArray = tool { Native.sceneSetFramePreset(it, id, preset, cssW, cssH, syncHandle, clock()) }
+    ): ByteArray = tool { NativeFrames.sceneSetFramePreset(it, id, preset, cssW, cssH, syncHandle, clock()) }
 
     /** Points a frame at another route of its project. */
     fun setFrameRoute(
         id: ByteArray,
         route: String,
-    ): ByteArray = tool { Native.sceneSetFrameRoute(it, id, route, syncHandle, clock()) }
+    ): ByteArray = tool { NativeFrames.sceneSetFrameRoute(it, id, route, syncHandle, clock()) }
 
     /**
      * Marks a variant frame as the owner's pick; the core un-chooses the rest of its group in the same edit, so the
@@ -238,7 +249,7 @@ class PageScene(
     fun setFrameChosen(
         id: ByteArray,
         chosen: Boolean,
-    ): Boolean = commitChange(tool { Native.sceneSetFrameChosen(it, id, chosen, syncHandle, clock()) })
+    ): Boolean = commitChange(tool { NativeFrames.sceneSetFrameChosen(it, id, chosen, syncHandle, clock()) })
 
     /** A finished pen stroke on a frame, bound (or pinned) by [bindingJson] (K1); samples are in page px. */
     @Suppress("LongParameterList")
@@ -253,7 +264,7 @@ class PageScene(
         bindingJson: String,
     ): ByteArray =
         tool {
-            Native.sceneAddBoundStroke(
+            NativeFrames.sceneAddBoundStroke(
                 it,
                 id,
                 intArrayOf(preset, argb),
@@ -272,26 +283,57 @@ class PageScene(
         id: ByteArray,
         json: String,
     ): Boolean {
-        val visible = locked { Native.sceneSetFrameLayout(it, id, json) }
+        val visible = locked { NativeFrames.sceneSetFrameLayout(it, id, json) }
+        if (visible) changed()
+        return visible
+    }
+
+    /**
+     * Replaces the frame's layout with [json] in one native call (a live frame demoted to its still): no merge, and
+     * no half-way state is ever repainted. True when the output may have changed.
+     */
+    fun replaceFrameLayout(
+        id: ByteArray,
+        json: String,
+    ): Boolean {
+        val visible = locked { NativeFrames.sceneReplaceFrameLayout(it, id, json) }
         if (visible) changed()
         return visible
     }
 
     /** The element keys the frame's bound strokes need watched: a JSON array. */
-    fun frameKeys(id: ByteArray): String = locked { Native.sceneFrameKeys(it, id) }
+    fun frameKeys(id: ByteArray): String = locked { NativeFrames.sceneFrameKeys(it, id) }
+
+    /** Frame [id]'s live view on the board `[x, y, w, h]` (from its actual scroll); null for an unknown frame. */
+    fun frameLiveWindow(id: ByteArray): FloatArray? =
+        locked { NativeFrames.frameLiveWindow(it, id) }.takeIf { it.size == WINDOW_VALUES }
+
+    /** The document point of frame [id] under board point ([x], [y]); null for an unknown frame. */
+    fun frameDocPoint(
+        id: ByteArray,
+        x: Float,
+        y: Float,
+    ): FloatArray? = locked { NativeFrames.frameDocPoint(it, id, x, y) }.takeIf { it.size == POINT_VALUES }
+
+    /** The board point of document point ([x], [y]) of frame [id]; null for an unknown frame. */
+    fun frameBoardPoint(
+        id: ByteArray,
+        x: Float,
+        y: Float,
+    ): FloatArray? = locked { NativeFrames.frameBoardPoint(it, id, x, y) }.takeIf { it.size == POINT_VALUES }
 
     /** Every mark of the page as JSON (K1). */
-    fun marks(): String = locked { Native.sceneMarks(it) }
+    fun marks(): String = locked { NativeFrames.sceneMarks(it) }
 
     /** Sets a mark's status as one undoable LWW edit; true when the mark changed. */
     fun setMarkStatus(
         id: ByteArray,
         status: String,
-    ): Boolean = commitChange(tool { Native.sceneSetMarkStatus(it, id, status, syncHandle, clock()) })
+    ): Boolean = commitChange(tool { NativeFrames.sceneSetMarkStatus(it, id, status, syncHandle, clock()) })
 
     /** Shows or hides done marks (a local view flag); true when the page's visible output changed. */
     fun setShowDone(on: Boolean): Boolean {
-        val visible = locked { Native.sceneSetShowDone(it, on) }
+        val visible = locked { NativeFrames.sceneSetShowDone(it, on) }
         if (visible) changed()
         return visible
     }
@@ -315,14 +357,14 @@ class PageScene(
     // ---- render data -------------------------------------------------------------------------------------------
 
     /** Live item ids on [layers] in paint order, concatenated 16-byte ids. */
-    fun renderOrder(layers: Int = Layers.ALL): ByteArray = locked { Native.sceneRenderOrder(it, layers) }
+    fun renderOrder(layers: Int = Layers.ALL): ByteArray = locked { NativeScene.sceneRenderOrder(it, layers) }
 
-    fun itemFloats(id: ByteArray): FloatArray = locked { Native.sceneItemFloats(it, id) }
+    fun itemFloats(id: ByteArray): FloatArray = locked { NativeScene.sceneItemFloats(it, id) }
 
-    fun itemText(id: ByteArray): String = locked { Native.sceneItemText(it, id) }
+    fun itemText(id: ByteArray): String = locked { NativeScene.sceneItemText(it, id) }
 
     /** Ids whose render data changed since the last call; byte 0 is 1 when everything changed, then 16-byte ids. */
-    fun takeDirty(): ByteArray = locked { Native.sceneTakeDirty(it) }
+    fun takeDirty(): ByteArray = locked { NativeScene.sceneTakeDirty(it) }
 
     /** Runs [block] holding the scene lock, so several reads see one consistent state. */
     fun <T> atomically(block: () -> T): T = synchronized(lock) { block() }
@@ -331,7 +373,7 @@ class PageScene(
         val h = handle
         if (h == 0L) return
         handle = 0L
-        synchronized(lock) { Native.sceneFree(h) }
+        synchronized(lock) { NativeScene.sceneFree(h) }
     }
 
     private fun changed() {
@@ -368,5 +410,7 @@ class PageScene(
             edits.size < COUNT_BYTES || edits.take(COUNT_BYTES).all { it == 0.toByte() }
 
         private const val COUNT_BYTES = 4
+        private const val WINDOW_VALUES = 4
+        private const val POINT_VALUES = 2
     }
 }

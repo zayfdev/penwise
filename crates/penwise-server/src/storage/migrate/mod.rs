@@ -57,6 +57,13 @@ pub fn migrate(path: &Path, options: &MigrateOptions) -> Result<MigrationReport,
                 ..MigrationReport::default()
             });
         }
+        4 => {
+            schema::ensure_current(&mut conn)?;
+            return Ok(MigrationReport {
+                applied_step: Some(5),
+                ..MigrationReport::default()
+            });
+        }
         v => {
             return Err(StorageError::Migration(format!(
                 "cannot migrate schema v{v}"
@@ -73,12 +80,22 @@ pub fn migrate(path: &Path, options: &MigrateOptions) -> Result<MigrationReport,
 
 fn dry_run(path: &Path, options: &MigrateOptions) -> Result<MigrationReport, StorageError> {
     let source = schema::open_reader(path)?;
-    if schema::user_version(&source)? == SCHEMA_VERSION {
-        return Ok(MigrationReport {
-            already_current: true,
-            dry_run: true,
-            ..MigrationReport::default()
-        });
+    match schema::user_version(&source)? {
+        SCHEMA_VERSION => {
+            return Ok(MigrationReport {
+                already_current: true,
+                dry_run: true,
+                ..MigrationReport::default()
+            });
+        }
+        4 => {
+            return Ok(MigrationReport {
+                pending_step: Some(5),
+                dry_run: true,
+                ..MigrationReport::default()
+            });
+        }
+        _ => {}
     }
     let scratch = backup_path(path, options.now_ms).with_extension("dryrun");
     vacuum_into(&source, &scratch)?;

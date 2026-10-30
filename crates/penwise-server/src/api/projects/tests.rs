@@ -83,6 +83,74 @@ async fn projects_allow_loopback_without_a_token_but_not_another_host() {
 }
 
 #[tokio::test]
+async fn the_loopback_bypass_refuses_requests_that_a_browser_marks_as_another_origin() {
+    let rig = Rig::new();
+    let base = rig.serve(routes(Arc::new("secret".to_owned()))).await;
+    let own_origin = base.clone();
+    let client = reqwest::Client::new();
+    let get = |headers: &[(&str, &str)]| {
+        let mut request = client.get(format!("{base}/projects"));
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
+        async move { request.send().await.expect("request").status() }
+    };
+    let ok = reqwest::StatusCode::OK;
+    let denied = reqwest::StatusCode::UNAUTHORIZED;
+
+    assert_eq!(get(&[]).await, ok, "the CLI sends no Origin");
+    assert_eq!(
+        get(&[("origin", &own_origin)]).await,
+        ok,
+        "the PC viewer is the server's own origin"
+    );
+    assert_eq!(get(&[("sec-fetch-site", "same-origin")]).await, ok);
+    assert_eq!(get(&[("sec-fetch-site", "none")]).await, ok);
+    assert_eq!(
+        get(&[("origin", "http://127.0.0.1:7421")]).await,
+        denied,
+        "a dev site on a project port is another origin"
+    );
+    assert_eq!(get(&[("origin", "https://evil.example")]).await, denied);
+    assert_eq!(get(&[("origin", "null")]).await, denied);
+    assert_eq!(get(&[("sec-fetch-site", "cross-site")]).await, denied);
+    assert_eq!(get(&[("sec-fetch-site", "same-site")]).await, denied);
+    assert_eq!(
+        get(&[
+            ("origin", "https://evil.example"),
+            ("x-penwise-token", "secret")
+        ])
+        .await,
+        ok,
+        "the token still opens the door from anywhere"
+    );
+}
+
+#[tokio::test]
+async fn look_has_effects_so_it_is_a_post_and_a_get_is_refused() {
+    let rig = Rig::new();
+    let base = rig.serve(routes(Arc::new(String::new()))).await;
+    let client = reqwest::Client::new();
+    let get = client
+        .get(format!("{base}/agent/look?project=prj_x"))
+        .send()
+        .await
+        .expect("get look");
+    assert_eq!(get.status(), reqwest::StatusCode::METHOD_NOT_ALLOWED);
+    let post = client
+        .post(format!("{base}/agent/look"))
+        .json(&json!({ "project": "prj_x" }))
+        .send()
+        .await
+        .expect("post look");
+    assert_eq!(
+        post.status(),
+        reqwest::StatusCode::NOT_FOUND,
+        "unknown project"
+    );
+}
+
+#[tokio::test]
 async fn linking_registers_the_project_creates_its_notebook_and_serves_it() {
     let rig = Rig::new();
     let root = site(rig.dir.path());

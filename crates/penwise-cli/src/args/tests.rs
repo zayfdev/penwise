@@ -72,6 +72,12 @@ fn status_takes_nothing() {
 }
 
 #[test]
+fn inbox_takes_nothing() {
+    assert_eq!(Command::Inbox, parse_strs(&["inbox"]));
+    assert!(parse_error(&["inbox", "--all"]).contains("usage: penwise"));
+}
+
+#[test]
 fn unknown_commands_and_options_explain_the_usage() {
     for args in [&["publish"][..], &["link", "--fast"], &["status", "x"]] {
         let text = parse_error(args);

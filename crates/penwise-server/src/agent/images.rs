@@ -2,8 +2,9 @@
 //! screenshotting the headless frame once per crop and compositing the mark's ink with core's raster.
 //!
 //! The ink is placed by core on exactly the layout the bridge reported, so the crop shows the mark where the
-//! tablet draws it. The page is measured at scroll 0: document and viewport coordinates coincide, so a page rect
-//! is `frame position + viewport rect`, and a screenshot clip is that viewport rect. Crops are served from a
+//! tablet draws it. The page is measured at scroll 0 and the frame is full length, so a document coordinate is
+//! `page rect − frame position` however far down the page the mark is, and a screenshot clip is that document
+//! rect (`captureBeyondViewport`). The size cap applies per crop, never to where a crop sits. Crops are served from a
 //! small in-memory cache (`GET /marks` fills it, `GET /marks/<id>/image/…` reads it); an entry is stale as soon
 //! as the page's `updated_seq` moves, so an edited page is rebuilt on the next read.
 
@@ -29,6 +30,8 @@ use super::frame::FrameView;
 pub(crate) const CROP_MARGIN: f32 = 48.0;
 /// Largest side of one crop, in px (`inspect` rejects anything thinner or larger).
 const MAX_CROP_SIDE: i32 = 8000;
+/// How far from the document origin a crop may sit (a full-length frame is at most 2²⁰ px tall).
+const MAX_CROP_OFFSET: i32 = 1 << 21;
 /// Which crop of a mark an image URL names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum ImageKind {
@@ -36,7 +39,7 @@ pub(crate) enum ImageKind {
     WithInk,
     /// The same crop of the page without the mark's ink.
     WithoutInk,
-    /// The whole frame viewport, with the mark's ink.
+    /// A viewport-sized region centred on the mark (clamped to the document), with the mark's ink.
     Context,
 }
 
@@ -100,8 +103,7 @@ pub(crate) async fn build(
     frame: [f32; 4],
     crops: &[MarkCrop],
 ) -> Result<BTreeMap<ItemId, BuiltImages>, AgentError> {
-    let context = clip_rect([0.0, 0.0, frame[2], frame[3]])?;
-    let around: BTreeMap<ItemId, [i32; 4]> = crops
+    let around: BTreeMap<ItemId, ([i32; 4], [i32; 4])> = crops
         .iter()
         .map(|crop| {
             let doc = [
@@ -110,28 +112,29 @@ pub(crate) async fn build(
                 crop.rect[2],
                 crop.rect[3],
             ];
-            Ok((crop.mark, clip_rect(inflate(doc, CROP_MARGIN))?))
+            let near = clip_rect(inflate(doc, CROP_MARGIN))?;
+            let context = clip_rect(context_region(doc, [frame[2], frame[3]], view.doc[1]))?;
+            Ok((crop.mark, (near, context)))
         })
         .collect::<Result<_, AgentError>>()?;
-    let mut wanted: BTreeSet<[i32; 4]> = around.values().copied().collect();
-    wanted.insert(context);
+    let wanted: BTreeSet<[i32; 4]> = around
+        .values()
+        .flat_map(|(near, context)| [*near, *context])
+        .collect();
     let mut shots: BTreeMap<[i32; 4], Pixmap> = BTreeMap::new();
     for rect in wanted {
         shots.insert(rect, screenshot(inspect, view, rect).await?);
     }
-    let context_shot = shots
-        .get(&context)
-        .ok_or_else(|| AgentError::Internal("missing context crop".to_owned()))?;
     let mut out = BTreeMap::new();
     for crop in crops {
-        let Some(&rect) = around.get(&crop.mark) else {
+        let Some(&(near, context)) = around.get(&crop.mark) else {
             continue;
         };
-        let Some(shot) = shots.get(&rect) else {
+        let (Some(shot), Some(context_shot)) = (shots.get(&near), shots.get(&context)) else {
             continue;
         };
         let mark_ink = mark_ink(ink, &crop.strokes)?;
-        let with_ink_px = with_ink(shot, rect, frame, &mark_ink)?;
+        let with_ink_px = with_ink(shot, near, frame, &mark_ink)?;
         let context_in = with_ink(context_shot, context, frame, &mark_ink)?;
         out.insert(
             crop.mark,
@@ -143,6 +146,17 @@ pub(crate) async fn build(
         );
     }
     Ok(out)
+}
+
+/// The viewport-sized region (`viewport` = `[css_w, css_h]`) of a document `doc_h` tall that is centred on
+/// `mark` (document rect) and clamped to the document: the first screen for a mark near the top, the last one
+/// near the bottom.
+fn context_region(mark: [f32; 4], viewport: [f32; 2], doc_h: f32) -> [f32; 4] {
+    let centre = mark[1] + mark[3] / 2.0;
+    // Whole pixels, so the crop is exactly the viewport size (a fractional top would round outward by one row).
+    let reach = (doc_h - viewport[1]).max(0.0).floor();
+    let top = (centre - viewport[1] / 2.0).round().clamp(0.0, reach);
+    [0.0, top, viewport[0], viewport[1]]
 }
 
 /// `rect` (document px) inflated by `margin`.
@@ -164,21 +178,21 @@ fn clip_rect(doc: [f32; 4]) -> Result<[i32; 4], AgentError> {
     let top = doc[1].floor();
     let width = (doc[0] + doc[2]).ceil() - left;
     let height = (doc[1] + doc[3]).ceil() - top;
-    let clamp = |value: f32| -> i32 {
+    let clamp = |value: f32, limit: i32| -> i32 {
         #[allow(
             clippy::cast_possible_truncation,
             clippy::cast_precision_loss,
-            reason = "clamped to ±MAX_CROP_SIDE before the cast; 8000 is exact in f32"
+            reason = "clamped to ±limit (a power of two or 8000, exact in f32) before the cast"
         )]
         {
-            value.clamp(-(MAX_CROP_SIDE as f32), MAX_CROP_SIDE as f32) as i32
+            value.clamp(-(limit as f32), limit as f32) as i32
         }
     };
     let rect = [
-        clamp(left),
-        clamp(top),
-        clamp(width).max(1),
-        clamp(height).max(1),
+        clamp(left, MAX_CROP_OFFSET),
+        clamp(top, MAX_CROP_OFFSET),
+        clamp(width, MAX_CROP_SIDE).max(1),
+        clamp(height, MAX_CROP_SIDE).max(1),
     ];
     if rect[2] <= 0 || rect[3] <= 0 {
         return Err(AgentError::Internal("empty crop".to_owned()));

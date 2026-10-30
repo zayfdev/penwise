@@ -42,6 +42,14 @@ pub fn board_point(frame: &FrameState, layout: &FrameLayout, doc: [f32; 2]) -> [
     ]
 }
 
+/// The box `[w, h]` of frame `frame` of `scene` under the bridge `layouts`: `FrameItem::box_size` with the layout's
+/// document height, the same function [`Placement`](super::Placement) clips with. `None` when `frame` is not a
+/// live frame item.
+#[must_use]
+pub fn frame_box_size(scene: &Scene, layouts: &FrameLayouts, frame: ItemId) -> Option<[f32; 2]> {
+    FrameState::of(scene, layouts, frame).map(|state| state.box_size())
+}
+
 /// [`live_window`] for frame `frame` of `scene` under the bridge `layouts` (no layout yet = scroll `[0, 0]`);
 /// `None` when `frame` is not a live frame item.
 #[must_use]

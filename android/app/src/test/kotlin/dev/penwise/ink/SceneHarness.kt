@@ -1,6 +1,6 @@
 package dev.penwise.ink
 
-import dev.penwise.core.Native
+import dev.penwise.core.NativeSync
 
 /** A real native `SyncCore` with one page and a [PageScene] over it, driven through the host `libpenwise_ffi.so`. */
 internal class SceneHarness(
@@ -9,10 +9,10 @@ internal class SceneHarness(
     height: Float = 3000f,
 ) : AutoCloseable {
     val lock = Any()
-    val sync: Long = Native.syncNew(ByteArray(16) { (seed + it).toByte() }.also { it[0] = 0 }, seed.toLong())
-    private val notebook = Native.syncCreateNotebook(sync, ByteArray(0), "nb", 0, NOW)
+    val sync: Long = NativeSync.syncNew(ByteArray(16) { (seed + it).toByte() }.also { it[0] = 0 }, seed.toLong())
+    private val notebook = NativeSync.syncCreateNotebook(sync, ByteArray(0), "nb", 0, NOW)
     val page: ByteArray =
-        Native.syncCreatePage(sync, ByteArray(0), notebook, "p", 0, floatArrayOf(width, height), 0, NOW)
+        NativeSync.syncCreatePage(sync, ByteArray(0), notebook, "p", 0, floatArrayOf(width, height), 0, NOW)
 
     /** How many commits were announced (the edits themselves reach the core inside the tool's native call). */
     var commits = 0
@@ -83,7 +83,7 @@ internal class SceneHarness(
 
     override fun close() {
         scene.close()
-        Native.syncFree(sync)
+        NativeSync.syncFree(sync)
     }
 
     companion object {

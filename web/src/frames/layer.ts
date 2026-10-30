@@ -1,29 +1,30 @@
 /**
- * Frame iframes on the stage: paper canvas → frames → ink canvas.
+ * Frames on the stage: paper canvas → frames → ink canvas.
  *
- * The iframes live in a wrapper that carries the canvas view as a CSS transform, so each iframe keeps its preset
- * size (`css_w × css_h`) and the site sees honest CSS pixels at any zoom. A chip per frame (preset, route, reload)
- * sits unscaled above the ink, so it stays readable.
+ * Each frame is a box of `css_w × box_h` (the whole document for full-length frames) in a wrapper that carries
+ * the canvas view as a CSS transform ([`FrameBox`](box.ts)). The box shows the server's still as image strips.
+ * Only the focused frame has an iframe, at the preset size (so the site sees honest CSS pixels and `100vh` is
+ * the preset's), placed at the page's reported scroll — the core's live window. The previous live iframe stays
+ * hidden for a fast return; older ones are removed. A chip per frame sits unscaled above the ink.
  *
  * Input: the frames are click-through unless the pointer is a pen, "Draw with mouse" is on, or Ctrl/Meta is held
  * (for zooming). A cross-origin iframe cannot be inspected, so the last pointer type seen on the Penwise UI
  * decides — the wheel and mouse clicks then reach the page itself.
  */
 
-import { el } from "../dom";
-import type { ViewTransform } from "../view";
-import { BridgeChannel } from "./bridge-link";
+import type { Viewport, ViewTransform } from "../view";
+import { FrameBox, type IframeStats } from "./box";
 import {
   decodeBridge,
   type Hit,
   isFromFrame,
   type Layout,
   type PatchFailure,
-  patchFor,
-  patchMessage,
   type Rect,
 } from "./bridge-messages";
 import { type ChipBox, liftAbovePlaced } from "./chips";
+import type { LivePlan } from "./focus";
+import type { WindowRect } from "./hit";
 import {
   diffFrames,
   type Frame,
@@ -31,25 +32,29 @@ import {
   frameTransform,
   frameUrl,
   intersects,
-  PRESET_CHOICES,
   type Project,
   placeFrame,
 } from "./model";
 import { renderableFrames } from "./refresh";
+import { visibleDocRange } from "./scroll-link";
+import { boxNearScreen, type Still, stripWidth } from "./still";
 
 /** Where the layer gets the client's own address. */
 export interface FrameLayerEnv {
   /** Host the client used for sync (`location.hostname`). */
   host(): string;
   token(): string;
+  now(): number;
 }
 
 /** What the layer asks the app to do (the wasm edits). */
 export interface FrameLayerEvents {
   preset(frame: Frame, preset: string): void;
   route(frame: Frame, route: string): void;
-  /** The framed page reported its layout (contract K2 `pw:layout`); the app feeds it to the core. */
+  /** The live page reported its layout (contract K2 `pw:layout`); the app feeds it to the core. */
   layout(frame: Frame, layout: Layout): void;
+  /** The live page scrolled by itself (not because it was asked to) by `dy` document px. */
+  scrolled(frame: Frame, dy: number): void;
   /** The owner picked a variant (`set_frame_chosen`). */
   choose(frame: Frame): void;
   /** The bridge applied/reverted a patch; `ok` false lists the DOM ops it could not apply. */
@@ -59,32 +64,11 @@ export interface FrameLayerEvents {
 /** Height of a chip in CSS px: it sits just above its frame. */
 const CHIP_HEIGHT = 30;
 
-interface Placed {
-  readonly root: HTMLDivElement;
-  readonly iframe: HTMLIFrameElement;
-  readonly chip: HTMLDivElement;
-  readonly label: HTMLSpanElement;
-  readonly preset: HTMLSelectElement;
-  readonly route: HTMLInputElement;
-  readonly ghostLabel: HTMLLabelElement;
-  readonly ghostBox: HTMLInputElement;
-  readonly useButton: HTMLButtonElement;
-  frame: Frame;
-  project: Project;
-  src: string;
-  /** Messages to and from the injected bridge (layout, watch, hit, replay, patch). */
-  channel: BridgeChannel;
-  /** Local "show the ghost patch" flag (default on, never synced). */
-  ghost: boolean;
-  /** Patch key last sent to the current document (`""` = none yet). */
-  sentPatch: string;
-}
-
-/** The iframe/chip layer of the shown page. */
+/** The box/chip layer of the shown page. */
 export class FrameLayer {
   /** Iframe builds/removals: a rebuild reloads the live site, so the e2e asserts it never happens. */
-  readonly stats = { built: 0, removed: 0 };
-  private readonly nodes = new Map<string, Placed>();
+  readonly stats: IframeStats = { built: 0, removed: 0 };
+  private readonly nodes = new Map<string, FrameBox>();
   private view: ViewTransform = { scale: 1, originX: 0, originY: 0 };
   private lastPointer = "mouse";
   private drawMouse = false;
@@ -97,23 +81,26 @@ export class FrameLayer {
     private readonly events: FrameLayerEvents,
   ) {
     this.applyInput();
-    window.addEventListener(
-      "keydown",
-      (event) => this.setModifier(event.ctrlKey || event.metaKey),
-      true,
-    );
-    window.addEventListener(
-      "keyup",
-      (event) => this.setModifier(event.ctrlKey || event.metaKey),
-      true,
-    );
+    const modifier = (event: KeyboardEvent) => this.setModifier(event.ctrlKey || event.metaKey);
+    window.addEventListener("keydown", modifier, true);
+    window.addEventListener("keyup", modifier, true);
     window.addEventListener("blur", () => this.setModifier(false));
     window.addEventListener("message", (event) => this.onMessage(event));
   }
 
+  /** True when mouse/touch input reaches frames (no pen, no "Draw with mouse", no zoom modifier). */
+  get interactive(): boolean {
+    return framesInteractive(this.lastPointer, this.drawMouse, this.modifier);
+  }
+
+  /** Size of the stage, CSS px. */
+  get viewport(): Viewport {
+    return { width: this.root.clientWidth, height: this.root.clientHeight };
+  }
+
   /**
-   * Asks the frame's bridge for the element under a frame-local viewport point (contract K2 `pw:hit?`). The
-   * answer arrives while the stroke is still being drawn; `answer` gets no key if the frame is gone.
+   * Asks the frame's bridge for the element under a viewport point of its live window (contract K2 `pw:hit?`).
+   * The answer arrives while the stroke is still being drawn; `answer` gets no key if the frame is gone.
    */
   hit(frameId: string, x: number, y: number, answer: (hit: Hit) => void): void {
     const node = this.nodes.get(frameId);
@@ -127,6 +114,11 @@ export class FrameLayer {
   /** The last layout the bridge reported for the frame, or `null` before its first message. */
   layoutOf(frameId: string): Layout | null {
     return this.nodes.get(frameId)?.channel.layout() ?? null;
+  }
+
+  /** The frame's last live layout as it stands at scroll zero (a frame that lost its page, with no still yet). */
+  documentLayoutOf(frameId: string): Layout | null {
+    return this.nodes.get(frameId)?.channel.documentLayout() ?? null;
   }
 
   /**
@@ -157,6 +149,24 @@ export class FrameLayer {
     let count = 0;
     for (const node of this.nodes.values()) if (node.channel.layout() !== null) count += 1;
     return count;
+  }
+
+  /** The frame whose iframe is shown, if any. */
+  liveId(): string | null {
+    for (const [id, node] of this.nodes) if (node.mode === "live") return id;
+    return null;
+  }
+
+  /** Frames that hold an iframe (live and warm). */
+  iframeCount(): number {
+    let count = 0;
+    for (const node of this.nodes.values()) if (node.iframe !== null) count += 1;
+    return count;
+  }
+
+  /** The still images in a frame's box now (probe and e2e). */
+  stillUrls(frameId: string): readonly string[] {
+    return this.nodes.get(frameId)?.stills.urls ?? [];
   }
 
   /** Moves and scales the frames with the canvas view. */
@@ -195,8 +205,8 @@ export class FrameLayer {
     for (const id of diff.removed) this.remove(id);
     for (const frame of diff.updated) {
       const project = known.get(frame.project);
-      if (project) this.update(frame, project);
-      else this.move(frame);
+      if (project) this.describe(frame, project);
+      else this.nodes.get(frame.id)?.move(frame);
     }
     for (const frame of diff.added) {
       const project = known.get(frame.project);
@@ -209,12 +219,74 @@ export class FrameLayer {
       // A re-link can move the project to another port without touching the frame item.
       const project = known.get(frame.project);
       if (project && (node.project.port !== project.port || node.project.name !== project.name)) {
-        this.update(frame, project);
+        this.describe(frame, project);
       }
     });
     this.markChosen(shown);
     this.applyInput();
     this.placeChips();
+  }
+
+  /** Gives the live frame its iframe, hides the previous one and removes the rest. */
+  setLive(plan: LivePlan): void {
+    for (const [id, node] of this.nodes) {
+      node.setMode(id === plan.live ? "live" : id === plan.warm ? "warm" : "off");
+    }
+    this.placeChips();
+  }
+
+  /** Puts the frame's iframe at the live window `rect` (board px; `null` = the box's top-left). */
+  placeWindow(frameId: string, rect: WindowRect | null): void {
+    const node = this.nodes.get(frameId);
+    if (!node) return;
+    node.window = rect;
+    node.placeIframe();
+  }
+
+  /**
+   * Asks the live page to scroll to document y `y` (the camera moved). Not while the page just overrode a
+   * request: then the page wins and only the window follows.
+   */
+  scrollTo(frameId: string, y: number): void {
+    const node = this.nodes.get(frameId);
+    if (node?.mode !== "live" || node.follower.held(this.env.now())) return;
+    node.channel.scrollTo(0, y, node.follower.request(y));
+  }
+
+  /** The frame's current still (`null` clears it back to the placeholder). */
+  setStill(frameId: string, still: Still | null): void {
+    const node = this.nodes.get(frameId);
+    if (node) node.still = still;
+  }
+
+  /**
+   * Lays the strips that are on screen into each box, requested no wider than the screen shows them, and
+   * leaves out those under a live window. A box farther than a stage-size from the stage releases its images.
+   */
+  renderStills(): void {
+    const viewport = this.viewport;
+    const margin = Math.max(viewport.width, viewport.height);
+    const dpr = window.devicePixelRatio || 1;
+    for (const node of this.nodes.values()) {
+      const { frame } = node;
+      node.root.classList.toggle("no-still", node.still === null);
+      if (!boxNearScreen(placeFrame(frame, this.view), viewport, margin)) {
+        node.stills.release();
+        continue;
+      }
+      const full = frame.extent === "full";
+      const visible = full ? visibleDocRange(frame.y, frame.boxH, this.view, viewport) : null;
+      // Near but not on the stage: keep what is there (no churn while the owner pans back and forth).
+      if (full && visible === null) continue;
+      const win = node.mode === "live" ? node.window : null;
+      node.stills.render(node.still, {
+        cssW: frame.cssW,
+        visible,
+        covered:
+          full && win !== null ? { from: win[1] - frame.y, to: win[1] - frame.y + win[3] } : null,
+        width: stripWidth(frame.cssW, this.view.scale, dpr),
+      });
+    }
   }
 
   /** The owner's variant pick: the chosen frame is highlighted, its unchosen siblings dim to 60%. */
@@ -225,7 +297,7 @@ export class FrameLayer {
       const node = this.nodes.get(frame.id);
       if (!node) continue;
       node.root.classList.toggle("chosen", frame.chosen);
-      node.chip.classList.toggle("chosen", frame.chosen);
+      node.parts.chip.classList.toggle("chosen", frame.chosen);
       node.root.classList.toggle(
         "dimmed",
         frame.group !== null && !frame.chosen && picked.has(frame.group),
@@ -234,139 +306,32 @@ export class FrameLayer {
   }
 
   private add(frame: Frame, project: Project): void {
-    const root = el("div", { class: "frame" });
-    const iframe = el("iframe", { attrs: { title: `${project.name} ${frame.route}` } });
-    root.append(iframe);
-    const label = el("span", { class: "name" });
-    const preset = el(
-      "select",
-      { attrs: { "aria-label": "Frame preset" } },
-      PRESET_CHOICES.map((choice) =>
-        el("option", { text: choice.label, attrs: { value: choice.name } }),
-      ),
-    );
-    const route = el("input", { attrs: { type: "text", "aria-label": "Frame route" } });
-    const reload = el("button", { text: "Reload", attrs: { type: "button", class: "reload" } });
-    const ghostBox = el("input", {
-      attrs: { type: "checkbox", "aria-label": "Show the ghost patch" },
+    const node = new FrameBox(frame, project, () => this.env.token(), this.stats, {
+      preset: (f, preset) => this.events.preset(f, preset),
+      route: (f, route) => this.events.route(f, route),
+      choose: (f) => this.events.choose(f),
+      interactive: () => this.interactive,
     });
-    const ghostLabel = el("label", { class: "ghost" }, [ghostBox, "Ghost"]);
-    const useButton = el("button", { text: "Use this", attrs: { type: "button", class: "use" } });
-    const chip = el("div", { class: "frame-chip", attrs: { "data-frame": frame.id } }, [
-      label,
-      preset,
-      route,
-      reload,
-      ghostLabel,
-      useButton,
-    ]);
-    const node: Placed = {
-      root,
-      iframe,
-      chip,
-      label,
-      preset,
-      route,
-      ghostLabel,
-      ghostBox,
-      useButton,
-      frame,
-      project,
-      src: "",
-      channel: new BridgeChannel(() => iframe.contentWindow),
-      ghost: true,
-      sentPatch: "",
-    };
-    preset.addEventListener("change", () => this.events.preset(node.frame, preset.value));
-    route.addEventListener("change", () => this.events.route(node.frame, route.value));
-    reload.addEventListener("click", () => this.reload(node));
-    ghostBox.addEventListener("change", () => this.setGhost(node, ghostBox.checked));
-    useButton.addEventListener("click", () => this.events.choose(node.frame));
-    // A bridge starts with an empty watch list and no patch: both are sent again after every navigation
-    // (the bridge's `pw:hello` does it too; a fresh document drops everything).
-    iframe.addEventListener("load", () => {
-      node.channel.loaded();
-      node.sentPatch = "";
-    });
-    this.root.append(root);
-    this.chips.append(chip);
+    this.root.append(node.root);
+    this.chips.append(node.parts.chip);
     this.nodes.set(frame.id, node);
-    this.stats.built += 1;
-    this.update(frame, project);
+    this.describe(frame, project);
   }
 
-  /** Applies the item's box and controls (no URL work: the project may be temporarily unknown). */
-  private move(frame: Frame): void {
-    const node = this.nodes.get(frame.id);
-    if (!node) return;
-    node.frame = frame;
-    node.root.style.left = `${Math.round(frame.x)}px`;
-    node.root.style.top = `${Math.round(frame.y)}px`;
-    node.root.style.width = `${frame.cssW}px`;
-    node.root.style.height = `${frame.cssH}px`;
-    if (node.preset.value !== frame.preset) node.preset.value = frame.preset;
-    if (document.activeElement !== node.route) node.route.value = frame.route;
-  }
-
-  private update(frame: Frame, project: Project): void {
-    const node = this.nodes.get(frame.id);
-    const patchChanged = node !== undefined && node.frame.patch !== frame.patch;
-    this.move(frame);
-    if (!node) return;
-    node.project = project;
-    node.label.textContent =
-      frame.label === "" ? `${project.name} ${frame.route}` : `${project.name} · ${frame.label}`;
-    node.ghostLabel.hidden = frame.patch === null;
-    node.ghostBox.checked = node.ghost;
-    node.useButton.hidden = frame.group === null;
-    node.useButton.disabled = frame.chosen;
-    node.useButton.textContent = frame.chosen ? "Chosen" : "Use this";
+  private describe(frame: Frame, project: Project): void {
     const src = frameUrl(this.env.host(), project.port, frame.route, this.env.token());
-    if (src !== node.src) {
-      node.src = src;
-      node.iframe.src = src;
-    }
-    if (patchChanged) this.sendPatch(node);
-  }
-
-  /** The owner toggled the ghost: the patch is applied or reverted on the live page (local only). */
-  private setGhost(node: Placed, on: boolean): void {
-    node.ghost = on;
-    this.sendPatch(node, true);
-  }
-
-  /**
-   * Sends the frame's patch (applied while the ghost is on, reverted while it is off) unless the current
-   * document already has that exact state. A frame whose patch was cleared reverts what is still applied.
-   */
-  private sendPatch(node: Placed, force = false): void {
-    const send = patchFor(node.frame.patch, node.ghost);
-    const key = send === null ? "none" : `${send.on ? "on" : "off"}:${send.patch}`;
-    if (!force && key === node.sentPatch) return;
-    const target = node.iframe.contentWindow;
-    if (!target) return;
-    if (send !== null) target.postMessage(patchMessage(send.patch, send.on), "*");
-    else if (node.sentPatch !== "" && node.sentPatch !== "none") {
-      target.postMessage(patchMessage("", false), "*");
-    }
-    node.sentPatch = key;
+    this.nodes.get(frame.id)?.describe(frame, project, src);
   }
 
   private remove(id: string): void {
-    const node = this.nodes.get(id);
-    if (!node) return;
-    node.root.remove();
-    node.chip.remove();
+    this.nodes.get(id)?.destroy();
     this.nodes.delete(id);
-    this.stats.removed += 1;
-    // A stroke being drawn over it must still commit: it falls back to an area binding.
-    node.channel.close();
   }
 
-  /** The node whose window sent `message`; anything else (another frame, the app itself) is ignored. */
-  private nodeFrom(source: unknown): Placed | null {
+  /** The node whose iframe sent `message`; anything else (another frame, the app itself) is ignored. */
+  private nodeFrom(source: unknown): FrameBox | null {
     for (const node of this.nodes.values()) {
-      if (isFromFrame(source, node.iframe.contentWindow)) return node;
+      if (isFromFrame(source, node.iframe?.contentWindow)) return node;
     }
     return null;
   }
@@ -379,12 +344,17 @@ export class FrameLayer {
     if (message.t === "hit") {
       node.channel.answer(message);
     } else if (message.t === "layout") {
+      // A hidden (warm) page keeps running; its layout is not the frame's while it has no window.
+      if (node.mode !== "live") return;
       node.channel.store(message.layout);
+      const { scroll, cause, requestId } = message.layout;
+      const dy = node.follower.reported(scroll[1], cause, requestId, this.env.now());
       this.events.layout(node.frame, message.layout);
+      if (dy !== 0) this.events.scrolled(node.frame, dy);
     } else if (message.t === "hello") {
       // A (re)loaded document: the bridge lost its watch list and its patch.
       node.channel.loaded();
-      this.sendPatch(node, true);
+      node.sendPatch(true);
     } else if (message.t === "patched") {
       this.events.patched(node.frame, message.ok, message.failed);
     }
@@ -392,33 +362,28 @@ export class FrameLayer {
 
   /** Chip position/size follow the frame; chips of frames outside the stage are hidden. */
   private placeChips(): void {
-    const viewport = { width: this.root.clientWidth, height: this.root.clientHeight };
+    const viewport = this.viewport;
     const placed: ChipBox[] = [];
     for (const node of this.nodes.values()) {
       const box = placeFrame(node.frame, this.view);
       const visible = intersects(box, viewport);
-      node.chip.hidden = !visible;
+      const { chip } = node.parts;
+      chip.hidden = !visible;
       if (!visible) continue;
       // Chips are unscaled: frames side by side would cover each other's controls, so lift the newcomer.
       const spot = liftAbovePlaced(
         {
           left: Math.round(Math.max(0, box.left)),
           top: Math.round(Math.max(2, box.top - CHIP_HEIGHT)),
-          width: node.chip.offsetWidth,
+          width: chip.offsetWidth,
         },
         CHIP_HEIGHT,
         placed,
       );
-      node.chip.style.left = `${spot.left}px`;
-      node.chip.style.top = `${spot.top}px`;
+      chip.style.left = `${spot.left}px`;
+      chip.style.top = `${spot.top}px`;
       placed.push(spot);
     }
-  }
-
-  /** A same-URL `src` assignment need not reload, so park on `about:blank` first. */
-  private reload(node: Placed): void {
-    node.iframe.src = "about:blank";
-    node.iframe.src = node.src;
   }
 
   private setModifier(held: boolean): void {
@@ -429,9 +394,6 @@ export class FrameLayer {
 
   /** Frames take mouse/touch input unless a pen (or draw-with-mouse, or Ctrl for zooming) needs the stage. */
   private applyInput(): void {
-    this.root.classList.toggle(
-      "interact",
-      framesInteractive(this.lastPointer, this.drawMouse, this.modifier),
-    );
+    this.root.classList.toggle("interact", this.interactive);
   }
 }

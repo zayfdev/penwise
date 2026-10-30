@@ -40,6 +40,11 @@
     <string name="frame_route_title">Open route</string>
     <string name="frame_open">Open</string>
     <string name="frame_reload">Reload</string>
+    <string name="round_send">Send</string>
+    <string name="round_sent">Round sent</string>
+    <string name="round_nothing_to_send">No new marks</string>
+    <string name="round_send_failed">Could not send the round</string>
+    <string name="agent_open">Agent: open %1$s →</string>
     <string name="frame_bind_element">Element</string>
     <string name="frame_bind_area">Area</string>
     <string name="frame_ghost">Ghost</string>

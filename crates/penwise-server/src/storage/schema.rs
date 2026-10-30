@@ -1,4 +1,4 @@
-//! Schema v4 and numbered migrations (design §3.1). Every step runs in one transaction; `user_version` is
+//! Schema v5 and numbered migrations (design §3.1). Every step runs in one transaction; `user_version` is
 //! bumped last. A step, once shipped, is never edited: change the schema with a new step.
 
 use rusqlite::{Connection, OpenFlags, Transaction};
@@ -6,7 +6,7 @@ use rusqlite::{Connection, OpenFlags, Transaction};
 use super::error::StorageError;
 
 /// Schema version this build writes and serves.
-pub const SCHEMA_VERSION: i64 = 4;
+pub const SCHEMA_VERSION: i64 = 5;
 
 /// Step 4: the op-log schema on an empty database (v3 databases arrive here through [`super::migrate`]).
 const V4_DDL: &str = "
@@ -58,6 +58,23 @@ CREATE INDEX items_page ON items(page, deleted, z, id);
 CREATE INDEX items_layer ON items(page, layer, deleted) WHERE layer <> 0;
 CREATE TABLE id_alias (legacy TEXT PRIMARY KEY, kind INTEGER NOT NULL, id BLOB NOT NULL) STRICT;
 CREATE TABLE image_labels (item BLOB PRIMARY KEY, label TEXT NOT NULL) STRICT;
+";
+
+/// Step 5: design-harness rounds (spec v2 §4). One row per (project, round number); `status` is 0 open, 1 sent,
+/// 2 resolved. `sent_seq` / `resolved_seq` are op-log seqs: a mark belongs to the round whose `sent_seq` window
+/// holds the seq of the op that added it. Server-local, never synced.
+const V5_DDL: &str = "
+CREATE TABLE rounds (
+  project TEXT NOT NULL,
+  n INTEGER NOT NULL,
+  status INTEGER NOT NULL,
+  sent_seq INTEGER,
+  resolved_seq INTEGER,
+  sent_ms INTEGER,
+  resolved_ms INTEGER,
+  looked_ms INTEGER,
+  PRIMARY KEY (project, n)
+) STRICT;
 ";
 
 /// Opens the read-write connection with the server pragmas.
@@ -143,8 +160,27 @@ pub fn create_v4(tx: &Transaction<'_>) -> Result<(), StorageError> {
     Ok(())
 }
 
-/// Brings a fresh database to [`SCHEMA_VERSION`]. A database at version 1–3 is a v3 library that must go
-/// through `penwise-server migrate` first.
+/// Creates every table of [`SCHEMA_VERSION`] inside `tx` (steps 4 and 5; no version bump).
+///
+/// # Errors
+/// `Sqlite`.
+pub fn create_current(tx: &Transaction<'_>) -> Result<(), StorageError> {
+    create_v4(tx)?;
+    tx.execute_batch(V5_DDL)?;
+    Ok(())
+}
+
+/// Step 5 on a v4 database: adds `rounds` and bumps `user_version`, in one transaction.
+fn upgrade_v4_to_v5(conn: &mut Connection) -> Result<(), StorageError> {
+    let tx = conn.transaction()?;
+    tx.execute_batch(V5_DDL)?;
+    tx.pragma_update(None, "user_version", 5)?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// Brings a database to [`SCHEMA_VERSION`]: a fresh one gets every step, a v4 one gets step 5. A database at
+/// version 1–3 is a v3 library that must go through `penwise-server migrate` first.
 ///
 /// # Errors
 /// `NeedsMigration` for v1–3, `FutureSchema` for a newer database, else `Sqlite`.
@@ -156,9 +192,15 @@ pub fn ensure_current(conn: &mut Connection) -> Result<(), StorageError> {
             conn.execute_batch(AGENT_CHECKPOINTS_DDL)?;
             Ok(())
         }
+        4 => {
+            conn.execute_batch(PURGED_DDL)?;
+            conn.execute_batch(PROJECTS_DDL)?;
+            conn.execute_batch(AGENT_CHECKPOINTS_DDL)?;
+            upgrade_v4_to_v5(conn)
+        }
         0 => {
             let tx = conn.transaction()?;
-            create_v4(&tx)?;
+            create_current(&tx)?;
             tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             tx.commit()?;
             Ok(())

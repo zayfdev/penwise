@@ -13,6 +13,9 @@ export type Point = readonly [number, number];
 /** `[x, y, w, h]` of an element's border box, viewport CSS px. `null` = the element is gone. */
 export type Rect = readonly [number, number, number, number];
 
+/** Why the page scrolled (`pw:scroll`/`pw:layout` `cause`, contract §5): the owner, a `pw:scrollTo` request, or the page. */
+export type ScrollCause = "user" | "request" | "page";
+
 /** One `pw:layout` reading; `rects` entries are only the ones that changed after the first message. */
 export interface Layout {
   readonly scroll: Point;
@@ -20,6 +23,10 @@ export interface Layout {
   readonly viewport: Point;
   /** The state recipe active in the page (`""` = initial state). */
   readonly state: string;
+  /** What moved the scroll since the last message. */
+  readonly cause: ScrollCause;
+  /** For `cause: "request"`: the `id` of the `pw:scrollTo` that caused it. */
+  readonly requestId: number | null;
   /** Element key → viewport rect; `null` when the key no longer resolves. */
   readonly rects: Readonly<Record<string, Rect | null>>;
 }
@@ -106,7 +113,25 @@ function decodeLayout(row: Record<string, unknown>): Layout | null {
       }
     }
   }
-  return { scroll, doc, viewport, state, rects };
+  const cause: ScrollCause = row.cause === "user" || row.cause === "request" ? row.cause : "page";
+  return { scroll, doc, viewport, state, cause, requestId: finite(row.id), rects };
+}
+
+/** A hit answer in the bridge's shape (`pw:hit` fields, or the server's `GET /frames/{id}/hit` body). */
+export function readHit(value: unknown): Hit {
+  if (typeof value !== "object" || value === null) return { key: null, rect: null };
+  const row = value as Record<string, unknown>;
+  const key = typeof row.key === "string" && row.key !== "" ? row.key : null;
+  return { key, rect: key === null ? null : rect(row.rect) };
+}
+
+/** `pw:scrollTo`: scroll the framed page to a document position; the bridge echoes `id` on the scroll it causes. */
+export function scrollToMessage(
+  x: number,
+  y: number,
+  id: number,
+): { t: "pw:scrollTo"; x: number; y: number; id: number } {
+  return { t: "pw:scrollTo", x, y, id };
 }
 
 /** Parses one bridge message (object, or its JSON string form for hosts that stringify). */

@@ -9,6 +9,7 @@ mod base64;
 mod browser;
 mod element;
 mod html_map;
+mod idle;
 mod routes;
 mod source;
 #[cfg(test)]
@@ -27,6 +28,8 @@ use browser::{Browser, Connection, Event};
 pub use element::{Clip, ElementInfo, SourceLocation};
 pub(crate) use routes::routes;
 
+/// The request header the server's own capture pages send (see [`Inspect::open_capture`]).
+pub const CAPTURE_HEADER: &str = "x-penwise-capture";
 /// Largest accepted viewport side, in CSS pixels.
 const MAX_VIEWPORT: u32 = 8000;
 /// How long a navigation may take.
@@ -85,6 +88,26 @@ impl Inspect {
     /// # Errors
     /// Chromium could not start, a CDP command failed, or the page did not finish loading in time.
     pub async fn open(&self, url: &str, width: u32, height: u32) -> Result<Page, Error> {
+        self.open_with(url, width, height, &[]).await
+    }
+
+    /// [`Inspect::open`] for the server's own capture pages: every request, WebSocket handshakes included,
+    /// carries [`CAPTURE_HEADER`], so a project port can tell a capture from a frame the owner looks at.
+    ///
+    /// # Errors
+    /// As [`Inspect::open`].
+    pub async fn open_capture(&self, url: &str, width: u32, height: u32) -> Result<Page, Error> {
+        self.open_with(url, width, height, &[(CAPTURE_HEADER, "1")])
+            .await
+    }
+
+    async fn open_with(
+        &self,
+        url: &str,
+        width: u32,
+        height: u32,
+        headers: &[(&str, &str)],
+    ) -> Result<Page, Error> {
         if width == 0 || height == 0 || width > MAX_VIEWPORT || height > MAX_VIEWPORT {
             return Err(Error::Invalid(format!(
                 "viewport must be 1..={MAX_VIEWPORT} on both sides"
@@ -131,6 +154,10 @@ impl Inspect {
             closed: false,
         };
         if let Err(error) = page.setup(width, height).await {
+            page.close().await;
+            return Err(error);
+        }
+        if let Err(error) = page.set_headers(headers).await {
             page.close().await;
             return Err(error);
         }
@@ -381,13 +408,6 @@ impl Page {
 
     fn root(&self) -> Option<&std::path::Path> {
         self.root.as_deref()
-    }
-
-    async fn setup(&self, width: u32, height: u32) -> Result<(), Error> {
-        for domain in ["Page.enable", "DOM.enable", "CSS.enable"] {
-            self.command(domain, json!({})).await?;
-        }
-        self.set_viewport(width, height).await
     }
 }
 

@@ -11,8 +11,14 @@ export type FollowMode = "follow" | "free" | "lead";
 /** The slice of {@link Received} the plan reads. */
 export type ReceivedView = Pick<
   Received,
-  "kind" | "page" | "changed_pages" | "live_pages" | "catalog_changed" | "scope"
+  "kind" | "page" | "item" | "changed_pages" | "live_pages" | "catalog_changed" | "scope"
 >;
+
+/**
+ * Why the shown page should change: the server's `Welcome` (a reconnect), another device's `SwitchPage`, or a
+ * `Focus` (switch, then fit a frame). Only the last two are camera moves another device chose for the owner.
+ */
+export type MoveKind = "welcome" | "switch" | "focus";
 
 /** Reaction to one frame. */
 export interface Plan {
@@ -21,6 +27,10 @@ export interface Plan {
   readonly refreshCatalog: boolean;
   /** Page the server asked us to show (`Welcome.current_page` first time, `SwitchPage` in follow/lead mode). */
   readonly switchTo: string | null;
+  /** What asked for `switchTo`. */
+  readonly move: MoveKind | null;
+  /** `Focus.item`: the frame to fit once `switchTo` is shown (`null` = the page's content). */
+  readonly focusItem: string | null;
   /** The catalog snapshot finished: pick/watch a page now. */
   readonly catalogReady: boolean;
 }
@@ -58,10 +68,15 @@ export function planReceived(
 ): Plan {
   const touches = (pages: readonly string[]) => shown !== null && pages.includes(shown);
   let switchTo: string | null = null;
+  let move: MoveKind | null = null;
   const switches = received.kind === MessageKind.SwitchPage && mode !== "free";
+  const focuses = received.kind === MessageKind.Focus && mode !== "free";
   // After a reconnect the tablet may be elsewhere: Welcome counts like SwitchPage (any mode when nothing is shown).
   const welcomed = received.kind === MessageKind.Welcome && (shown === null || mode !== "free");
-  if ((switches || welcomed) && received.page) switchTo = received.page;
+  if ((switches || focuses || welcomed) && received.page) {
+    switchTo = received.page;
+    move = focuses ? "focus" : switches ? "switch" : "welcome";
+  }
   const catalogEnded = endedScope === "catalog" || endedScope === "all";
   return {
     repaintCommitted:
@@ -71,6 +86,8 @@ export function planReceived(
     repaintLive: touches(received.live_pages),
     refreshCatalog: (received.catalog_changed && !snapshotBusy) || catalogEnded,
     switchTo,
+    move,
+    focusItem: move === "focus" ? (received.item ?? null) : null,
     catalogReady: catalogEnded,
   };
 }

@@ -74,7 +74,9 @@ async fn upstream() -> (SocketAddr, JoinHandle<()>) {
             }),
         )
         .route("/packed", get(packed))
-        .route("/echo", get(echo));
+        .route("/echo", get(echo))
+        .route("/_next/webpack-hmr", get(next_hmr))
+        .route("/vite", get(vite_hmr));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let task = tokio::spawn(async move {
@@ -323,6 +325,197 @@ async fn proxy_tunnels_websocket_frames() {
 
     project.shutdown().await;
     upstream_task.abort();
+}
+
+/// Next's HMR socket says `sync` to every page that connects, then echoes what it is sent (so a test can make
+/// the "server" announce a rebuild).
+async fn next_hmr(upgrade: WebSocketUpgrade) -> AxumResponse {
+    upgrade.on_upgrade(|mut socket| async move {
+        if socket
+            .send(axum::extract::ws::Message::Text(
+                "{\"action\":\"sync\",\"hash\":\"abc\"}".into(),
+            ))
+            .await
+            .is_err()
+        {
+            return;
+        }
+        while let Some(Ok(message)) = socket.recv().await {
+            if socket.send(message).await.is_err() {
+                break;
+            }
+        }
+    })
+}
+
+/// Vite's HMR socket: the `vite-hmr` subprotocol, echoing.
+async fn vite_hmr(upgrade: WebSocketUpgrade) -> AxumResponse {
+    upgrade
+        .protocols(["vite-hmr"])
+        .on_upgrade(|mut socket| async move {
+            while let Some(Ok(message)) = socket.recv().await {
+                if socket.send(message).await.is_err() {
+                    break;
+                }
+            }
+        })
+}
+
+/// Connects to `ws://addr/path`, with `headers`, and reads the greeting when `greeted`.
+async fn hmr_client(
+    addr: SocketAddr,
+    path: &str,
+    headers: &[(&str, &str)],
+    greeted: bool,
+) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<TcpStream>> {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
+    let mut request = format!("ws://{addr}{path}").into_client_request().unwrap();
+    for (name, value) in headers {
+        request.headers_mut().insert(
+            axum::http::HeaderName::from_bytes(name.as_bytes()).unwrap(),
+            value.parse().unwrap(),
+        );
+    }
+    let (mut socket, _) = connect_async(request).await.unwrap();
+    if greeted {
+        socket.next().await.unwrap().unwrap();
+    }
+    socket
+}
+
+async fn say(
+    socket: &mut tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<TcpStream>>,
+    text: &str,
+) {
+    socket
+        .send(WsFrame::Text(text.to_owned().into()))
+        .await
+        .unwrap();
+    socket.next().await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn only_a_persons_hmr_socket_announcing_a_rebuild_is_a_page_change() {
+    let (origin, upstream_task) = upstream().await;
+    let (changes, mut heard) = tokio::sync::broadcast::channel(8);
+    let project = ProjectServer::start(
+        ProjectConfig::dev_origin("vite", "127.0.0.1", 0, format!("http://{origin}"))
+            .with_changes(changes),
+        TOKEN.to_owned(),
+    )
+    .await
+    .unwrap();
+    let addr = project.addr;
+    let rebuilt = "{\"action\":\"built\",\"hash\":\"def\"}";
+
+    // Next greets every page that connects with `sync`: opening a page is not a change, however many do.
+    let mut first = hmr_client(addr, "/_next/webpack-hmr", &[], true).await;
+    let _second = hmr_client(addr, "/_next/webpack-hmr", &[], true).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(heard.try_recv().is_err(), "connecting clients fire nothing");
+    say(&mut first, rebuilt).await;
+    assert_eq!(heard.recv().await.unwrap(), "vite", "a rebuild is a change");
+
+    // Vite's socket is recognised by its subprotocol.
+    let mut vite = hmr_client(
+        addr,
+        "/vite",
+        &[("sec-websocket-protocol", "vite-hmr")],
+        false,
+    )
+    .await;
+    say(&mut vite, "{\"type\":\"update\",\"updates\":[]}").await;
+    assert_eq!(heard.recv().await.unwrap(), "vite");
+
+    // A socket that is not an HMR socket is never read.
+    let mut other = hmr_client(addr, "/echo", &[], false).await;
+    say(&mut other, rebuilt).await;
+    // A capture page's socket (the server's own headless Chromium) is never read either.
+    let mut capture = hmr_client(
+        addr,
+        "/_next/webpack-hmr",
+        &[(crate::inspect::CAPTURE_HEADER, "1")],
+        true,
+    )
+    .await;
+    say(&mut capture, rebuilt).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(heard.try_recv().is_err(), "neither fired anything");
+
+    project.shutdown().await;
+    upstream_task.abort();
+}
+
+#[tokio::test]
+async fn a_client_reset_frees_the_dev_server_socket_too() {
+    let (closed, upstream_closed) = tokio::sync::oneshot::channel::<()>();
+    let closed = std::sync::Arc::new(std::sync::Mutex::new(Some(closed)));
+    let app = Router::new().route(
+        "/hold",
+        get(move |upgrade: WebSocketUpgrade| {
+            let closed = std::sync::Arc::clone(&closed);
+            async move {
+                upgrade.on_upgrade(move |mut socket| async move {
+                    // Silent: it only ever reads, until its connection is gone.
+                    while socket.recv().await.is_some_and(|message| message.is_ok()) {}
+                    if let Some(sender) = closed.lock().unwrap().take() {
+                        let _ = sender.send(());
+                    }
+                })
+            }
+        }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = listener.local_addr().unwrap();
+    let upstream_task = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    let project = ProjectServer::start(
+        ProjectConfig::dev_origin("vite", "127.0.0.1", 0, format!("http://{origin}")),
+        TOKEN.to_owned(),
+    )
+    .await
+    .unwrap();
+
+    let mut socket = hmr_client(project.addr, "/hold", &[], false).await;
+    // Close with a reset (SO_LINGER 0), the way a killed tablet connection ends.
+    if let tokio_tungstenite::MaybeTlsStream::Plain(tcp) = socket.get_mut() {
+        #[allow(
+            deprecated,
+            reason = "tokio names it set_zero_linger in newer releases"
+        )]
+        tcp.set_linger(Some(Duration::ZERO)).unwrap();
+    }
+    drop(socket);
+    tokio::time::timeout(Duration::from_secs(5), upstream_closed)
+        .await
+        .expect("the dev server's socket closes within five seconds of the client's reset")
+        .unwrap();
+
+    project.shutdown().await;
+    upstream_task.abort();
+}
+
+#[tokio::test]
+async fn a_static_file_change_announces_a_page_change() {
+    let dir = TempDir::new("frames-changes").unwrap();
+    write_site(dir.path());
+    let (changes, mut heard) = tokio::sync::broadcast::channel(8);
+    let project = ProjectServer::start(
+        ProjectConfig::static_site("portfolio", "127.0.0.1", 0, dir.path()).with_changes(changes),
+        TOKEN.to_owned(),
+    )
+    .await
+    .unwrap();
+    // The watcher thread needs a moment to arm before the edit.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    std::fs::write(dir.path().join("app.js"), "console.log(\"edited\");").unwrap();
+    let project_id = tokio::time::timeout(Duration::from_secs(5), heard.recv())
+        .await
+        .expect("a change within five seconds")
+        .expect("the feed is open");
+    assert_eq!(project_id, "portfolio");
+    project.shutdown().await;
 }
 
 #[tokio::test]

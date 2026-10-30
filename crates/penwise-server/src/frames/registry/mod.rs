@@ -96,6 +96,8 @@ pub(crate) struct Registry {
     servers: Mutex<std::collections::BTreeMap<String, ProjectServer>>,
     /// Serialises link/remove/boot so one project is never started twice.
     changes: tokio::sync::Mutex<()>,
+    /// Page changes of every project (a static reload, an HMR update), as project ids.
+    page_changes: tokio::sync::broadcast::Sender<String>,
 }
 
 impl std::fmt::Debug for Registry {
@@ -132,7 +134,14 @@ impl Registry {
             base_port,
             servers: Mutex::new(std::collections::BTreeMap::new()),
             changes: tokio::sync::Mutex::new(()),
+            page_changes: tokio::sync::broadcast::channel(64).0,
         }
+    }
+
+    /// A feed of project ids whose page just changed: a static folder was edited, or the dev server announced
+    /// an HMR update or full reload. The stills service re-captures the frames of that project.
+    pub(crate) fn subscribe_changes(&self) -> tokio::sync::broadcast::Receiver<String> {
+        self.page_changes.subscribe()
     }
 
     /// Starts every persisted project, reusing its port when free. A project that cannot start is logged and
@@ -354,7 +363,11 @@ impl Registry {
                 origin.clone(),
             ),
         };
-        ProjectServer::start(config, (*self.token).clone()).await
+        ProjectServer::start(
+            config.with_changes(self.page_changes.clone()),
+            (*self.token).clone(),
+        )
+        .await
     }
 
     /// The first port at or above the base that no project claims and no socket holds.

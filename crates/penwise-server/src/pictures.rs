@@ -45,7 +45,7 @@ pub(crate) struct Picture {
 }
 
 #[derive(Debug, Deserialize)]
-struct PlaceRequest {
+pub(crate) struct PlaceRequest {
     asset: String,
     x: f32,
     y: f32,
@@ -156,9 +156,20 @@ fn refuse_deleted(view: &PageView, id: ItemId) -> Result<(), ApiError> {
     Ok(())
 }
 
+/// The labels of `page`'s pictures (`Round 3 — desktop /` on a history picture), by item id.
+///
+/// # Errors
+/// 500 when the sidecar cannot be read.
+pub(crate) async fn labels_of_page(
+    app: &AppState,
+    page: PageId,
+) -> Result<std::collections::BTreeMap<ItemId, String>, ApiError> {
+    labels::of_page(&app.data_dir, page).await
+}
+
 /// The picture is already committed and synced, so a label that cannot be stored is logged, not a failed request
 /// (a retry would look like a duplicate).
-async fn store_label(app: &AppState, id: ItemId, label: String) {
+pub(crate) async fn store_label(app: &AppState, id: ItemId, label: String) {
     if let Err(error) = labels::put(&app.data_dir, id, label).await {
         tracing::warn!(status = %error.status, reason = %error.message, "picture placed but its label was not stored");
     }
@@ -172,8 +183,20 @@ async fn image_place(
     Path(page_id): Path<String>,
     State(app): State<AppState>,
     axum::Json(request): axum::Json<PlaceRequest>,
-) -> Result<Response, ApiError> {
-    let (page, view) = live_view(&app, &page_id).await?;
+) -> Result<axum::Json<Picture>, ApiError> {
+    place_picture(&app, &page_id, request).await.map(axum::Json)
+}
+
+/// Places a picture on the page named by `page_id` (see [`image_place`]); shared with the agent's `show`.
+///
+/// # Errors
+/// 404 for an unknown page or asset, 400 for a picture without a usable size, 409 for a deleted id.
+pub(crate) async fn place_picture(
+    app: &AppState,
+    page_id: &str,
+    request: PlaceRequest,
+) -> Result<Picture, ApiError> {
+    let (page, view) = live_view(app, page_id).await?;
     let digest = assets::digest_of(&request.asset)
         .filter(|_| app.assets.path(&request.asset).is_some())
         .ok_or_else(|| ApiError::not_found("unknown asset"))?;
@@ -206,7 +229,7 @@ async fn image_place(
                 .find(|(item, _)| item.id == id)
             {
                 let label = labels::of_page(&app.data_dir, page).await?.remove(&id);
-                return Ok(axum::Json(picture_of(item, image, label)).into_response());
+                return Ok(picture_of(item, image, label));
             }
             refuse_deleted(&view, id)?;
             id
@@ -246,9 +269,9 @@ async fn image_place(
     author.item(page, Edit::Add(item)).await?;
     author.commit().await?;
     if let Some(label) = request.label {
-        store_label(&app, id, label).await;
+        store_label(app, id, label).await;
     }
-    Ok(axum::Json(picture).into_response())
+    Ok(picture)
 }
 
 /// `GET /pages/<id>/images` — the page's pictures.

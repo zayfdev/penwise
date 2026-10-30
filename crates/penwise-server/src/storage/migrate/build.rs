@@ -43,7 +43,7 @@ pub(super) fn run(
     for table in RENAMED {
         tx.execute_batch(&format!("ALTER TABLE {table} RENAME TO legacy_{table}"))?;
     }
-    schema::create_v4(&tx)?;
+    schema::create_current(&tx)?;
     tx.execute_batch(QUARANTINE_DDL)?;
     let server_id = ServerId::from_parts(options.now_ms, random_u128());
     let device = DeviceId::from_parts(options.now_ms, random_u128());

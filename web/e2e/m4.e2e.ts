@@ -10,9 +10,9 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Page } from "playwright-core";
+import type { Locator, Page } from "playwright-core";
 import { afterAll, describe, expect, it } from "vitest";
-import { useHarness } from "./harness";
+import { focusFrame, useHarness } from "./harness";
 
 const h = useHarness();
 
@@ -51,7 +51,7 @@ async function linkSite(name: string): Promise<string> {
 
 /** A page with one phone frame of the project; returns the page id and the frame's hex id. */
 async function pageWithFrame(project: string): Promise<{ page: string; frame: string }> {
-  const page = await h.createPage("m4");
+  const page = await h.createInfinitePage("m4");
   const created = await h.api("POST", `/pages/${page}/frames`, {
     project,
     route: "/",
@@ -85,6 +85,16 @@ function readVariantFrames(value: unknown): VariantFrame[] {
   return frames;
 }
 
+/** The index among the page's frame boxes of the frame `id` (the order `focusFrame` takes). */
+async function frameIndex(viewer: Page, id: string): Promise<number> {
+  const ids = await viewer
+    .locator("#frames .frame")
+    .evaluateAll((nodes) => nodes.map((node) => (node as HTMLElement).dataset.frame ?? ""));
+  const index = ids.indexOf(id);
+  if (index < 0) throw new Error(`no frame box for ${id}`);
+  return index;
+}
+
 /** The text of the framed page's marker (waits through the patch apply/revert round trip). */
 const markerText = (viewer: Page) =>
   viewer.frameLocator("#frames iframe").locator("#marker").textContent();
@@ -94,6 +104,7 @@ describe("ghosts and variants in the PC window", () => {
     const site = await linkSite("m4 ghost");
     const { page, frame } = await pageWithFrame(site);
     const viewer = await h.openViewer(page);
+    await focusFrame(viewer);
     await expect.poll(() => markerText(viewer), { timeout: 10_000 }).toBe("original");
 
     // The agent proposes a ghost over HTTP; it syncs to the window as a frame field.
@@ -126,7 +137,7 @@ describe("ghosts and variants in the PC window", () => {
     const site = await linkSite("m4 variants");
     const { page, frame } = await pageWithFrame(site);
     const viewer = await h.openViewer(page);
-    await expect.poll(() => viewer.locator("#frames iframe").count(), { timeout: 10_000 }).toBe(1);
+    await expect.poll(() => viewer.locator("#frames .frame").count(), { timeout: 10_000 }).toBe(1);
 
     const made = await h.api("POST", `/frames/${frame}/variants`, {
       variants: [
@@ -137,8 +148,11 @@ describe("ghosts and variants in the PC window", () => {
     expect(typeof made.group).toBe("string");
     const group = String(made.group);
 
-    // The base plus two variants, each label on its chip and a "Use this" on the variants only.
-    await expect.poll(() => viewer.locator("#frames iframe").count(), { timeout: 10_000 }).toBe(3);
+    await viewer.click("#tool-fit");
+    // The base plus two variants, each label on its chip and a "Use this" on the variants only. Nothing is
+    // focused, so they are stills: no iframe at all.
+    await expect.poll(() => viewer.locator("#frames .frame").count(), { timeout: 10_000 }).toBe(3);
+    expect(await viewer.locator("#frames iframe").count()).toBe(0);
     const bold = viewer.locator("#frame-chips .frame-chip").filter({ hasText: "Bold" });
     const calm = viewer.locator("#frame-chips .frame-chip").filter({ hasText: "Calm" });
     await expect.poll(() => bold.count()).toBe(1);
@@ -147,8 +161,23 @@ describe("ghosts and variants in the PC window", () => {
     // Variants carry a patch, so each has a ghost toggle; the plain base does not.
     await expect.poll(() => viewer.locator("#frame-chips .ghost:visible").count()).toBe(2);
 
+    // Each variant shows its own patch: focus it and read the colour the patch gave the marker.
+    const colourOf = async (chip: Locator): Promise<string> => {
+      const id = await chip.getAttribute("data-frame");
+      await viewer.click("#tool-fit");
+      await focusFrame(viewer, await frameIndex(viewer, String(id)));
+      return viewer
+        .frameLocator('#frames .frame[data-live="live"] iframe')
+        .locator("#marker")
+        .evaluate((node) => getComputedStyle(node).color);
+    };
+    await expect.poll(() => colourOf(bold), { timeout: 15_000 }).toBe("rgb(200, 0, 0)");
+    await expect.poll(() => colourOf(calm), { timeout: 15_000 }).toBe("rgb(0, 0, 200)");
+    await viewer.click("#tool-fit");
+
     // Picking one highlights it and dims the other variant.
-    await bold.locator("button.use").click();
+    // (At the fit view three chips overlap and the lifted ones can sit under the toolbar: dispatch the click.)
+    await bold.locator("button.use").dispatchEvent("click");
     await expect.poll(() => bold.locator("button.use").textContent()).toBe("Chosen");
     await expect.poll(() => viewer.locator("#frames .frame.chosen").count()).toBe(1);
     await expect.poll(() => viewer.locator("#frames .frame.dimmed").count()).toBe(1);

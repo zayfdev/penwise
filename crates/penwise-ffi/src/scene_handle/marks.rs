@@ -106,6 +106,39 @@ impl SceneHandle {
         Ok(changed)
     }
 
+    /// Drops `frame`'s layout entirely (scroll, document size, state and rects), so the next `set_frame_layout`
+    /// starts from nothing: a live frame demoted to its still replaces the live layout with the still's, never
+    /// merges into it. True when a layout existed (repaint).
+    pub fn clear_frame_layout(&mut self, frame: ItemId) -> bool {
+        let state = self.marks.get_mut();
+        let existed = state.layouts.get(frame).is_some();
+        state.layouts.remove(frame);
+        if existed {
+            state.invalidate();
+            self.dirty.mark_all();
+        }
+        existed
+    }
+
+    /// Replaces `frame`'s layout with the one in `json` in a single step: whatever it had (scroll, document size,
+    /// state, rects) is gone, nothing is merged, and no state in between is ever visible or repainted. This is how
+    /// a live frame demoted to its still hands over. True when the visible output may have changed (repaint).
+    ///
+    /// # Errors
+    /// [`SyncError::BadArgument`] for unreadable JSON or an unknown preset; the old layout is then kept.
+    pub fn replace_frame_layout(&mut self, frame: ItemId, json: &str) -> Result<bool, SyncError> {
+        let request: LayoutRequest =
+            serde_json::from_str(json).map_err(|_| SyncError::BadArgument("frame layout"))?;
+        let update = request.update()?;
+        let fallback = self.frame_preset(frame);
+        let state = self.marks.get_mut();
+        state.layouts.remove(frame);
+        state.layouts.merge(frame, fallback, &update);
+        state.invalidate();
+        self.dirty.mark_all();
+        Ok(true)
+    }
+
     /// JSON array of the element keys `frame`'s bound strokes need the bridge to watch.
     #[must_use]
     pub fn frame_keys(&self, frame: ItemId) -> String {

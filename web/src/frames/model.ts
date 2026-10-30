@@ -35,6 +35,9 @@ export function presetSize(name: string): { readonly cssW: number; readonly cssH
   return preset ? { cssW: preset.cssW, cssH: preset.cssH } : null;
 }
 
+/** How much of the document a frame's box shows (core `FrameExtent`). */
+export type FrameExtent = "viewport" | "full";
+
 /** One live frame item of the shown page. `x`/`y` are the page-unit top-left of the rect. */
 export interface Frame {
   readonly id: string;
@@ -43,6 +46,14 @@ export interface Frame {
   readonly preset: string;
   readonly cssW: number;
   readonly cssH: number;
+  /** `full`: the box is the whole document (V1/V2 contract §1); `viewport`: the box is the preset size. */
+  readonly extent: FrameExtent;
+  /** The document height the server last measured (CSS px, `0` = unknown). */
+  readonly docH: number;
+  /** Box height on the board, as the core computes it from the frame's current layout (`box_size`). */
+  readonly boxH: number;
+  /** The 32-hex id the server's `/frames/{hex}/…` routes take (the core reports it). */
+  readonly hex: string;
   readonly x: number;
   readonly y: number;
   /** P1 patch JSON text applied over the page (ghost/variant); `null` = the page as served. */
@@ -91,6 +102,9 @@ function readFrame(entry: unknown): Frame | null {
   const rectH = finite(rect[3], Number.NaN);
   const cssW = finite(row.cssW, rectW);
   const cssH = finite(row.cssH, rectH);
+  const extent: FrameExtent = row.extent === "viewport" ? "viewport" : "full";
+  const docH = Math.max(0, finite(row.docH, 0));
+  const boxH = Math.max(cssH, finite(row.boxH, cssH));
   if (!Number.isFinite(x) || !Number.isFinite(y) || cssW <= 0 || cssH <= 0) return null;
   return {
     id: row.id,
@@ -99,6 +113,10 @@ function readFrame(entry: unknown): Frame | null {
     preset: typeof row.preset === "string" ? row.preset : "custom",
     cssW,
     cssH,
+    extent,
+    docH,
+    boxH,
+    hex: typeof row.hex === "string" ? row.hex : "",
     x,
     y,
     patch: readPatch(row.patch),
@@ -133,6 +151,10 @@ export function sameFrame(a: Frame, b: Frame): boolean {
     a.preset === b.preset &&
     a.cssW === b.cssW &&
     a.cssH === b.cssH &&
+    a.extent === b.extent &&
+    a.docH === b.docH &&
+    a.boxH === b.boxH &&
+    a.hex === b.hex &&
     a.x === b.x &&
     a.y === b.y &&
     a.patch === b.patch &&
@@ -176,7 +198,7 @@ export function frameAt(frames: readonly Frame[], x: number, y: number): Frame |
       x >= frame.x &&
       x < frame.x + frame.cssW &&
       y >= frame.y &&
-      y < frame.y + frame.cssH
+      y < frame.y + frame.boxH
     ) {
       return frame;
     }
@@ -194,14 +216,14 @@ export interface Placement {
 
 /** Where `frame` lands on the stage for `view`: page units scaled, shifted by the view origin. */
 export function placeFrame(
-  frame: Pick<Frame, "x" | "y" | "cssW" | "cssH">,
+  frame: Pick<Frame, "x" | "y" | "cssW" | "boxH">,
   view: ViewTransform,
 ): Placement {
   return {
     left: (frame.x - view.originX) * view.scale,
     top: (frame.y - view.originY) * view.scale,
     width: frame.cssW * view.scale,
-    height: frame.cssH * view.scale,
+    height: frame.boxH * view.scale,
   };
 }
 

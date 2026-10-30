@@ -54,7 +54,7 @@ An `Item` is `{id, layer, z, transform, kind}`; geometry is always re-derived fr
 
 ## Server storage (`crates/penwise-server/src/storage`)
 
-`penwise.db` (SQLite, WAL), `PRAGMA user_version = 4` (`schema.rs`):
+`penwise.db` (SQLite, WAL), `PRAGMA user_version = 5` (`schema.rs`; step 5 added `rounds`):
 
 ```
 server_meta(key, value)            devices(id, name, kind, created_ms, last_seen_ms, acked_seq)
@@ -62,6 +62,7 @@ ops(seq, op_id, batch, device, hlc, kind, notebook, page, item, body, received_m
 notebooks(...registers + hlcs)     pages(...registers + hlcs)
 items(id, page, kind, layer, z, deleted, body, patch, stamps, added_seq, updated_seq)
 id_alias(legacy, kind, id)         image_labels(item, label)
+rounds(project, n, status, sent_seq, resolved_seq, sent_ms, resolved_ms, looked_ms)   -- design-harness rounds
 ```
 
 - One writer thread (`storage/writer.rs`) validates, logs, materializes and commits; reads use separate WAL

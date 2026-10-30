@@ -26,7 +26,7 @@ class ViewportLimitsTest {
         assertEquals(ViewportState.MAX_SCALE, state.transform.scale, EPS)
         assertEquals(ViewportState.MAX_SCALE, state.zoom.value, EPS)
         state.transformBy(0.0001f, 0f, 0f, 0f, 0f)
-        assertEquals(ViewportState.MIN_SCALE, state.transform.scale, EPS)
+        assertEquals(ViewportState.MIN_SCALE_INFINITE, state.transform.scale, EPS)
     }
 
     @Test

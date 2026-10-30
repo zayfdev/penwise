@@ -62,6 +62,51 @@ export function fitView(
   };
 }
 
+/** A rectangle in page px. */
+export interface PageRect {
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+}
+
+/** `width`: the rect's width fills the stage (focus view); `all`: the whole rect fits (board view). */
+export type FitMode = "width" | "all";
+
+/**
+ * View that fits `rect` into `viewport` (contract §3 `fitRect`).
+ *
+ * `width` makes the rect as wide as the stage and keeps the top of the part of the rect that is on screen now
+ * at the top of the stage (a rect shorter than the stage is centred vertically); `all` centres the whole rect
+ * with a margin. A degenerate rect or stage keeps `current`.
+ */
+export function fitRect(
+  rect: PageRect,
+  mode: FitMode,
+  viewport: Viewport,
+  current: ViewTransform,
+): ViewTransform {
+  if (rect.w <= 0 || rect.h <= 0 || viewport.width <= 0 || viewport.height <= 0) return current;
+  if (mode === "all") {
+    const w = rect.w + 2 * FIT_MARGIN_PX;
+    const h = rect.h + 2 * FIT_MARGIN_PX;
+    const scale = clampScale(Math.min(viewport.width / w, viewport.height / h));
+    return {
+      scale,
+      originX: rect.x + rect.w / 2 - viewport.width / 2 / scale,
+      originY: rect.y + rect.h / 2 - viewport.height / 2 / scale,
+    };
+  }
+  const scale = clampScale(viewport.width / rect.w);
+  const visibleH = viewport.height / scale;
+  const lowest = rect.y + rect.h - visibleH;
+  const originY =
+    lowest <= rect.y
+      ? rect.y + (lowest - rect.y) / 2
+      : Math.min(lowest, Math.max(rect.y, current.originY));
+  return { scale, originX: rect.x + (rect.w - viewport.width / scale) / 2, originY };
+}
+
 /** Zooms by `factor` keeping the page point under (`cssX`, `cssY`) fixed. */
 export function zoomAt(
   view: ViewTransform,

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>lazy-images</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; background: #fff; color: #111; }
+  header { height: 200px; padding: 24px; background: #eee; }
+  .gap { height: 1800px; }
+  /* No width/height attributes: a lazy image takes no room until it loads, so the document grows. */
+  img { display: block; width: 800px; height: auto; }
+</style>
+</head>
+<body>
+<header><h1>Lazy images</h1></header>
+<div class="gap"></div>
+<img id="first" loading="lazy" src="blue.png" alt="first">
+<div class="gap"></div>
+<img id="second" loading="lazy" src="blue.png?second" alt="second">
+</body>
+</html>

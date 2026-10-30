@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Page } from "playwright-core";
 import { afterAll, describe, expect, it } from "vitest";
-import { settle, useHarness } from "./harness";
+import { focusFrame, settle, useHarness } from "./harness";
 
 const h = useHarness();
 
@@ -49,6 +49,11 @@ describe("frames in the PC window", () => {
     const page = await pageWithFrame(site.id, "phone");
     const viewer = await h.openViewer(page);
 
+    // A phone is far under 60 % of the stage at the fit view: it is a still, with no iframe, until focused.
+    await expect.poll(() => viewer.locator("#frames .frame").count(), { timeout: 10_000 }).toBe(1);
+    expect(await viewer.locator("#frames iframe").count()).toBe(0);
+    await focusFrame(viewer);
+
     const iframe = viewer.locator("#frames iframe");
     await expect.poll(() => iframe.count(), { timeout: 10_000 }).toBe(1);
     // The URL is the project's own port on the host the client used; loopback needs no enter step.
@@ -81,6 +86,8 @@ describe("frames in the PC window", () => {
     const viewer = await h.openViewer(page);
     const iframe = viewer.locator("#frames iframe");
     // The viewer may have auto-shown another page first; clicking ours is then a real switch.
+    await expect.poll(() => viewer.locator("#frames .frame").count(), { timeout: 10_000 }).toBe(1);
+    await focusFrame(viewer);
     await expect.poll(() => iframe.count(), { timeout: 10_000 }).toBe(1);
     await settle(viewer);
     const shown = await iframe.elementHandle();
@@ -116,6 +123,8 @@ describe("frames in the PC window", () => {
     await viewer.selectOption("#frame-preset", "phone");
     await viewer.click("#add-frame");
 
+    await expect.poll(() => viewer.locator("#frames .frame").count(), { timeout: 10_000 }).toBe(1);
+    await focusFrame(viewer);
     await expect.poll(() => iframe.count(), { timeout: 10_000 }).toBe(1);
     await expect
       .poll(() => iframe.getAttribute("src"), { timeout: 10_000 })
@@ -134,6 +143,8 @@ describe("frames in the PC window", () => {
     const viewer = await h.openViewer(page);
 
     const iframe = viewer.locator("#frames iframe");
+    await expect.poll(() => viewer.locator("#frames .frame").count(), { timeout: 10_000 }).toBe(1);
+    await focusFrame(viewer);
     await expect.poll(() => iframe.count(), { timeout: 10_000 }).toBe(1);
     await viewer.locator("#frame-chips .frame-chip select").selectOption("desktop");
     await expect
@@ -157,6 +168,8 @@ describe("frames in the PC window", () => {
     const viewer = await h.openViewer(page);
 
     const iframe = viewer.locator("#frames iframe");
+    await expect.poll(() => viewer.locator("#frames .frame").count(), { timeout: 10_000 }).toBe(1);
+    await focusFrame(viewer);
     await expect.poll(() => iframe.count(), { timeout: 10_000 }).toBe(1);
     const box = await iframe.boundingBox();
     if (!box) throw new Error("no frame box");

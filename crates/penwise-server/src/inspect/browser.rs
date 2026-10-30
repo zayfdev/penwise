@@ -23,7 +23,9 @@ use tokio::sync::{Mutex, broadcast, oneshot};
 use tokio::task::JoinHandle;
 use tokio_tungstenite::MaybeTlsStream;
 use tokio_tungstenite::WebSocketStream;
-use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::handshake::client::Response;
+use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
+use tokio_tungstenite::tungstenite::{self, Message};
 
 use super::Error;
 use super::source::Header;
@@ -36,6 +38,8 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long a graceful `Browser.close` gets before the process is killed.
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(3);
 const EVENT_CAPACITY: usize = 1024;
+/// Largest `DevTools` message accepted, in bytes.
+const MAX_MESSAGE: usize = 512 * 1024 * 1024;
 
 type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 type WsSink = SplitSink<Ws, Message>;
@@ -317,6 +321,15 @@ fn chromium_command(chromium: &Path, dir: &Path) -> Command {
     command
 }
 
+/// Connects with limits far above the library's 16 MiB per frame: a noisy strip's screenshot is a base64 message
+/// of tens of MiB, and exceeding the limit would drop the connection every page shares.
+async fn connect(ws_url: &str) -> Result<(Ws, Response), tungstenite::Error> {
+    let config = WebSocketConfig::default()
+        .max_message_size(Some(MAX_MESSAGE))
+        .max_frame_size(Some(MAX_MESSAGE));
+    tokio_tungstenite::connect_async_with_config(ws_url, Some(config), false).await
+}
+
 struct Shared {
     next_id: AtomicU64,
     pending: Mutex<HashMap<u64, oneshot::Sender<Result<Value, String>>>>,
@@ -334,11 +347,10 @@ pub(super) struct Cdp {
 
 impl Cdp {
     async fn connect(ws_url: &str) -> Result<Self, Error> {
-        let (stream, _) =
-            tokio::time::timeout(CONNECT_TIMEOUT, tokio_tungstenite::connect_async(ws_url))
-                .await
-                .map_err(|_| Error::Timeout("devtools websocket"))?
-                .map_err(|error| Error::Cdp(format!("connect {ws_url}: {error}")))?;
+        let (stream, _) = tokio::time::timeout(CONNECT_TIMEOUT, connect(ws_url))
+            .await
+            .map_err(|_| Error::Timeout("devtools websocket"))?
+            .map_err(|error| Error::Cdp(format!("connect {ws_url}: {error}")))?;
         let (writer, reader) = stream.split();
         let (events, _) = broadcast::channel(EVENT_CAPACITY);
         let shared = Arc::new(Shared {

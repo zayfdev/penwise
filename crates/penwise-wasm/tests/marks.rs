@@ -1,6 +1,11 @@
 //! Design harness M2 in the browser: frame layouts, bound stroke commits, mark JSON, status, show-done and the
 //! presentation the draw list returns.
-#![allow(clippy::unwrap_used, clippy::panic, reason = "test harness")]
+#![allow(
+    clippy::unwrap_used,
+    clippy::panic,
+    clippy::float_cmp,
+    reason = "test harness"
+)]
 
 mod common;
 
@@ -304,4 +309,116 @@ fn full_length_frames_report_extent_box_and_a_live_window_that_follows_the_scrol
     );
     let unknown = penwise_proto::ItemRef::from_parts(1, 1).to_string();
     assert!(viewer.frame_live_window(&unknown).unwrap().is_empty());
+}
+
+fn frames_of(viewer: &Viewer, page: &str) -> Vec<serde_json::Value> {
+    serde_json::from_str(&viewer.frames(page).unwrap()).unwrap()
+}
+
+fn box_h(viewer: &Viewer, page: &str) -> f64 {
+    frames_of(viewer, page)[0]["boxH"].as_f64().unwrap()
+}
+
+#[test]
+fn box_height_is_computed_by_core_and_hex_is_the_route_id() {
+    let (mut viewer, page) = ready();
+    let frame = viewer
+        .add_frame(
+            &page,
+            r#"{"project":"site","route":"/","preset":"desktop","x":0,"y":0}"#,
+            NOW_F,
+        )
+        .unwrap();
+    let listed = frames_of(&viewer, &page);
+    let hex = listed[0]["hex"].as_str().unwrap();
+    assert_eq!(hex.len(), 32);
+    assert!(
+        hex.bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    );
+    let item: penwise_core::item::ItemId = frame.parse::<penwise_proto::ItemRef>().unwrap().into();
+    assert_eq!(
+        hex,
+        item.to_hex(),
+        "the 26-char id and the route id name the same frame"
+    );
+    assert_eq!(
+        box_h(&viewer, &page),
+        900.0,
+        "unknown everywhere: the viewport"
+    );
+
+    // The server's synced hint arrives as an op from another device.
+    let mut clock = HlcClock::new(device(1));
+    let hint = common::item_op(
+        &mut clock,
+        NOW + 5_000,
+        50,
+        page_id(2),
+        penwise_core::edit::Edit::Update {
+            id: item,
+            patch: penwise_core::edit::ItemPatch {
+                frame_doc_h: Some(4000),
+                ..penwise_core::edit::ItemPatch::default()
+            },
+        },
+    );
+    let since = ServerMsg::OpsSince {
+        from_seq: 2,
+        upto_seq: 3,
+        ops: vec![SeqOp { seq: 3, op: hint }],
+        head_seq: 3,
+        more: false,
+    };
+    let got = viewer.receive(&encode_server(&since).unwrap()).unwrap();
+    assert_eq!(got.apply_errors, 0);
+    assert_eq!(box_h(&viewer, &page), 4000.0, "the hint");
+
+    // The live layout wins, falls back to the hint at 0, and a hostile height is clamped.
+    viewer
+        .set_frame_layout(&frame, r#"{"doc":[1440,2500]}"#)
+        .unwrap();
+    assert_eq!(box_h(&viewer, &page), 2500.0);
+    viewer
+        .set_frame_layout(&frame, r#"{"doc":[1440,0]}"#)
+        .unwrap();
+    assert_eq!(box_h(&viewer, &page), 4000.0);
+    viewer
+        .set_frame_layout(&frame, r#"{"doc":[1440,1e30]}"#)
+        .unwrap();
+    assert_eq!(box_h(&viewer, &page), 1_048_576.0);
+}
+
+#[test]
+fn clearing_a_layout_replaces_it_entirely_for_the_next_one() {
+    let (mut viewer, page) = ready();
+    let frame = viewer
+        .add_frame(
+            &page,
+            r#"{"project":"site","route":"/","preset":"desktop","x":500,"y":100}"#,
+            NOW_F,
+        )
+        .unwrap();
+    let live = r#"{"preset":"desktop","scroll":[0,1200],"doc":[1440,6000],"viewport":[1440,900],"rects":{"k":[10,20,30,40]}}"#;
+    assert!(viewer.set_frame_layout(&frame, live).unwrap());
+    assert_eq!(box_h(&viewer, &page), 6000.0);
+    assert_eq!(
+        viewer.frame_live_window(&frame).unwrap(),
+        vec![500.0, 1300.0, 1440.0, 900.0]
+    );
+
+    // Demote to the still: its layout replaces the live one, doc and scroll included.
+    assert!(viewer.clear_frame_layout(&frame).unwrap());
+    assert!(!viewer.clear_frame_layout(&frame).unwrap());
+    assert_eq!(box_h(&viewer, &page), 900.0);
+    viewer
+        .set_frame_layout(&frame, r#"{"preset":"desktop","doc":[1440,3000]}"#)
+        .unwrap();
+    assert_eq!(box_h(&viewer, &page), 3000.0);
+    assert_eq!(
+        viewer.frame_live_window(&frame).unwrap(),
+        vec![500.0, 100.0, 1440.0, 900.0],
+        "the live scroll did not survive"
+    );
+    assert_eq!(viewer.frame_keys(&frame).unwrap(), "[]");
 }

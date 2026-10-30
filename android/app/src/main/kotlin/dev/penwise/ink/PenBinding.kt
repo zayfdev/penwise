@@ -10,10 +10,13 @@ enum class BindMode(
     AREA("area"),
 }
 
-/** The bridge's answer to a `pw:hit?`: the stable element key and its rect in the page's CSS viewport px. */
+/** The answer to a hit request: the stable element key and its rect in the page's CSS viewport px (the bridge) or
+ * document px (the server). */
 internal data class HitAnswer(
     val key: String,
     val rect: List<Float>,
+    /** The server answered for a point off the live window: the rect is in document px, not viewport px. */
+    val document: Boolean = false,
 )
 
 /**

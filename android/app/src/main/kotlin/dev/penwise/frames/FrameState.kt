@@ -5,6 +5,9 @@ package dev.penwise.frames
  * page position. The layer multiplies the CSS size by the display density, so the page's breakpoints see the preset
  * and the canvas sees device px.
  *
+ * [boxHeight] is the box on the board (the whole document for a [full] frame); the WebView of the live frame stays
+ * [cssWidth] × [cssHeight], the preset.
+ *
  * [url] is the one the WebView loads: the project's own port on the host the tablet syncs with (see [FrameUrls]).
  *
  * [patch] is the ghost/variant patch (P1 JSON text) the page applies; [label] and [group] name a variant, and
@@ -20,6 +23,9 @@ data class FrameSpec(
     val y: Float,
     val cssWidth: Int,
     val cssHeight: Int,
+    val full: Boolean = false,
+    val docHeight: Int = 0,
+    val boxHeight: Int = cssHeight,
     val patch: String? = null,
     val label: String = "",
     val group: String? = null,

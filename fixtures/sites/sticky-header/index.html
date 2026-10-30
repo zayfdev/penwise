@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>sticky-header</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; background: #fff; color: #111; }
+  /* 80 + 4920 = a 5000 px document. */
+  header { position: sticky; top: 0; height: 80px; background: #123; color: #fff; display: flex; align-items: center; padding: 0 24px; }
+  header h1 { margin: 0; font-size: 24px; }
+  main { height: 4920px; padding: 24px; }
+  section { height: 600px; margin-bottom: 24px; padding: 16px; background: #eef; border: 2px solid #99c; }
+  #marker { position: absolute; top: 3000px; left: 300px; width: 200px; height: 100px; background: #fa0; }
+</style>
+</head>
+<body>
+<header><h1 id="brand">Sticky header</h1></header>
+<main>
+  <section id="s1"><h2>One</h2><p>Content.</p></section>
+  <section id="s2"><h2>Two</h2><p>Content.</p></section>
+  <section id="s3"><h2>Three</h2><p>Content.</p></section>
+  <section id="s4"><h2>Four</h2><p>Content.</p></section>
+  <section id="s5"><h2>Five</h2><p>Content.</p></section>
+  <section id="s6"><h2>Six</h2><p>Content.</p></section>
+  <section id="s7"><h2>Seven</h2><p>Content.</p></section>
+</main>
+<div id="marker">orange box at document y 3000</div>
+</body>
+</html>

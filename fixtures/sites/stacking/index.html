@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>stacking</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; background: #fff; color: #111; }
+  /* `#over` comes first in the document but has the higher z-index: document order alone would pick `#under`. */
+  #over  { position: absolute; z-index: 5; left: 150px; top: 150px; width: 200px; height: 200px; background: #e33; }
+  #under { position: absolute; z-index: 1; left: 100px; top: 100px; width: 200px; height: 200px; background: #36e; }
+  #flow  { height: 1200px; padding: 16px; background: #eee; }
+  /* A fixed bar paints above everything it overlaps. */
+  #bar   { position: fixed; left: 0; top: 400px; width: 100%; height: 60px; background: #333; }
+</style>
+</head>
+<body>
+<div id="over"></div>
+<div id="under"></div>
+<div id="flow"><p id="copy">Flowing content</p></div>
+<div id="bar"></div>
+</body>
+</html>

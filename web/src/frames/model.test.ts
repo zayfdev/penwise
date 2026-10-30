@@ -24,6 +24,10 @@ const frame = (over: Partial<Frame> = {}): Frame => ({
   preset: "phone",
   cssW: 390,
   cssH: 844,
+  extent: "full",
+  docH: 0,
+  boxH: 844,
+  hex: "0123456789abcdef0123456789abcdef",
   x: 10,
   y: 20,
   patch: null,
@@ -78,7 +82,11 @@ describe("parseFrames", () => {
           preset: "desktop",
           cssW: 1440,
           cssH: 900,
-          rect: [100, 200, 1440, 900],
+          extent: "full",
+          docH: 5200,
+          boxH: 5200,
+          hex: "00000000000000000000000000000001",
+          rect: [100, 200, 1440, 5200],
         },
       ]),
     );
@@ -90,6 +98,10 @@ describe("parseFrames", () => {
         preset: "desktop",
         cssW: 1440,
         cssH: 900,
+        extent: "full",
+        docH: 5200,
+        boxH: 5200,
+        hex: "00000000000000000000000000000001",
         x: 100,
         y: 200,
         patch: null,
@@ -98,6 +110,27 @@ describe("parseFrames", () => {
         chosen: false,
       },
     ]);
+  });
+
+  it("reads a v1 frame as a viewport-high box and a missing extent as full length", () => {
+    const [v1, bare] = parseFrames(
+      JSON.stringify([
+        {
+          id: "a",
+          project: "p",
+          route: "/",
+          cssW: 390,
+          cssH: 844,
+          extent: "viewport",
+          docH: 0,
+          boxH: 844,
+          rect: [0, 0, 390, 844],
+        },
+        { id: "b", project: "p", route: "/", cssW: 390, cssH: 844, rect: [0, 0, 390, 844] },
+      ]),
+    );
+    expect(v1).toMatchObject({ extent: "viewport", boxH: 844 });
+    expect(bare).toMatchObject({ extent: "full", docH: 0, boxH: 844 });
   });
 
   it("reads a ghost's patch and a variant's label, group and pick", () => {
@@ -197,6 +230,8 @@ describe("diffFrames", () => {
 describe("placement", () => {
   it("maps page units through the view", () => {
     expect(placeFrame(frame(), view)).toEqual({ left: 0, top: 0, width: 780, height: 1688 });
+    // A full-length frame is as tall as its document.
+    expect(placeFrame(frame({ boxH: 5000 }), view).height).toBe(10_000);
     expect(placeFrame(frame({ x: 110, y: 70 }), view)).toEqual({
       left: 200,
       top: 100,
@@ -240,8 +275,8 @@ describe("presetSize", () => {
 
 describe("frameAt", () => {
   it("finds the frame under a page point, topmost win, edges exclusive", () => {
-    const first = frame({ id: "a", x: 0, y: 0, cssW: 100, cssH: 100 });
-    const second = frame({ id: "b", x: 50, y: 50, cssW: 100, cssH: 100 });
+    const first = frame({ id: "a", x: 0, y: 0, cssW: 100, cssH: 100, boxH: 100 });
+    const second = frame({ id: "b", x: 50, y: 50, cssW: 100, cssH: 100, boxH: 100 });
     const frames = [first, second];
     expect(frameAt(frames, 75, 75)?.id).toBe("b");
     expect(frameAt(frames, 10, 10)?.id).toBe("a");
@@ -249,6 +284,12 @@ describe("frameAt", () => {
     expect(frameAt(frames, 100, 100)?.id).toBe("b");
     expect(frameAt(frames, 150, 75)).toBeNull();
     expect(frameAt([], 0, 0)).toBeNull();
+  });
+
+  it("covers the whole full-length box, not just the first screen", () => {
+    const tall = frame({ id: "t", x: 0, y: 0, cssW: 100, cssH: 100, boxH: 3000 });
+    expect(frameAt([tall], 50, 2500)?.id).toBe("t");
+    expect(frameAt([tall], 50, 3000)).toBeNull();
   });
 });
 
