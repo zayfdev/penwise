@@ -92,6 +92,37 @@
     }
   }
 
+  // The tablet's WebView is never taller than the screen and zooms the page to fit it (Chromium leaves a taller
+  // view half painted), so the host says which viewport <meta> keeps the preset's CSS size under that zoom. The PC's
+  // iframe has no host: the page keeps its own <meta>, which a desktop browser ignores anyway.
+  function applyViewport() {
+    var content = host && typeof host.viewport === "function" ? String(host.viewport() || "") : "";
+    if (!content) return;
+    var metas = document.querySelectorAll('meta[name="viewport"]');
+    if (!metas.length) {
+      var meta = document.createElement("meta");
+      meta.name = "viewport";
+      (document.head || document.documentElement).appendChild(meta);
+      metas = [meta];
+    }
+    for (var i = 0; i < metas.length; i++) {
+      if (metas[i].getAttribute("content") !== content) metas[i].setAttribute("content", content);
+    }
+  }
+
+  function watchViewport() {
+    if (!host || typeof MutationObserver !== "function") return;
+    applyViewport();
+    // A framework's head manager can add or rewrite the <meta> after load; the host's value wins again.
+    var head = document.head || document.documentElement;
+    new MutationObserver(applyViewport).observe(head, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["content"],
+    });
+  }
+
   function docSize() {
     var root = document.documentElement || document.body;
     var body = document.body;
@@ -1154,6 +1185,7 @@
   // agent's mark bundle (design-harness §7.2 C2) without re-implementing the key format.
   window.PenwiseBridge = {
     receive: receive,
+    viewport: applyViewport,
     resolveKey: resolveKey,
     selectorOf: selectorOf,
     keyOf: keyOf,
@@ -1253,6 +1285,7 @@
   } catch (_) {
     /* not supported */
   }
+  watchViewport();
   hookHistory();
   lastRoute = route();
   window.addEventListener("pagehide", saveScroll, false);
