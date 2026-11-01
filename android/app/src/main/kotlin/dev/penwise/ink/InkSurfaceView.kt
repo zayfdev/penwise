@@ -46,6 +46,8 @@ class InkSurfaceView
         private var pen = PenActivity()
         private var frames: FrameHost? = null
 
+        private val gestures = CameraGestures({ viewport }, { frames })
+
         /** The pen reads this at pen-down; [setFrames] swaps what it delegates to. */
         private val frameBindings = FrameBinderHolder()
 
@@ -68,8 +70,9 @@ class InkSurfaceView
                 FingerNavigation(
                     ViewConfiguration.get(context).scaledTouchSlop * TAP_SLOP_FACTOR,
                     onTap = ::undo,
-                    onStep = { viewport.transformBy(it.factor, it.fromX, it.fromY, it.toX, it.toY) },
-                    onActive = { viewport.setGesturing(it) },
+                    onStep = gestures::step,
+                    onActive = gestures::active,
+                    onAbort = gestures::abort,
                 ),
             )
 

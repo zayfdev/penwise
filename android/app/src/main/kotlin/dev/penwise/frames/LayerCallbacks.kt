@@ -17,8 +17,40 @@ internal class LayerCallbacks {
      */
     var onLayout: ((frameId: String, json: String, kind: LayoutKind, state: String) -> Unit)? = null
 
-    /** The live frame changed (null: none is live). */
+    private var focused: String? = null
+    private var locked: String? = null
+
+    /**
+     * The live frame changed (null: none is live). A listener that is set after a change still hears the current
+     * live frame at once, so the order the stage wires its callbacks in cannot lose the first one.
+     */
     var onFocused: ((String?) -> Unit)? = null
+        set(value) {
+            field = value
+            if (focused != null) value?.invoke(focused)
+        }
+
+    /** The locked frame changed (null: no lock). Replays the current lock to a listener set later, like [onFocused]. */
+    var onLocked: ((String?) -> Unit)? = null
+        set(value) {
+            field = value
+            if (locked != null) value?.invoke(locked)
+        }
+
+    /** The live frame is now [id]. */
+    fun focusChanged(id: String?) {
+        focused = id
+        onFocused?.invoke(id)
+    }
+
+    /** The locked frame is now [id]. */
+    fun lockChanged(id: String?) {
+        locked = id
+        onLocked?.invoke(id)
+    }
+
+    /** A pinch past the fit scale, or the agent, asks for the overview. */
+    var onOpenOverview: (() -> Unit)? = null
 
     /** The owner double-tapped a frame: the camera fits it, and other devices may be told. */
     var onUserFocus: ((String) -> Unit)? = null

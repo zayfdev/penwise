@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import dev.penwise.frames.AddFrameDialog
 import dev.penwise.frames.DesignProject
+import dev.penwise.frames.EdgeStrips
 import dev.penwise.frames.FrameOverlays
 import dev.penwise.frames.FramePreset
 import dev.penwise.frames.FrameStage
@@ -49,13 +50,6 @@ import kotlin.math.roundToInt
 
 private const val CHROME_MARGIN_DP = 12
 private const val PERCENT = 100
-
-/** Edge strip kept clear of the system back gesture. Android honours at most 200dp of height per edge. */
-private const val EXCLUSION_WIDTH_DP = 48
-private const val EXCLUSION_HEIGHT_DP = 200
-
-/** Vertical bias (-1 top … 1 bottom) of the exclusion strips: centre-lower, where the writing hand rests. */
-private const val EXCLUSION_BIAS = 0.45f
 
 /**
  * An open page: the canvas fills the screen and the only chrome is the [MiniBar]; the full tools and the page strip
@@ -253,13 +247,14 @@ private fun ClearPageDialog(
 
 /**
  * Asks the system to leave the left and right screen edges to the app (so a swipe from the edge while writing is
- * not taken as Back). The platform caps this at 200dp of height per edge, so the strips sit centre-lower where the
- * hand rests. The bottom home/recents swipe cannot be excluded; immersive mode turns it into a peek of the bars.
+ * not taken as Back). The platform caps this at 200dp of height per edge, so the strips sit vertically centred
+ * ([EdgeStrips], also where the edge swipe starts). The bottom home/recents swipe cannot be excluded; immersive
+ * mode turns it into a peek of the bars.
  * The strips carry no pointer handling, so touches pass through to the canvas.
  */
 @Composable
 private fun BoxScope.GestureExclusionStrips() {
-    val strip = Modifier.size(EXCLUSION_WIDTH_DP.dp, EXCLUSION_HEIGHT_DP.dp).systemGestureExclusion()
-    Box(strip.align(BiasAlignment(-1f, EXCLUSION_BIAS)))
-    Box(strip.align(BiasAlignment(1f, EXCLUSION_BIAS)))
+    val strip = Modifier.size(EdgeStrips.WIDTH_DP.dp, EdgeStrips.HEIGHT_DP.dp).systemGestureExclusion()
+    Box(strip.align(BiasAlignment(-1f, 0f)))
+    Box(strip.align(BiasAlignment(1f, 0f)))
 }

@@ -24,6 +24,8 @@ internal class FingerNavigation(
     private val onTap: () -> Unit,
     private val onStep: (NavStep) -> Unit,
     private val onActive: (Boolean) -> Unit = {},
+    /** The navigation was cancelled (stylus, palm, third finger), not ended by lifting; before `onActive(false)`. */
+    private val onAbort: () -> Unit = {},
     private val tapTimeoutMs: Long = TAP_TIMEOUT_MS,
 ) {
     private val fingers = FingerSet()
@@ -107,6 +109,7 @@ internal class FingerNavigation(
     /** Abandons the session (stylus, palm, system cancel): no tap, navigation stops. */
     fun cancel() {
         fingers.clear()
+        if (navigating) onAbort()
         finish()
     }
 
@@ -133,6 +136,7 @@ internal class FingerNavigation(
     }
 
     private fun spoil() {
+        if (navigating) onAbort()
         spoiled = true
         endNavigation()
     }

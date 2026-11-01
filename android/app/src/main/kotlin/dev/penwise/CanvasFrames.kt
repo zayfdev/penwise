@@ -6,6 +6,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalContext
+import dev.penwise.frames.FrameLockActions
 import dev.penwise.frames.FrameOverlayModel
 import dev.penwise.frames.FrameStageActions
 import dev.penwise.frames.FrameStageLive
@@ -31,7 +32,11 @@ internal fun rememberFrameStageModel(
         FrameStageActions(
             onPreset = session::setFramePreset,
             onRoute = session::setFrameRoute,
-            onChoose = { session.setFrameChosen(it, true) },
+            lock =
+                FrameLockActions(
+                    onChoose = { session.setFrameChosen(it, true) },
+                    onOpenOverview = page::openOverview,
+                ),
             onLayout = session::setLayout,
             onMarkStatus = session::setMarkStatus,
             onFocused = session::focused,

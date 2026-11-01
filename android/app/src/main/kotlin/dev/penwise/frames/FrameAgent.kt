@@ -17,6 +17,16 @@ import kotlinx.coroutines.launch
 internal class FrameControl {
     @Volatile
     var layer: FrameLayer? = null
+
+    /** A lock the agent asked for while no layer showed the page's frames yet: the next layer takes it. */
+    @Volatile
+    var pendingLock: String? = null
+
+    /** Locks the camera to frame [id], now or as soon as a layer shows it. */
+    fun lockTo(id: String) {
+        val layer = layer
+        if (layer == null) pendingLock = id else layer.lockFrame(id)
+    }
 }
 
 /** Where the open page is and how to change it, for [FrameAgent]. */
@@ -27,11 +37,14 @@ internal class AgentPage(
     val specs: () -> List<FrameSpec>,
     /** The core's bounds of everything on the open page (all layers), or null when it is empty. */
     val contentBounds: () -> PageRect?,
+    /** Opens the overview (§3.3; a later slice). */
+    val openOverview: () -> Unit = {},
 )
 
 /**
- * The camera moves other devices ask for (`SwitchPage`, `Focus`; contract §3): the page changes, then the item is fit
- * to the screen; an item that is unknown or no frame means the page's content. While the owner is drawing (the last
+ * The camera moves other devices ask for (`SwitchPage`, `Focus`; contract §3): the page changes, then a frame becomes
+ * the locked one; a `Focus` without an item opens the overview, and an item that is no frame fits the content of a page
+ * without frames. While the owner is drawing (the last
  * pen stroke is under 10 s old) nothing moves: [chip] offers the move instead, and a tap on it does it.
  * All on the UI thread.
  */
@@ -112,8 +125,13 @@ internal class FrameAgent(
         val list = page.specs()
         val spec = wanted.item?.let { id -> list.firstOrNull { it.id == id } }
         when {
-            spec != null -> control.layer?.fitFrame(spec.id) ?: viewport.fitRect(boxOf(spec), FitMode.FIT_WIDTH)
-            else -> page.contentBounds()?.let { viewport.fitRect(it, FitMode.FIT_ALL) } ?: viewport.reset()
+            spec != null -> control.lockTo(spec.id)
+
+            // Locked-frames contract §3.1: a `Focus` without an item opens the overview.
+            wanted.item == null -> page.openOverview()
+
+            // An item that is no frame: on a page with frames the lock stays; a sketch page shows its content.
+            list.isEmpty() -> page.contentBounds()?.let { viewport.fitRect(it, FitMode.FIT_ALL) } ?: viewport.reset()
         }
     }
 
@@ -124,8 +142,6 @@ internal class FrameAgent(
             else -> page.title(target.page)
         }
     }
-
-    private fun boxOf(spec: FrameSpec) = PageRect(spec.x, spec.y, spec.cssWidth.toFloat(), spec.boxHeight.toFloat())
 
     private companion object {
         const val FALLBACK_MS = 2_500L

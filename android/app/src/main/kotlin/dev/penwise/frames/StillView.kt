@@ -102,7 +102,6 @@ internal class StillView(
         val docTop = (0f - top) / scale
         val docBottom = (height - top) / scale
         val target = ceil(spec.cssWidth * scale).toInt()
-        bitmapPaint.alpha = if (isDimmed(spec)) DIMMED_ALPHA else FULL_ALPHA
         val strips = manifest.strips
         for (index in strips.indices) {
             val strip = strips[index]
@@ -125,7 +124,5 @@ internal class StillView(
         const val TEXT_SP = 14f
         const val PAD_DP = 10f
         const val MARGIN_CSS = 256f
-        const val DIMMED_ALPHA = 153
-        const val FULL_ALPHA = 255
     }
 }

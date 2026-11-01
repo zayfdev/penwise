@@ -48,7 +48,6 @@
     <string name="frame_bind_element">Element</string>
     <string name="frame_bind_area">Area</string>
     <string name="frame_ghost">Ghost</string>
-    <string name="frame_variant">Variant</string>
     <string name="frame_use_this">Use this</string>
     <string name="drawer_marks">Marks</string>
     <string name="marks_show_done">Show done</string>

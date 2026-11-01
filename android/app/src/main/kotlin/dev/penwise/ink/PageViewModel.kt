@@ -128,6 +128,7 @@ class PageViewModel(
                 contentBounds = {
                     _scene.value?.contentBounds()?.let { PageRect(it[0], it[1], it[2] - it[0], it[3] - it[1]) }
                 },
+                openOverview = ::openOverview,
             ),
         )
 
@@ -212,6 +213,14 @@ class PageViewModel(
         if (outcome.kind != Kind.SWITCH_PAGE && outcome.kind != Kind.FOCUS) return
         val target = MoveTarget(page, outcome.focusItem?.let(Ids::hex), label = "", fit = outcome.kind == Kind.FOCUS)
         viewModelScope.launch { agent.offer(target) }
+    }
+
+    /**
+     * The overview (locked-frames contract §3.3) was asked for: a pinch out past the locked frame's fit scale, or an
+     * agent's `Focus` without an item. The overview itself is a later slice; this is its seam.
+     */
+    fun openOverview() {
+        Log.i(TAG, "overview requested")
     }
 
     /** The owner double-tapped a frame: other devices may fit it too (only a server that speaks protocol 2). */
@@ -330,6 +339,8 @@ class PageViewModel(
             next.addListener { frameSession.schedule(next) }
             val old = _scene.value
             _scene.value = next
+            // The camera is free again until the new page's frames lock it.
+            viewport.unlock()
             viewport.reset()
             shown = id
             withContext(Dispatchers.Default) {

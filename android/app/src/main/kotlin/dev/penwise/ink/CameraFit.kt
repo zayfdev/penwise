@@ -83,13 +83,15 @@ internal object CameraFit {
 
 /**
  * The camera's flight between two transforms: the page point at the screen centre moves in a line while the scale
- * changes geometrically, so a 35x zoom reads as one steady move. Eased with ease-out-cubic over [DURATION_MS].
+ * changes geometrically, so a 35x zoom reads as one steady move. Eased with ease-out-cubic over [durationMs]
+ * ([DURATION_MS] unless a shorter slide is asked for).
  */
 internal class CameraTween(
     private val from: ViewTransform,
     val to: ViewTransform,
     private val viewWidth: Float,
     private val viewHeight: Float,
+    val durationMs: Long = DURATION_MS,
 ) {
     private val fromX = from.toPageX(viewWidth / 2f)
     private val fromY = from.toPageY(viewHeight / 2f)
@@ -98,8 +100,8 @@ internal class CameraTween(
 
     /** The transform [elapsedMs] after the start; [to] exactly once the time is up. */
     fun at(elapsedMs: Long): ViewTransform {
-        if (elapsedMs >= DURATION_MS) return to
-        val eased = easeOutCubic((elapsedMs.coerceAtLeast(0L)).toFloat() / DURATION_MS)
+        if (elapsedMs >= durationMs) return to
+        val eased = easeOutCubic((elapsedMs.coerceAtLeast(0L)).toFloat() / durationMs)
         val scale = exp(ln(from.scale) + (ln(to.scale) - ln(from.scale)) * eased)
         val cx = fromX + (toX - fromX) * eased
         val cy = fromY + (toY - fromY) * eased
@@ -135,7 +137,7 @@ internal class CameraFlight(
         val current = tween ?: return false
         if (startMs == NOT_STARTED) startMs = frameTimeMs
         val elapsed = frameTimeMs - startMs
-        if (elapsed >= CameraTween.DURATION_MS) tween = null
+        if (elapsed >= current.durationMs) tween = null
         onFrame(current.at(elapsed))
         return tween != null
     }

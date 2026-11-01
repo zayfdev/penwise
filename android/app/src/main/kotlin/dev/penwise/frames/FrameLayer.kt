@@ -8,10 +8,8 @@ import android.widget.FrameLayout
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.findViewTreeLifecycleOwner
-import dev.penwise.ink.FitMode
 import dev.penwise.ink.FrameBinder
 import dev.penwise.ink.FrameHost
-import dev.penwise.ink.PageRect
 import dev.penwise.ink.PageScene
 import dev.penwise.ink.PenActivity
 import dev.penwise.ink.PendingBinding
@@ -20,16 +18,17 @@ import dev.penwise.ink.ViewportState
 
 /**
  * The frames under the ink layer (design harness v2): the server's stills of every frame at its box on the board, and
- * on top of them at most one live WebView, the page of the focused frame, placed at the live window the core computes
- * from the page's actual scroll. The frame that was live before stays warm (hidden, paused) for a quick return; older
- * ones are destroyed. In the background the live page is paused and the stills stop polling.
+ * on top of them at most one live WebView, the page of the locked frame ([LayerLock]: the camera never leaves its box),
+ * placed at the live window the core computes from the page's actual scroll. The frame that was locked before stays
+ * warm (hidden, paused) for a quick return; older ones are destroyed. In the background the live page is paused and
+ * the stills stop polling.
  *
  * The WebViews are ordinary window views; the ink is a `SurfaceView` with `setZOrderOnTop`, above them. This view must
  * therefore not draw anything itself: the paper below is [dev.penwise.ink.PaperView]'s job, the stills [StillView]'s.
  *
  * The parts: [FrameLookup] (where the frames are), [LivePages] (the WebViews), [FrameStills], [FrameGestures] and
  * [FramePenHits] (touch and pen), [WindowFollower] (the scroll link) and [LayerInbox] (the bridge's messages). This
- * class wires them to the camera and decides who is live.
+ * class wires them to the camera; [LayerLock] decides who is live.
  */
 internal class FrameLayer(
     context: Context,
@@ -38,7 +37,6 @@ internal class FrameLayer(
     FrameBinder {
     private var specs: List<FrameSpec> = emptyList()
     private var viewport: ViewportState? = null
-    private val rule = FocusRule()
     private val follow: (ViewTransform) -> Unit = {
         sync()
         if (!follower.linking) scheduleSettle()
@@ -76,6 +74,15 @@ internal class FrameLayer(
     private val penHits = FramePenHits(LayerPenHost(lookup, stills, { scene }))
     private val pages: LivePages =
         LivePages(this, context, ::deliver, { entry, x, y -> follower.onScroll(entry, x, y) }) { gestures.release(it) }
+    private val lock = LayerLock({ viewport }, { specs }, ::applyFocus, callbacks::lockChanged)
+    private val edges =
+        EdgeSwipeRouter(
+            EdgeSwipe(EdgeStrips.EDGE_DP * density, EDGE_TRAVEL_DP * density, EdgeStrips.HEIGHT_DP * density),
+            { SwitcherState.of(specs, lock.locked)?.hasNeighbour == true },
+            { width.toFloat() to height.toFloat() },
+            { gestures.cancel() },
+            ::onEdgeSwipe,
+        )
     private val inbox = LayerInbox(pages, stills, penHits, follower, this, { watch }, callbacks)
     private val lifecycle =
         LifecycleEventObserver { _, event ->
@@ -99,6 +106,9 @@ internal class FrameLayer(
 
     /** The live frame's id, or null. */
     val focusedFrame: String? get() = pages.live?.spec?.id
+
+    /** The locked frame's id, or null. */
+    val lockedFrame: String? get() = lock.locked
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
@@ -131,17 +141,13 @@ internal class FrameLayer(
         if (active) stills.resume() else stills.pause()
     }
 
-    /** The frame a board that just got its frames still has to open on ([FrameOpening]); null once done. */
-    private var opening: String? = null
-
     /**
      * Shows [next]: a frame that is gone is closed (and its page destroyed when it was live or warm), a live or warm
      * frame whose URL changed is loaded again, a resized one is re-laid out. A frame that stays keeps its WebView and
-     * its page state. Pages open when a frame gets the focus, never here.
+     * its page state. Pages open when a frame gets the lock, never here.
      */
     fun setFrames(next: List<FrameSpec>) {
         val plan = FrameDiff.plan(specs, next)
-        val first = specs.isEmpty()
         specs = next
         for (id in plan.close) closeFrame(id)
         pages.update(plan, next)
@@ -149,7 +155,7 @@ internal class FrameLayer(
         for (entry in pages.all()) PageOps.sendPatch(entry)
         scheduleSettle()
         stills.refresh()
-        if (first) opening = FrameOpening.target(next)
+        lock.framesChanged()
     }
 
     /** The Ghost chip's on/off toggle: a local before/after view of the frame's patch, never synced. */
@@ -173,18 +179,11 @@ internal class FrameLayer(
         for (entry in pages.all()) PageOps.sendWatch(entry, watch[entry.spec.id].orEmpty())
     }
 
-    /** Fits frame [id] to the screen (animated) and makes it the live one: a double-tap, an agent's `Focus`. */
-    fun fitFrame(
-        id: String,
-        mode: FitMode = FitMode.FIT_WIDTH,
-    ) {
-        val spec = specs.firstOrNull { it.id == id } ?: return
-        viewport?.fitRect(PageRect(spec.x, spec.y, spec.cssWidth.toFloat(), spec.boxHeight.toFloat()), mode)
-        if (mode == FitMode.FIT_WIDTH) {
-            rule.explicit(id)
-            applyFocus(id)
-        }
-    }
+    /**
+     * Locks the camera to frame [id] (animated) and makes it the live one: a double-tap, an agent's `Focus`, the
+     * switcher. A frame that is not known yet is locked as soon as it is.
+     */
+    fun lockFrame(id: String) = lock.lockTo(id)
 
     /** The core's live window for frame [id], computed for the scroll [scrollX], [scrollY] the bridge had reported. */
     fun setWindow(
@@ -216,19 +215,24 @@ internal class FrameLayer(
     /** Destroys the WebViews and stops the stills (page leave); a frame that comes back is opened again. */
     fun release() {
         removeCallbacks(settle)
+        // The camera is freed while the layer still knows it.
+        lock.release()
         viewport?.observers?.remove(follow)
         viewport = null
         gestures.reset()
         penHits.clear()
         stills.release()
-        rule.clear()
         pages.destroyAll()
     }
 
     override fun route(
         event: MotionEvent,
         handOver: (MotionEvent) -> Unit,
-    ): Boolean = gestures.route(event, handOver)
+    ): Boolean = edges.route(event.toEdgeTouch()) { gestures.route(event, handOver) }
+
+    override fun openOverview() {
+        callbacks.onOpenOverview?.invoke()
+    }
 
     override fun cancel() {
         // Called for every stylus event: nothing to do unless a finger gesture, a waiting tap or a fling is about.
@@ -249,7 +253,7 @@ internal class FrameLayer(
         val live = pages.live
         // A live page that already fills the screen gets its own double-tap.
         if (live?.spec?.id == frameId && touch.isFitted(live)) return
-        fitFrame(frameId)
+        lockFrame(frameId)
         callbacks.onUserFocus?.invoke(frameId)
     }
 
@@ -261,15 +265,14 @@ internal class FrameLayer(
         if (now == was) return
         left?.let { stills.demoted(it.spec.id) }
         sync()
-        callbacks.onFocused?.invoke(now)
+        callbacks.focusChanged(now)
     }
 
     private fun closeFrame(id: String) {
         stills.forget(id)
-        if (rule.focused == id) rule.clear()
         val wasLive = pages.live?.spec?.id == id
         pages.close(id)
-        if (wasLive) callbacks.onFocused?.invoke(null)
+        if (wasLive) callbacks.focusChanged(null)
     }
 
     /** Moves the live page to its window on screen: its page keeps the preset layout size, only its position scales. */
@@ -283,8 +286,6 @@ internal class FrameLayer(
         entry.view.translationY = placement.top
         entry.view.scaleX = placement.scale
         entry.view.scaleY = placement.scale
-        // A variant the owner did not pick is dimmed until (and unless) it wins: the comparison stays on screen.
-        entry.view.alpha = if (isDimmed(entry.spec)) DIMMED_ALPHA else 1f
     }
 
     private fun scheduleSettle() {
@@ -292,29 +293,24 @@ internal class FrameLayer(
         postDelayed(settle, SETTLE_MS)
     }
 
-    /** The camera has been still for a moment: the focus rule decides who is live, the window covers what is seen. */
+    /** The camera has been still: a lock that waited for the screen is flown to, the window covers what is seen. */
     private fun settled() {
         val camera = viewport ?: return
         if (camera.gesturing || camera.animating) {
             scheduleSettle()
             return
         }
-        // A board that just got its frames opens fitted on one, once the camera knows the screen and the page.
-        opening?.let { id ->
-            if (!camera.hasSize) {
-                scheduleSettle()
-                return
-            }
-            opening = null
-            fitFrame(id)
+        if (lock.settle()) {
+            scheduleSettle()
             return
-        }
-        if (width > 0 && height > 0) {
-            val boxes = specs.map { lookup.boxOnScreen(it, camera.transform) }
-            applyFocus(rule.evaluate(boxes, width.toFloat(), height.toFloat()))
         }
         pages.live?.let(follower::align)
         stills.refresh()
+    }
+
+    /** An edge swipe: the previous or next frame of the switcher, if there is one. */
+    private fun onEdgeSwipe(direction: Int) {
+        SwitcherState.of(specs, lock.locked)?.neighbour(direction)?.let(::lockFrame)
     }
 
     /** A bridge message, on the UI thread: the page's scroll, layout and route reports; hits and replies. */
@@ -335,7 +331,7 @@ internal class FrameLayer(
         /** The camera must rest this long before the focus rule looks at it again. */
         const val SETTLE_MS = 150L
 
-        /** A variant the owner did not pick: dimmed, so the picked one stands out at a glance. */
-        const val DIMMED_ALPHA = 0.6f
+        /** An edge swipe goes this far inwards. */
+        const val EDGE_TRAVEL_DP = 56f
     }
 }

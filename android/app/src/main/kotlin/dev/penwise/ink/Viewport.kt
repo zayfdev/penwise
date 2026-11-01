@@ -29,8 +29,9 @@ data class ViewTransform(
  * renderer and the gestures all read [transform]. Zoom stays in [MIN_SCALE]..[MAX_SCALE] (or down to the fit
  * scale when the screen is so small that the whole page needs less; an infinite page zooms out to
  * [MIN_SCALE_INFINITE], so a full-length frame fits whole). A fixed page cannot be flung off screen: a margin of it
- * always stays visible. An infinite page pans freely. [fitRect] flies the camera to a rect. Mutated on the UI thread
- * only.
+ * always stays visible. An infinite page pans freely. [fitRect] flies the camera to a rect. A board page with frames
+ * locks the camera to one frame's box ([lockTo], [LockClamp]): zoom stops at the box's fit-width scale and every
+ * move, fit and pan keeps the screen inside the box. Mutated on the UI thread only.
  */
 class ViewportState {
     @Volatile
@@ -59,10 +60,16 @@ class ViewportState {
     /** The fit flight in progress; the canvas view's driver steps it, a touch cancels it. */
     internal val flight = CameraFlight { apply(it) }
 
-    private var viewWidth = 0f
-    private var viewHeight = 0f
+    internal var viewWidth = 0f
+        private set
+    internal var viewHeight = 0f
+        private set
     private var page = PageStyle.BLANK
     private var fitted = true
+    internal var dip = 1f
+
+    /** The box the camera is locked to (see [lockTo]); set by the lock functions in `ViewportLock.kt`. */
+    internal var lock: PageRect? = null
 
     /** The screen the page is shown on (view size in px). Refits when the view was at the fitted position. */
     internal fun setViewSize(
@@ -70,17 +77,36 @@ class ViewportState {
         height: Float,
     ) {
         if (width <= 0f || height <= 0f || (width == viewWidth && height == viewHeight)) return
+        val wasAtFit = atFitScale
+        val top = transform.toPageY(0f)
         viewWidth = width
         viewHeight = height
-        if (fitted) apply(fit()) else apply(clamped(transform))
+        when {
+            fitted -> apply(fit())
+
+            // A locked camera that showed the whole width keeps doing so on the new screen (rotation).
+            wasAtFit -> lock?.let { apply(LockClamp.fitAt(it, top, width, height, MAX_SCALE)) }
+
+            else -> apply(clamped(transform))
+        }
     }
 
     /** Switches to another sheet; a different sheet starts fitted. */
     internal fun setPage(style: PageStyle) {
         if (style.infinite == page.infinite && style.widthPx == page.widthPx && style.heightPx == page.heightPx) return
         page = style
+        lock = null
         reset()
     }
+
+    /** True while the camera is locked to a frame's box. */
+    val locked: Boolean get() = lock != null
+
+    /** Locked and at the fit-width scale: the camera cannot zoom out any further (the overview pinch starts here). */
+    val atFitScale: Boolean get() = lock != null && transform.scale <= minScale * (1f + FIT_SLACK)
+
+    /** The zoom range while locked: max scale over the minimum (the fit scale). */
+    internal val zoomRatio: Float get() = if (minScale > 0f) MAX_SCALE / minScale else 1f
 
     /** The canvas has told the camera its size, so a [fitRect] can land. */
     val hasSize: Boolean get() = viewWidth > 0f && viewHeight > 0f
@@ -95,10 +121,13 @@ class ViewportState {
     fun fitRect(
         rect: PageRect,
         mode: FitMode,
+        durationMs: Long = CameraTween.DURATION_MS,
     ) {
         if (viewWidth <= 0f || viewHeight <= 0f) return
         val screen = CameraScreen(viewWidth, viewHeight, minScale, MAX_SCALE)
-        val target = CameraFit.target(rect, mode, screen, transform)
+        val wanted = CameraFit.target(rect, mode, screen, transform)
+        // A locked camera never lands outside its box, whatever it was asked to show.
+        val target = if (lock == null) wanted else clamped(wanted)
         flight.cancel()
         fitted = false
         val driver = driver
@@ -106,7 +135,7 @@ class ViewportState {
             apply(target)
             return
         }
-        flight.start(CameraTween(transform, target, viewWidth, viewHeight))
+        flight.start(CameraTween(transform, target, viewWidth, viewHeight, durationMs))
         driver.request()
     }
 
@@ -114,6 +143,7 @@ class ViewportState {
     fun reset() {
         flight.cancel()
         fitted = true
+        dip = 1f
         setGesturing(false)
         apply(fit())
     }
@@ -129,7 +159,8 @@ class ViewportState {
         toX: Float,
         toY: Float,
     ) {
-        val current = transform
+        val current = undipped()
+        dip = 1f
         val scale = (current.scale * factor).coerceIn(minScale, MAX_SCALE)
         val pageX = current.toPageX(fromX)
         val pageY = current.toPageY(fromY)
@@ -144,7 +175,10 @@ class ViewportState {
         observers.notify(transform)
     }
 
-    private val minScale: Float get() = if (page.infinite) MIN_SCALE_INFINITE else min(MIN_SCALE, fitScale)
+    private val minScale: Float
+        get() =
+            lock?.takeIf { viewWidth > 0f }?.let { LockClamp.minScale(it, viewWidth, MAX_SCALE) }
+                ?: if (page.infinite) MIN_SCALE_INFINITE else min(MIN_SCALE, fitScale)
 
     private val fitScale: Float
         get() =
@@ -155,6 +189,7 @@ class ViewportState {
             }
 
     private fun fit(): ViewTransform {
+        lock?.takeIf { viewWidth > 0f }?.let { return LockClamp.fitTop(it, viewWidth, viewHeight, MAX_SCALE) }
         if (page.infinite || viewWidth <= 0f) return ViewTransform.IDENTITY
         val scale = fitScale.coerceIn(minScale, MAX_SCALE)
         return ViewTransform(
@@ -164,7 +199,8 @@ class ViewportState {
         )
     }
 
-    private fun clamped(view: ViewTransform): ViewTransform {
+    internal fun clamped(view: ViewTransform): ViewTransform {
+        lock?.takeIf { viewWidth > 0f }?.let { return LockClamp.clamp(view, it, viewWidth, viewHeight, MAX_SCALE) }
         if (page.infinite || viewWidth <= 0f) return view
         return ViewTransform(
             view.scale,
@@ -183,7 +219,7 @@ class ViewportState {
         return offset.coerceIn(keep - pageSize, viewSize - keep)
     }
 
-    private fun apply(next: ViewTransform) {
+    internal fun apply(next: ViewTransform) {
         if (next == transform) return
         transform = next
         _zoom.value = next.scale
@@ -199,6 +235,9 @@ class ViewportState {
 
         /** Screen px of a fixed page that always stay visible. */
         const val KEEP_PX = 64f
+
+        /** The scale counts as the fit scale within this share of it. */
+        private const val FIT_SLACK = 0.005f
     }
 }
 

@@ -17,6 +17,9 @@ interface FrameHost {
         handOver: (MotionEvent) -> Unit,
     ): Boolean
 
+    /** A pinch out past the locked frame's fit scale asks for the grid (the lock's dead zone, [GridPinch]). */
+    fun openOverview() = Unit
+
     /** Abandons the gesture in flight (the pen came down); the page gets a cancel, so no stray click. */
     fun cancel()
 }

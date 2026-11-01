@@ -8,6 +8,7 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -31,6 +32,7 @@ import kotlinx.coroutines.flow.Flow
 private const val READOUT_SP = 11
 private const val READOUT_COLOR = 0xFF37474F
 private const val READOUT_MARGIN_DP = 12
+private const val SWITCHER_MARGIN_DP = 16
 
 /** What the frame stage shows and the calls that change it; one value so [FrameStage]'s signature stays short. */
 internal class FrameStageModel(
@@ -50,11 +52,17 @@ internal class FrameStageLive(
     val pen: PenActivity,
 )
 
-/** The stage's callbacks: frame item edits, the owner's variant pick, the core's layout feed and mark status. */
+/** What the lock can ask of the screen around it: the owner's variant pick, and the overview (a later slice). */
+internal class FrameLockActions(
+    val onChoose: (id: String) -> Unit,
+    val onOpenOverview: () -> Unit,
+)
+
+/** The stage's callbacks: frame item edits, the lock's calls, the core's layout feed and mark status. */
 internal class FrameStageActions(
     val onPreset: (id: String, preset: String) -> Unit,
     val onRoute: (id: String, route: String) -> Unit,
-    val onChoose: (id: String) -> Unit,
+    val lock: FrameLockActions,
     val onLayout: (id: String, json: String, kind: LayoutKind) -> Unit,
     val onMarkStatus: (id: String, status: String) -> Unit,
     val onFocused: (id: String?) -> Unit,
@@ -89,6 +97,10 @@ internal fun FrameStage(
     // Leaving the page destroys the WebViews: a frame that comes back loads its route again.
     DisposableEffect(layer) {
         model.live.control.layer = layer
+        // An agent's `Focus` that came before the page's frames did.
+        model.live.control.pendingLock
+            ?.let(layer::lockFrame)
+        model.live.control.pendingLock = null
         onDispose {
             model.live.control.layer = null
             layer.release()
@@ -99,6 +111,7 @@ internal fun FrameStage(
         model.live.windows.collect { layer.setWindow(it.frameId, it.window, it.scrollX, it.scrollY) }
     }
     var scroll by remember { mutableStateOf<FrameScroll?>(null) }
+    var locked by remember { mutableStateOf(layer.lockedFrame) }
     // Each frame's current state recipe: a mark drawn in another one is dimmed and offers a replay.
     val states = remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     Box(modifier = modifier) {
@@ -111,19 +124,7 @@ internal fun FrameStage(
             factory = { layer },
             update = {
                 it.bind(viewport)
-                it.setFrames(model.specs)
-                it.setWatch(model.watchKeys)
-                it.callbacks.onScroll = { _, reported -> scroll = reported }
-                it.callbacks.onRoute = model.actions.onRoute
-                it.callbacks.onLayout = { id, json, kind, state ->
-                    model.actions.onLayout(id, json, kind)
-                    if (states.value[id] != state) states.value = states.value + (id to state)
-                }
-                it.server = model.live.server
-                it.scene = model.live.scene
-                it.pen = model.live.pen
-                it.callbacks.onFocused = model.actions.onFocused
-                it.callbacks.onUserFocus = model.actions.onUserFocus
+                it.wire(model, states, onScroll = { reported -> scroll = reported }, onLocked = { id -> locked = id })
             },
             modifier = Modifier.fillMaxSize(),
         )
@@ -134,7 +135,12 @@ internal fun FrameStage(
             layer = layer,
             onPreset = model.actions.onPreset,
             onRoute = model.actions.onRoute,
-            onChoose = model.actions.onChoose,
+        )
+        VariantSwitcher(
+            state = SwitcherState.of(model.specs, locked),
+            onSelect = layer::lockFrame,
+            onUseThis = model.actions.lock.onChoose,
+            modifier = Modifier.align(Alignment.BottomCenter).safeDrawingPadding().padding(SWITCHER_MARGIN_DP.dp),
         )
         FrameMarkChips(
             marks = model.marks,
@@ -172,4 +178,29 @@ private fun FrameReadout(
         style = TextStyle(fontSize = READOUT_SP.sp, color = Color(READOUT_COLOR)),
         modifier = modifier,
     )
+}
+
+/** Gives the layer the frames, the server and the callbacks of the stage, on every recomposition. */
+private fun FrameLayer.wire(
+    model: FrameStageModel,
+    states: MutableState<Map<String, String>>,
+    onScroll: (FrameScroll) -> Unit,
+    onLocked: (String?) -> Unit,
+) {
+    callbacks.onScroll = { _, reported -> onScroll(reported) }
+    callbacks.onRoute = model.actions.onRoute
+    callbacks.onLayout = { id, json, kind, state ->
+        model.actions.onLayout(id, json, kind)
+        if (states.value[id] != state) states.value = states.value + (id to state)
+    }
+    server = model.live.server
+    scene = model.live.scene
+    pen = model.live.pen
+    callbacks.onFocused = model.actions.onFocused
+    callbacks.onUserFocus = model.actions.onUserFocus
+    callbacks.onLocked = onLocked
+    callbacks.onOpenOverview = model.actions.lock.onOpenOverview
+    // Last: the first frames lock and focus at once, and every callback above must hear it.
+    setFrames(model.specs)
+    setWatch(model.watchKeys)
 }
