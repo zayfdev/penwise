@@ -17,6 +17,15 @@ internal class FrameWebView(
     @Volatile
     var viewportMeta: String = ""
 
+    /** Where the page is scrolled to and how far it can go (view px). */
+    fun bounds(): ScrollBounds =
+        ScrollBounds(
+            scrollX,
+            scrollY,
+            (computeHorizontalScrollRange() - computeHorizontalScrollExtent()).coerceAtLeast(0),
+            (computeVerticalScrollRange() - computeVerticalScrollExtent()).coerceAtLeast(0),
+        )
+
     override fun onScrollChanged(
         l: Int,
         t: Int,

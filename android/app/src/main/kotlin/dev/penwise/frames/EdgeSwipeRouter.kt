@@ -44,6 +44,9 @@ internal class EdgeSwipeRouter(
 ) {
     private var claimed = false
 
+    /** A touch that started in an edge strip leans sideways and is not yet an edge swipe: a still must not scroll. */
+    val holdsScroll: Boolean get() = !claimed && swipe.leansHorizontal
+
     /** True while the router owns the rest of a touch. */
     val claiming: Boolean get() = claimed
 

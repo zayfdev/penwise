@@ -205,6 +205,7 @@ class InkSurfaceView
             val stylus = controller?.onTouchEvent(event) ?: false
             if (stylus) {
                 pen.lastDrawAt = event.eventTime
+                pen.lastInputAt = event.eventTime
                 onPenInput.onPenInput(event.eventTime)
                 pen.nearUntil = event.eventTime + HOVER_HOLD_MS
                 if (isPenDown(event)) onPenDown()
@@ -225,6 +226,7 @@ class InkSurfaceView
             val tool = event.getToolType(0)
             if (tool == MotionEvent.TOOL_TYPE_STYLUS || tool == MotionEvent.TOOL_TYPE_ERASER) {
                 onPenInput.onPenInput(event.eventTime)
+                pen.lastInputAt = event.eventTime
                 val exit = event.actionMasked == MotionEvent.ACTION_HOVER_EXIT
                 pen.nearUntil = if (exit) 0L else event.eventTime + HOVER_HOLD_MS
                 // Claiming the hover is what makes the system send HOVER_EXIT when the pen leaves.

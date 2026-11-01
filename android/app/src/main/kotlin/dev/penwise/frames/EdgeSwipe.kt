@@ -19,9 +19,14 @@ class EdgeSwipe(
     private var startX = 0f
     private var startY = 0f
     private var done = false
+    private var lastX = 0f
+    private var lastY = 0f
 
     /** True while a touch that started in a strip is being followed. */
     val active: Boolean get() = side != null && !done
+
+    /** The touch in a strip so far travelled more sideways than up or down: it may still become an edge swipe. */
+    val leansHorizontal: Boolean get() = active && abs(lastX - startX) > abs(lastY - startY)
 
     /** A finger went down at ([x], [y]) on a [viewWidth] by [viewHeight] screen; true in an edge strip. */
     fun begin(
@@ -35,6 +40,8 @@ class EdgeSwipe(
         side = if (x <= edgePx) Side.LEFT else Side.RIGHT
         startX = x
         startY = y
+        lastX = x
+        lastY = y
         return true
     }
 
@@ -48,6 +55,8 @@ class EdgeSwipe(
     ): Int {
         val from = side ?: return 0
         if (done) return 0
+        lastX = x
+        lastY = y
         val inward = if (from == Side.LEFT) x - startX else startX - x
         if (inward < travelPx || abs(y - startY) > inward * MAX_SLOPE) return 0
         done = true

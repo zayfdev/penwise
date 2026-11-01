@@ -29,6 +29,17 @@ internal class FrameLookup(
         y: Float,
     ): FrameEntry? = live()?.takeIf { it.isShown && it.placement.contains(x, y) }
 
+    /** The live page when the window point is on the still part of its frame, which is the [locked] one. */
+    fun stillOfLiveAt(
+        x: Float,
+        y: Float,
+        locked: String?,
+    ): FrameEntry? {
+        val page = live() ?: return null
+        val id = page.spec.id
+        return page.takeIf { StillZone.scrolls(it.isShown, it.placement.contains(x, y), specAt(x, y)?.id, id, locked) }
+    }
+
     /** The topmost frame whose box holds the window point. */
     fun specAt(
         x: Float,

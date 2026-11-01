@@ -13,7 +13,7 @@ scope here).
 - **A frame is the screen.** On a board page the camera is always locked to one frame's box. It never shows board
   space outside that box.
 - **Zoom inside the frame.** Two fingers zoom in (up to `MAX_SCALE`) and pan, but never below the frame's fit-width
-  scale and never past its box edges. One finger scrolls the page; the pen draws.
+  scale and never past its box edges. One finger anywhere on the locked frame scrolls the page (on the live window, or on the still part below it, as a browser does); the pen draws.
 - **The overview is the way out.** Pinching out while already at fit scale, past a dead zone, opens the overview;
   so does an overview button. The overview is a sideways strip of columns on a dark canvas, scrolled like a niri
   workspace (one column centred, its neighbours peeking): older generations to the left, the current one in the
@@ -85,6 +85,10 @@ scope here).
 - Edge swipe: a one-finger horizontal swipe starting within 24 dp of the left or right screen edge (the app already
   excludes system gestures there) moves to the previous/next frame in the switcher order. Elsewhere one finger goes
   to the page as today.
+- Still part: a one-finger drag that starts on the locked frame's box outside the live window scrolls the live page by the
+  drag (converted with the camera scale) and flings with the WebView's own physics; a tap there stays a tap. It is
+  ignored within 500 ms of pen input (a resting palm), and held while a touch from an edge strip leans sideways (it
+  may be an edge swipe).
 
 ### 3.2 Switcher
 - Shown when the locked frame's lane has a variant group. Items: `OG` (the lane's live frame), then variants by

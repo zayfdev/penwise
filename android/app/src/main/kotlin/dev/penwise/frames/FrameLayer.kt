@@ -69,13 +69,14 @@ internal class FrameLayer(
             place = ::sync,
             clock = { SystemClock.uptimeMillis() },
         )
-    private val touch = LayerTouch(lookup, follower, this, transform, ::onDoubleTap)
+    private val touch =
+        LayerTouch(lookup, follower, this, transform, ::onDoubleTap, { lock.locked }, { pen }, { edges.holdsScroll })
     private val gestures = FrameGestures(touch, ViewConfiguration.get(context).scaledTouchSlop.toFloat())
     private val penHits = FramePenHits(LayerPenHost(lookup, stills, { scene }))
     private val pages: LivePages =
         LivePages(this, context, ::deliver, { entry, x, y -> onPageScroll(entry, x, y) }) { gestures.release(it) }
-    private val lock = LayerLock({ viewport }, { specs }, ::applyFocus, callbacks::lockChanged)
-    private val edges =
+    private val lock: LayerLock = LayerLock({ viewport }, { specs }, ::applyFocus, callbacks::lockChanged)
+    private val edges: EdgeSwipeRouter =
         EdgeSwipeRouter(
             EdgeSwipe(EdgeStrips.EDGE_DP * density, EDGE_TRAVEL_DP * density, EdgeStrips.HEIGHT_DP * density),
             { SwitcherState.of(specs, lock.locked)?.hasNeighbour == true },

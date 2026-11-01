@@ -4,6 +4,10 @@ package dev.penwise.frames
 internal class RouterRig {
     inner class Host : GestureHost<String> {
         var fitted = false
+
+        /** The point is on the live window; false: off it (a still part, say). */
+        var onWindow = true
+        val flings = ArrayList<Pair<Float, Float>>()
         val doubleTaps = ArrayList<String>()
         var fingerDowns = 0
         var fingerUps = 0
@@ -12,7 +16,15 @@ internal class RouterRig {
         override fun liveAt(
             x: Float,
             y: Float,
-        ): String = "page"
+        ): String? = if (onWindow) "page" else null
+
+        override fun flingPage(
+            page: String,
+            vx: Float,
+            vy: Float,
+        ) {
+            flings += vx to vy
+        }
 
         override fun frameAt(
             x: Float,

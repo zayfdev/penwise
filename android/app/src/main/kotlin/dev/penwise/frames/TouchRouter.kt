@@ -18,7 +18,7 @@ internal fun interface PageSink<T : Any> {
 }
 
 /** What the touch routing needs to know about the frames. */
-internal interface GestureHost<T : Any> {
+internal interface GestureHost<T : Any> : StillScrollHost<T> {
     /** The live page when a window point ([x], [y]) is on its window; null otherwise. */
     fun liveAt(
         x: Float,
@@ -36,11 +36,6 @@ internal interface GestureHost<T : Any> {
 
     /** A one-finger double-tap on [frameId]'s box: fit it to the screen. */
     fun onDoubleTap(frameId: String)
-
-    /** A finger started or stopped working the live page (its scroll then carries the camera). */
-    fun fingerDown()
-
-    fun fingerUp()
 
     /** Runs [job] after [delayMs] on the UI thread, or withdraws it. */
     fun post(
@@ -85,11 +80,14 @@ internal class TouchRouter<T : Any>(
     private val replay = TapReplay(host, sink, slop * 2)
     private val press = Runnable { flushHeld() }
 
+    /** A finger on the still part of the locked frame. */
+    private val still = StillScroll(host, slop)
+
     /** A finger is working the live page right now. */
     val touching: Boolean get() = active != null
 
     /** Anything at all is held, active or waiting to be replayed. */
-    val busy: Boolean get() = mode == Mode.FRAME || mode == Mode.HELD || replay.pending
+    val busy: Boolean get() = (mode != Mode.IDLE && mode != Mode.CANVAS) || replay.pending
 
     /** The first finger went down at ([x], [y]); true when the page took the touch (held or forwarded). */
     fun onDown(
@@ -105,7 +103,13 @@ internal class TouchRouter<T : Any>(
         taps.down(host.frameAt(x, y), x, y, time)
         // A tap far from the one waiting is a different tap: the waiting one reaches its page now.
         replay.onNextDown(x, y)
-        val page = host.liveAt(x, y) ?: return false
+        val page = host.liveAt(x, y)
+        if (page == null) {
+            if (still.down(x, y, time)) mode = Mode.STILL
+            return false
+        }
+        // A new touch ends a fling the page is in, as a touch on a browser does (a held touch is not sent yet).
+        host.flingPage(page, 0f, 0f)
         if (!host.isFitted(page)) {
             held = page
             heldX = x
@@ -130,7 +134,7 @@ internal class TouchRouter<T : Any>(
      */
     fun takeForCanvas(): Boolean {
         taps.spoil()
-        if (mode != Mode.FRAME && mode != Mode.HELD) return false
+        if (mode == Mode.IDLE || mode == Mode.CANVAS) return false
         drop()
         mode = Mode.CANVAS
         return true
@@ -156,6 +160,10 @@ internal class TouchRouter<T : Any>(
             Mode.FRAME -> {
                 active?.let { send(it, TouchAction.MOVE, time, x, y) }
                 true
+            }
+
+            Mode.STILL -> {
+                still.move(x, y, time)
             }
 
             else -> {
@@ -184,18 +192,24 @@ internal class TouchRouter<T : Any>(
             active?.let { send(it, TouchAction.UP, time, x, y) }
             active = null
             host.fingerUp()
+        } else {
+            // A touch that was not the page's may still have suspended a waiting tap: it is dropped or delivered now.
+            replay.settle(doubled != null)
         }
+        // A STILL touch that never scrolled is a tap the canvas also sees, as ever.
+        val scrolled = had == Mode.STILL && still.up(time)
         mode = Mode.IDLE
-        return had == Mode.HELD || had == Mode.FRAME
+        return had == Mode.HELD || had == Mode.FRAME || scrolled
     }
 
     /** The system cancelled the touch. */
     fun onCancel(): Boolean {
         taps.reset()
         val had = mode
+        val scrolled = had == Mode.STILL && still.scrolling
         drop()
         mode = Mode.IDLE
-        return had == Mode.HELD || had == Mode.FRAME
+        return had == Mode.HELD || had == Mode.FRAME || scrolled
     }
 
     /**
@@ -204,14 +218,14 @@ internal class TouchRouter<T : Any>(
      */
     fun penDown() {
         taps.reset()
-        if (mode != Mode.FRAME && mode != Mode.HELD) return
+        if (mode == Mode.IDLE || mode == Mode.CANVAS) return
         drop()
         mode = Mode.IDLE
     }
 
     /** [page] is being closed: nothing held, active or waiting for it survives. */
     fun release(page: T) {
-        if (active === page || held === page) {
+        if (active === page || held === page || still.page === page) {
             drop()
             mode = Mode.IDLE
         }
@@ -220,8 +234,12 @@ internal class TouchRouter<T : Any>(
 
     /** Back to idle without a cancel (the layer is gone). */
     fun reset() {
+        // The owner scroll ends with the layer: ScrollOwner must not stay touching after a page leave.
+        if (mode == Mode.FRAME) host.fingerUp()
+        if (mode == Mode.STILL) still.drop()
         held = null
         active = null
+        still.reset()
         host.remove(press)
         replay.cancel()
         taps.reset()
@@ -245,6 +263,10 @@ internal class TouchRouter<T : Any>(
         host.remove(press)
         held = null
         replay.settle(doubled = false)
+        if (mode == Mode.STILL) {
+            still.drop()
+            return
+        }
         val page = active ?: return
         send(page, TouchAction.CANCEL, host.now(), lastX, lastY)
         active = null
@@ -273,85 +295,10 @@ internal class TouchRouter<T : Any>(
         /** One finger is down on a page that is not fitted: a tap, a press or a drag, not decided yet. */
         HELD,
 
+        /** One finger is down on the still part of the locked frame: a tap, or a page scroll once it drags. */
+        STILL,
+
         /** A gesture that began on a page became a canvas gesture; the canvas owns it until every finger is up. */
         CANVAS,
-    }
-}
-
-/**
- * Taps on a page that was not fitted. A tap waits here for a second one; if none comes within [DoubleTap.GAP_MS] the
- * page gets it after all (a press and a release where it was), so a lone tap is only late, never lost. A next touch
- * far from the waiting tap is a different tap, and the waiting one is delivered at once; a next touch close to it may
- * be the second tap of a double-tap, so the waiting tap is suspended until that touch says what it is ([settle]).
- */
-internal class TapReplay<T : Any>(
-    private val host: GestureHost<T>,
-    private val sink: PageSink<T>,
-    private val nearPx: Float,
-) {
-    private var page: T? = null
-    private var x = 0f
-    private var y = 0f
-    private var suspended = false
-    private val job = Runnable { deliver() }
-
-    /** A tap is waiting (on its timer, or suspended behind a possible double-tap). */
-    val pending: Boolean get() = page != null
-
-    fun schedule(
-        target: T,
-        windowX: Float,
-        windowY: Float,
-    ) {
-        page = target
-        x = windowX
-        y = windowY
-        suspended = false
-        host.post(job, DoubleTap.GAP_MS)
-    }
-
-    /** A finger went down at ([downX], [downY]). */
-    fun onNextDown(
-        downX: Float,
-        downY: Float,
-    ) {
-        if (page == null || suspended) return
-        if (hypot(downX - x, downY - y) <= nearPx) {
-            host.remove(job)
-            suspended = true
-        } else {
-            host.remove(job)
-            deliver()
-        }
-    }
-
-    /** The touch that suspended the waiting tap turned out to be a double-tap ([doubled]: drop it) or not. */
-    fun settle(doubled: Boolean) {
-        if (!suspended) return
-        if (doubled) clear() else deliver()
-    }
-
-    /** Nothing is replayed. */
-    fun cancel() {
-        host.remove(job)
-        clear()
-    }
-
-    /** Nothing is replayed if the waiting tap was on [target]. */
-    fun cancel(target: T) {
-        if (page === target) cancel()
-    }
-
-    private fun deliver() {
-        val target = page ?: return
-        clear()
-        val now = host.now()
-        sink.send(target, TouchAction.DOWN, now, now, x, y)
-        sink.send(target, TouchAction.UP, now, now, x, y)
-    }
-
-    private fun clear() {
-        page = null
-        suspended = false
     }
 }
