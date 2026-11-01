@@ -24,7 +24,7 @@ async function focusFrame(route) {
 export default async function fixtures(ctx) {
   const { report } = ctx;
   if (!ctx.frame) await openMain(ctx);
-  for (const name of FIXTURES) {
+  for (const name of process.env.QA_FIXTURES?.split(',') ?? FIXTURES) {
     const route = `/${name}/`;
     const g = `fixture ${name}`;
     try {

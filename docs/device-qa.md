@@ -50,10 +50,11 @@ scroll), plus the table printed at the end. A check's `status` is:
 
 | Group | Checks | Proves |
 |---|---|---|
-| `open` | WebView = the page pixels the app computes for the 1440x900 preset (`frames/PagePixels.kt`: never taller than the screen's short side, so 2560x1600 on this display in either orientation; the harness derives it from `wm density`), screenY 0; innerWidth 1440, innerHeight 900; `visualViewport.height` = `innerHeight`; page `scrollHeight` within 2 px of the server still's doc height | The board opens fitted on its frame with a full-screen live page whose layout matches what the server rendered. Numbers come from CDP (`Runtime.evaluate`) and the WebView's DevTools description. |
+| `open` | WebView = the page pixels the app computes for the 1440x900 preset (`frames/PagePixels.kt`: zoomed to fit the window's width and height, so 2560x1600 in landscape and 1600x1000 in portrait on this display; the harness derives it from `wm density`), screenY 0; innerWidth 1440, innerHeight 900; `visualViewport.height` = `innerHeight`; page `scrollHeight` within 2 px of the server still's doc height | The board opens fitted on its frame with a full-screen live page whose layout matches what the server rendered. Numbers come from CDP (`Runtime.evaluate`) and the WebView's DevTools description. |
 | `scroll` | At every sample (every 70 ms, also during flings): `visualViewport.height` = `innerHeight`, `offsetTop` = 0, WebView screenY 0 and height = screen; final scrollY = scrollHeight - innerHeight (+-2); renderer healthy; in portrait also the known-gap check "drag on the still part scrolls the page" (a finger drag below the live window) | Finger scrolling the page never moves or resizes the viewport inside the WebView and reaches the bottom exactly. |
 | `ink` | MultiBufferedLayer `frame=` rises after a pen stroke; renderer healthy; the server gains one mark (`look`); at least 300 pixels change in the stroke's region of a screenshot | The low-latency renderer presents the stroke, it reaches the server and it is visible. |
 | `glue` | Stroke pixels are found after a one-finger scroll; their vertical shift equals the page's shift (measured by correlating page content between screenshots, and reported next to the scrollY-derived value) within 4 px | Ink moves with the page. |
+| `rotate` | The same WebView is rotated in place (away and back): the page marker and scrollY survive, the view is the page pixels of the new orientation, innerWidth/innerHeight 1440x900, `visualViewport.height` = `innerHeight`, offsetTop 0, and a stroke drawn after the rotation still moves with the page (|diff| <= 4 px) | `PagePixels` and `FrameLayer.onSizeChanged` re-lay the page out without reloading it or moving the ink. |
 | `lifecycle` | After HOME + relaunch, portrait and back, force-stop + relaunch: earlier marks still on the server, and the ink checks again for a new stroke | The app survives the common ways it is interrupted. |
 | `network` | Wi-Fi off, two strokes render locally, Wi-Fi on: both marks reach the server within 15 s (also reports how long the Wi-Fi link itself took); `systemctl --user restart penwise`: the app shows Synced again and a new stroke reaches the server | Offline drawing is not lost and the sync reconnects. |
 | `reload` | A change to a served file reloads the live page; then the ink checks and the glue check run again | Page reloads do not break ink. |
@@ -71,7 +72,7 @@ frames to advance. The raw wait count is in `measured`. A stuck renderer (frames
 
 ## Orientation and the live window
 
-The WebView is sized by `PagePixels` and drawn scaled to the screen width, so in portrait the live window is only the
+The WebView is sized by `PagePixels` to fit the window in its current orientation (the locked camera draws it at scale 1; a view drawn smaller than it is laid out gets its visual viewport capped by Chromium), so in portrait the live window is only the
 top band (1600x1000 of 1600x2560 here). Finger scrolls, strokes and the glue measurement are placed inside it; the
 screen px per css px is the screen width over `innerWidth` (not the view width). The glue stroke is searched only within +-20 px of the page's own measured shift (earlier strokes sit on the board at
 about 60 px spacing). The glue correlation uses page

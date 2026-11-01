@@ -7,7 +7,7 @@ import { Report } from './report.mjs';
 import { QA_DIR, ensureProject, prepareSites, waitServer } from './server.mjs';
 import { holdOrientation, measureScreen, orientationName, restoreState, saveState } from './session.mjs';
 
-const GROUPS = ['open', 'scroll', 'ink', 'glue', 'lifecycle', 'network', 'reload', 'fixtures', 'round', 'memory'];
+const GROUPS = ['open', 'scroll', 'ink', 'glue', 'rotate', 'lifecycle', 'network', 'reload', 'fixtures', 'round', 'memory'];
 // Geometry groups depend on the orientation (view size, live window); the others run once, in the first orientation.
 const GEOMETRY = ['open', 'scroll', 'glue'];
 const orient = (process.argv.find((a) => a.startsWith('--orient=')) ?? '--orient=current').slice(9);

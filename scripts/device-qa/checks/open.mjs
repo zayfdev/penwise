@@ -26,7 +26,7 @@ export default async function open(ctx) {
   const v = s.view;
   report.check(g, 'WebView = page pixels for the preset', v.width === w && v.height === h, {
     measured: `${v.width}x${v.height}`,
-    threshold: `${w}x${h} (PagePixels: 1440x900 at density ${ctx.screen.density}, short side ${Math.min(ctx.screen.w, ctx.screen.h)}; live window ${ctx.screen.live.w}x${ctx.screen.live.h} of ${ctx.screen.w}x${ctx.screen.h})`,
+    threshold: `${w}x${h} (PagePixels: 1440x900 at density ${ctx.screen.density}, window ${ctx.screen.w}x${ctx.screen.h}; live window ${ctx.screen.live.w}x${ctx.screen.live.h} of ${ctx.screen.w}x${ctx.screen.h})`,
   });
   report.check(g, 'WebView screenY = 0', v.screenY === 0, { measured: v.screenY, threshold: '0' });
   report.check(g, 'innerWidth = 1440', s.innerWidth === 1440, { measured: s.innerWidth, threshold: '1440' });

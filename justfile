@@ -70,7 +70,7 @@ device-check:
 
 # On-device QA on the connected tablet: real numbers per behaviour, a pass/fail table, JSON report + screenshots in
 # target/device-qa/<timestamp>/. `just device-qa` runs every group; `just device-qa scroll glue` runs those only.
-# Groups: open scroll ink glue lifecycle network reload fixtures round memory; --orient=both adds the other orientation. See docs/device-qa.md.
+# Groups: open scroll ink glue rotate lifecycle network reload fixtures round memory; --orient=both adds the other orientation. See docs/device-qa.md.
 device-qa *GROUPS:
     flock /tmp/penwise-device.lock node scripts/device-qa/run.mjs {{GROUPS}}
 

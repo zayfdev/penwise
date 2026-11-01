@@ -65,15 +65,15 @@ export const orientationName = (rot) => (rot % 2 === 1 ? 'landscape' : 'portrait
 
 /**
  * The screen in the current rotation plus what the app does with it: `pixels` is the WebView size PagePixels.kt gives
- * the 1440x900 preset (never taller than the screen's short side, page zoomed to match), `live` is the part of the
- * screen the live WebView covers (the view drawn scaled to the screen width, from the top).
+ * the 1440x900 preset (zoomed to fit the window's width and height, so 2560x1600 in landscape and 1600x1000 in portrait), `live` is the
+ * part of the screen the live WebView covers (the view drawn scaled to the screen width, from the top).
  */
 export async function measureScreen(cssWidth = 1440, cssHeight = 900) {
   const s = await adb.screen();
   const density = (await adb.density()) / 160;
-  const shortSide = Math.min(s.w, s.h);
-  const fit = Math.min(1, shortSide / (cssHeight * density));
-  const width = Math.floor(cssWidth * density * fit + 1e-6);
+  // PagePixels.of: zoomed until the page fits the window's width and height, never past the display density.
+  const pxPerCss = Math.min(density, s.w / cssWidth, s.h / cssHeight);
+  const width = Math.floor(cssWidth * pxPerCss + 1e-6);
   const height = Math.floor((cssHeight * width) / cssWidth + 1e-6);
   const liveH = Math.min(s.h, Math.round((s.w * height) / width));
   return { ...s, density, pixels: { width, height }, live: { w: s.w, h: liveH } };
