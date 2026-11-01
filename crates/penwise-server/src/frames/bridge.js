@@ -1201,7 +1201,10 @@
     revertPatch: revertPatch,
     patched: function () {
       return patchActive;
-    }
+    },
+    // Exposed for the bridge tests: the retry schedule and the reload socket with fakes.
+    reloadDelay: reloadDelay,
+    liveReload: liveReload
   };
 
   window.addEventListener(
@@ -1242,38 +1245,87 @@
   }
   observeDom();
 
-  function liveReload() {
-    if (!window.WebSocket) return;
+  // Milliseconds between reload-socket retries: 1, 2, 4, 8 s, then 10 s (capped), plus up to 250 ms of jitter.
+  function reloadDelay(attempt, random) {
+    var base = Math.min(1000 * Math.pow(2, Math.max(attempt, 1) - 1), 10000);
+    return base + Math.floor((random ? random() : Math.random()) * 250);
+  }
+
+  // `env` is for tests: a fake WebSocket class, timers and reload. At most one socket is open at a time.
+  function liveReload(env) {
+    env = env || {};
+    var Socket = env.WebSocket || window.WebSocket;
+    var later = env.setTimeout || window.setTimeout.bind(window);
+    var cancel = env.clearTimeout || window.clearTimeout.bind(window);
+    var reload =
+      env.reload ||
+      function () {
+        saveScroll();
+        location.reload();
+      };
+    if (!Socket) return;
     var attempts = 0;
+    var everOpened = false;
+    var socket = null;
+    var timer = null;
+    function giveUp() {
+      // A proxied project answers 404 here (its dev server does HMR): never having connected, stop after a few
+      // tries. Once the socket has worked, an outage (Wi-Fi drop, server restart) is retried without end.
+      return !everOpened && attempts > 5;
+    }
+    function schedule() {
+      if (timer !== null) cancel(timer);
+      timer = later(connect, reloadDelay(attempts, env.random));
+    }
     function connect() {
+      timer = null;
+      if (socket) return;
       var protocol = location.protocol === "https:" ? "wss:" : "ws:";
-      var socket;
+      var own;
       try {
-        socket = new WebSocket(protocol + "//" + location.host + RELOAD_PATH);
+        own = new Socket(protocol + "//" + location.host + RELOAD_PATH);
       } catch (_) {
+        attempts += 1;
+        if (!giveUp()) schedule();
         return;
       }
-      socket.onopen = function () {
+      socket = own;
+      own.onopen = function () {
         attempts = 0;
+        everOpened = true;
       };
-      socket.onmessage = function (event) {
+      own.onmessage = function (event) {
         var message = event.data;
         try {
           message = JSON.parse(message);
         } catch (_) {
           return;
         }
-        if (message && message.t === "pw:reload") {
-          saveScroll();
-          location.reload();
-        }
+        if (message && message.t === "pw:reload") reload();
       };
-      socket.onclose = function () {
-        // A proxied project answers 404 here (its dev server does HMR); stop retrying after a few tries.
+      own.onclose = function () {
+        if (socket !== own) return;
+        socket = null;
         attempts += 1;
-        if (attempts <= 5) window.setTimeout(connect, 1000 * Math.min(attempts, 5));
+        if (!giveUp()) schedule();
       };
     }
+    // Back online or back on screen: try now instead of waiting out the backoff.
+    function retryNow() {
+      if (socket || giveUp()) return;
+      if (document.visibilityState === "hidden") return;
+      if (everOpened) attempts = 0;
+      if (timer !== null) cancel(timer);
+      connect();
+    }
+    window.addEventListener("online", retryNow, false);
+    document.addEventListener(
+      "visibilitychange",
+      function () {
+        if (document.visibilityState === "visible") retryNow();
+      },
+      false
+    );
     connect();
   }
 

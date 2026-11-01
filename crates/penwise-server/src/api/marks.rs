@@ -11,6 +11,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::AppState;
+use super::OptionalJson;
 use super::author::Author;
 use super::error::ApiError;
 use super::resolve::page_of;
@@ -91,9 +92,9 @@ pub(crate) async fn add_annotations(
 async fn clear(
     State(app): State<AppState>,
     Query(query): Query<PageQuery>,
-    body: Option<Json<ClearBody>>,
+    body: OptionalJson<ClearBody>,
 ) -> Result<Json<Value>, ApiError> {
-    let from_body = body.and_then(|Json(b)| b.page);
+    let from_body = body.0.and_then(|b| b.page);
     let page = page_of(&app, from_body.as_deref().or(query.page.as_deref())).await?;
     let ids = app.storage.live_item_ids(page, Some(Layer::Agent)).await?;
     let removed = ids.len();

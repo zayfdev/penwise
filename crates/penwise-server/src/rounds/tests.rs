@@ -9,6 +9,7 @@
 )]
 
 mod generations;
+mod optional_body;
 mod strip_pages;
 
 use std::path::Path;

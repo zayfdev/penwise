@@ -24,7 +24,7 @@ use penwise_core::marks::MarkStatus;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::api::{ApiError, AppState};
+use crate::api::{ApiError, AppState, OptionalJson};
 use crate::storage::{Round, RoundOp, RoundStatus};
 
 pub(crate) use ledger::{Ledger, RoundMark};
@@ -60,12 +60,13 @@ pub(crate) async fn require_project(app: &AppState, id: &str) -> Result<(), ApiE
 async fn send(
     State(app): State<AppState>,
     Path(project): Path<String>,
-    body: Option<Json<SendBody>>,
+    body: OptionalJson<SendBody>,
 ) -> Result<Json<Value>, ApiError> {
     require_project(&app, &project).await?;
     let ledger = Ledger::load(&app, &project).await?;
     let n = body
-        .and_then(|Json(body)| body.n)
+        .0
+        .and_then(|body| body.n)
         .unwrap_or_else(|| ledger.open_number());
     if n != ledger.open_number() {
         return Err(ApiError::new(

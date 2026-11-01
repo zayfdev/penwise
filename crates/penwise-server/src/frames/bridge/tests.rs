@@ -1072,3 +1072,92 @@ async fn scroll_into_view_and_a_smooth_scroll_lerp_are_the_pages_own() {
     inspect.shutdown().await;
     server.shutdown().await;
 }
+
+/// The reload socket outlives an outage: after far more than five failed reconnects (a Wi-Fi drop, a server
+/// restart) it still reconnects and reloads on the next change, backs off to the cap, retries at once on
+/// `online`, and never holds two sockets. A socket that never worked (a proxied dev server) still gives up.
+#[tokio::test]
+async fn the_reload_socket_survives_a_long_outage() {
+    if !chromium_installed() {
+        tracing::warn!("chromium is not installed; bridge reload retry test skipped");
+        return;
+    }
+    let server = project().await;
+    let (inspect, page) = open(&server).await;
+    let script = r#"(function () {
+      function rig() {
+        var r = { made: [], timers: [], reloads: 0 };
+        function Fake(url) { r.made.push(this); }
+        r.env = {
+          WebSocket: Fake, random: function () { return 0; },
+          setTimeout: function (f, ms) { r.timers.push({ f: f, ms: ms }); return r.timers.length; },
+          clearTimeout: function (id) { if (r.timers[id - 1]) r.timers[id - 1].f = null; },
+          reload: function () { r.reloads += 1; }
+        };
+        r.last = function () { return r.made[r.made.length - 1]; };
+        r.fail = function () {
+          r.last().onclose();
+          var t = r.timers[r.timers.length - 1];
+          var f = t.f; t.f = null;
+          return { ms: t.ms, run: f };
+        };
+        return r;
+      }
+      var out = {};
+      var up = rig();
+      window.PenwiseBridge.liveReload(up.env);
+      up.last().onopen();
+      out.delays = [];
+      for (var i = 0; i < 9; i++) {
+        var step = up.fail();
+        out.delays.push(step.ms);
+        step.run();
+      }
+      out.sockets = up.made.length;
+      up.last().onopen();
+      up.last().onmessage({ data: JSON.stringify({ t: "pw:reload" }) });
+      out.reloads = up.reloads;
+      up.fail();
+      var before = up.made.length;
+      window.dispatchEvent(new Event("online"));
+      out.onlineSockets = up.made.length - before;
+      window.dispatchEvent(new Event("online"));
+      out.doubleOnline = up.made.length - before;
+      var cold = rig();
+      window.PenwiseBridge.liveReload(cold.env);
+      var stopped = false;
+      for (var j = 0; j < 8 && !stopped; j++) {
+        cold.last().onclose();
+        var t = cold.timers[cold.timers.length - 1];
+        if (!t || !t.f) { stopped = true; break; }
+        var run = t.f; t.f = null; run();
+        if (cold.timers.length === j + 1 && cold.made.length === j + 1) stopped = true;
+      }
+      out.coldSockets = cold.made.length;
+      out.curve = [1, 2, 3, 4, 5, 6, 40].map(function (n) { return window.PenwiseBridge.reloadDelay(n, function () { return 0.999; }); });
+      return out;
+    })()"#;
+    let out = inspect.eval(&page, script).await.expect("retry script");
+    assert_eq!(
+        out["delays"],
+        json!([1000, 2000, 4000, 8000, 10000, 10000, 10000, 10000, 10000]),
+        "{out}"
+    );
+    assert_eq!(out["sockets"], json!(10), "one new socket per retry");
+    assert_eq!(out["reloads"], json!(1), "a reload message reloads: {out}");
+    assert_eq!(
+        out["onlineSockets"],
+        json!(1),
+        "online retries at once: {out}"
+    );
+    assert_eq!(out["doubleOnline"], json!(1), "never two sockets: {out}");
+    assert!(
+        out["coldSockets"].as_u64().is_some_and(|n| n <= 6),
+        "a socket that never opened gives up: {out}"
+    );
+    assert_eq!(
+        out["curve"],
+        json!([1249, 2249, 4249, 8249, 10249, 10249, 10249]),
+        "jitter stays under 250 ms and the cap holds: {out}"
+    );
+}

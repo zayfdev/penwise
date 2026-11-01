@@ -12,6 +12,7 @@ mod author;
 mod error;
 pub(crate) mod marks;
 mod notebooks;
+mod optional_json;
 pub(crate) mod pages;
 mod pair;
 pub(crate) mod project_marks;
@@ -40,6 +41,7 @@ use crate::storage::Storage;
 
 pub(crate) use author::Author;
 pub(crate) use error::ApiError;
+pub(crate) use optional_json::OptionalJson;
 pub(crate) use pair::same_machine;
 pub(crate) use resolve::{page_of, parse_page};
 

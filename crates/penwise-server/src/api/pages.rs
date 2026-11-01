@@ -14,6 +14,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::AppState;
+use super::OptionalJson;
 use super::author::Author;
 use super::error::ApiError;
 use super::resolve::{current, page_of, parse_notebook};
@@ -208,10 +209,10 @@ struct FocusBody {
 async fn focus(
     State(app): State<AppState>,
     Path(id): Path<String>,
-    body: Option<Json<FocusBody>>,
+    body: OptionalJson<FocusBody>,
 ) -> Result<Json<Value>, ApiError> {
     let page = page_of(&app, Some(&id)).await?;
-    let item = match body.and_then(|Json(body)| body.item) {
+    let item = match body.0.and_then(|body| body.item) {
         Some(text) => Some(focus_target(&app, page, &text).await?),
         None => None,
     };
