@@ -18,11 +18,13 @@ internal class SwitcherState(
     val items: List<SwitcherItem>,
     /** The locked frame's id; it may be no item (a plain frame that is not the lane's live one). */
     val shown: String,
+    /** The row may pick a variant ("Use this"); a past generation's row is read-only. */
+    val pickable: Boolean = true,
 ) {
     private val shownItem: SwitcherItem? get() = items.firstOrNull { it.id == shown }
 
     /** "Use this" picks the shown variant: not on OG, and not when it already is the pick. */
-    val canUseThis: Boolean get() = shownItem?.let { !it.og && !it.chosen } ?: false
+    val canUseThis: Boolean get() = pickable && shownItem?.let { !it.og && !it.chosen } ?: false
 
     /** The shown item has a neighbour on some side: an edge swipe has somewhere to go. */
     val hasNeighbour: Boolean get() = neighbour(-1) != null || neighbour(1) != null

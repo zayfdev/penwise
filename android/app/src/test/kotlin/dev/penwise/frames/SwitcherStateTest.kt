@@ -103,4 +103,15 @@ class SwitcherStateTest {
         assertNull(state.neighbour(1))
         assertFalse(state.canUseThis)
     }
+
+    @Test
+    fun a_read_only_row_never_offers_use_this() {
+        val items =
+            listOf(
+                SwitcherItem("og", "OG", og = true, chosen = false),
+                SwitcherItem("a", "A", og = false, chosen = false),
+            )
+        assertTrue(SwitcherState(items, "a").canUseThis)
+        assertFalse(SwitcherState(items, "a", pickable = false).canUseThis)
+    }
 }

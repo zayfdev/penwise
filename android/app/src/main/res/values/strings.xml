@@ -49,6 +49,7 @@
     <string name="frame_bind_area">Area</string>
     <string name="frame_ghost">Ghost</string>
     <string name="frame_use_this">Use this</string>
+    <string name="overview_open">Overview</string>
     <string name="drawer_marks">Marks</string>
     <string name="marks_show_done">Show done</string>
     <string name="mark_action_done">Done</string>

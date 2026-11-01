@@ -3,17 +3,15 @@ package dev.penwise.frames
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -25,7 +23,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.penwise.R
@@ -34,6 +31,7 @@ import dev.penwise.ink.ViewportState
 import dev.penwise.tools.ToolButton
 import dev.penwise.tools.ToolChip
 import dev.penwise.tools.ToolIcons
+import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
 private const val CHIP_BACKGROUND = 0xF2FFFFFF
@@ -41,6 +39,9 @@ private const val CHIP_RADIUS_DP = 10
 private const val CHIP_INSET_PX = 6
 private const val CHIP_PAD_DP = 3
 private const val CHIP_GAP_DP = 2
+
+/** The camera must be still this long before the chip's window shows (and moves) again. */
+private const val REST_MS = 160L
 
 /** The chip row's callbacks: the frame item edits and the Ghost toggle. */
 private class FrameChipActions(
@@ -50,18 +51,19 @@ private class FrameChipActions(
 )
 
 /**
- * The canvas controls of every frame, at the frame's top edge and outside the page: the preset switch, reload, the
+ * The canvas controls of the locked frame, at its top-left corner and outside the page: the preset switch, reload, the
  * route (which opens a small field) and the Ghost toggle of a patched frame. A variant's name and pick live in the
- * [VariantSwitcher], not here.
+ * [VariantSwitcher], not here. With the camera locked to one frame no other frame is on the screen, so one chip is
+ * enough.
  *
- * Screen-space: they keep their size while the canvas zooms, and they follow the frames through [viewport].
- *
- * Composed above the ink surface (so Compose gives them the touch before the surface sees it), below it in z: the
- * translucent ink layer lets them show, ink drawn over them.
+ * Screen-space: it keeps its size while the canvas zooms and follows the frame through [viewport] (staying inside the
+ * screen when the frame's corner is scrolled away). It is hosted in its own window ([PinnedChromeWindow]), because the
+ * ink surface is above this window while frames exist (contract §3.5).
  */
 @Composable
 internal fun FrameChips(
     specs: List<FrameSpec>,
+    locked: String?,
     viewport: ViewportState,
     layer: FrameLayer,
     onPreset: (id: String, preset: String) -> Unit,
@@ -84,32 +86,38 @@ internal fun FrameChips(
                 layer.setPatchOn(id, on)
             },
         )
+    // While the camera moves the chip's window stays away: a window that moved with every camera frame would be
+    // repositioned by the window manager on each one. It comes back when the camera has rested.
+    var resting by remember { mutableStateOf(true) }
+    LaunchedEffect(transform) {
+        resting = false
+        delay(REST_MS)
+        resting = true
+    }
     val density = LocalDensity.current.density
-    Box(Modifier.fillMaxSize()) {
-        for (spec in specs) {
+    // The route dialog belongs here, not to the chip: the chip's window leaves the composition while the camera moves.
+    var editingRoute by remember { mutableStateOf<String?>(null) }
+    val spec = specs.firstOrNull { it.id == locked }
+    if (spec != null && resting) {
+        val box = FrameRect(spec.x, spec.y, spec.cssWidth.toFloat(), spec.boxHeight.toFloat())
+        val placement = FrameGeometry.place(box, transform, density)
+        PinnedChromeWindow(placement.left.roundToInt() + CHIP_INSET_PX, placement.top.roundToInt() + CHIP_INSET_PX) {
             key(spec.id) {
-                val placement =
-                    FrameGeometry.place(
-                        FrameRect(spec.x, spec.y, spec.cssWidth.toFloat(), spec.boxHeight.toFloat()),
-                        transform,
-                        density,
-                    )
-                val state = FrameChipState.of(spec, ghosts[spec.id] ?: true)
-                FrameChip(
-                    spec = spec,
-                    state = state,
-                    layer = layer,
-                    actions = actions,
-                    modifier =
-                        Modifier.offset {
-                            IntOffset(
-                                placement.left.roundToInt() + CHIP_INSET_PX,
-                                placement.top.roundToInt() + CHIP_INSET_PX,
-                            )
-                        },
-                )
+                FrameChip(spec, FrameChipState.of(spec, ghosts[spec.id] ?: true), layer, actions, onEditRoute = {
+                    editingRoute = spec.id
+                })
             }
         }
+    }
+    specs.firstOrNull { it.id == editingRoute }?.let { editing ->
+        RouteDialog(
+            current = editing.route,
+            onDismiss = { editingRoute = null },
+            onOpen = { route ->
+                editingRoute = null
+                actions.onRoute(editing.id, route)
+            },
+        )
     }
 }
 
@@ -120,9 +128,9 @@ private fun FrameChip(
     state: FrameChipState,
     layer: FrameLayer,
     actions: FrameChipActions,
+    onEditRoute: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var editingRoute by remember { mutableStateOf(false) }
     Column(
         modifier
             .background(Color(CHIP_BACKGROUND), RoundedCornerShape(CHIP_RADIUS_DP.dp))
@@ -144,7 +152,7 @@ private fun FrameChip(
                 selected = false,
                 onClick = { layer.reload(spec.id) },
             )
-            ToolChip(label = spec.route, selected = false, onClick = { editingRoute = true })
+            ToolChip(label = spec.route, selected = false, onClick = onEditRoute)
             if (state.ghost) {
                 ToolChip(
                     label = stringResource(R.string.frame_ghost),
@@ -153,15 +161,5 @@ private fun FrameChip(
                 )
             }
         }
-    }
-    if (editingRoute) {
-        RouteDialog(
-            current = spec.route,
-            onDismiss = { editingRoute = false },
-            onOpen = { route ->
-                editingRoute = false
-                actions.onRoute(spec.id, route)
-            },
-        )
     }
 }

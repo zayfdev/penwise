@@ -32,7 +32,6 @@ import kotlinx.coroutines.flow.Flow
 private const val READOUT_SP = 11
 private const val READOUT_COLOR = 0xFF37474F
 private const val READOUT_MARGIN_DP = 12
-private const val SWITCHER_MARGIN_DP = 16
 
 /** What the frame stage shows and the calls that change it; one value so [FrameStage]'s signature stays short. */
 internal class FrameStageModel(
@@ -131,17 +130,18 @@ internal fun FrameStage(
         content(layer)
         FrameChips(
             specs = model.specs,
+            locked = locked,
             viewport = viewport,
             layer = layer,
             onPreset = model.actions.onPreset,
             onRoute = model.actions.onRoute,
         )
-        VariantSwitcher(
-            state = SwitcherState.of(model.specs, locked),
-            onSelect = layer::lockFrame,
-            onUseThis = model.actions.lock.onChoose,
-            modifier = Modifier.align(Alignment.BottomCenter).safeDrawingPadding().padding(SWITCHER_MARGIN_DP.dp),
-        )
+        // Its own window: the ink surface is above this one while frames exist (contract §3.5).
+        SwitcherState.of(model.specs, locked)?.let { switcher ->
+            ChromeWindow(ChromeCorner.BOTTOM_CENTER) {
+                VariantSwitcher(switcher, onSelect = layer::lockFrame, onUseThis = model.actions.lock.onChoose)
+            }
+        }
         FrameMarkChips(
             marks = model.marks,
             specs = model.specs,

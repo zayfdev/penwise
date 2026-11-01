@@ -14,6 +14,7 @@ import dev.penwise.frames.FrameSpec
 import dev.penwise.frames.MoveTarget
 import dev.penwise.frames.ProjectsClient
 import dev.penwise.frames.SceneMark
+import dev.penwise.overview.OverviewController
 import dev.penwise.sync.Ids
 import dev.penwise.sync.Kind
 import dev.penwise.sync.Outcome
@@ -215,13 +216,14 @@ class PageViewModel(
         viewModelScope.launch { agent.offer(target) }
     }
 
-    /**
-     * The overview (locked-frames contract §3.3) was asked for: a pinch out past the locked frame's fit scale, or an
-     * agent's `Focus` without an item. The overview itself is a later slice; this is its seam.
-     */
-    fun openOverview() {
-        Log.i(TAG, "overview requested")
-    }
+    /** The overview's state; [openOverview] and the overview button open it, the screen shows it. */
+    internal val overview =
+        OverviewController().also {
+            it.attachSketches(viewModelScope, { frameSession.server.value }) { engine?.core?.outbox()?.pending ?: 0 }
+        }
+
+    /** A pinch out past the locked frame's fit scale, the overview button, or an agent's `Focus` without an item. */
+    fun openOverview() = overview.request(shown, frameSession.specs.value, frameControl.layer?.lockedFrame)
 
     /** The owner double-tapped a frame: other devices may fit it too (only a server that speaks protocol 2). */
     fun frameFocused(frame: String) {

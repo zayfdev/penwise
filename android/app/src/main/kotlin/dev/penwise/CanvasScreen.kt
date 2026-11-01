@@ -10,8 +10,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.runtime.Composable
@@ -29,6 +27,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import dev.penwise.frames.AddFrameDialog
+import dev.penwise.frames.ChromeCorner
+import dev.penwise.frames.ChromeWindow
 import dev.penwise.frames.DesignProject
 import dev.penwise.frames.EdgeStrips
 import dev.penwise.frames.FrameOverlays
@@ -118,27 +118,26 @@ fun CanvasScreen(
         }
         FrameOverlays(overlay)
         GestureExclusionStrips()
-        Column(
-            modifier =
-                Modifier
-                    .align(Alignment.TopCenter)
-                    .safeDrawingPadding()
-                    .padding(CHROME_MARGIN_DP.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(CHROME_MARGIN_DP.dp),
-        ) {
-            MiniBar(
-                state = page.tools,
-                expanded = drawerOpen,
-                onToggle = { onDrawerOpenChange(!drawerOpen) },
-                onUndo = page::undo,
-                onRedo = page::redo,
-                syncStatus = syncStatus,
-                pending = pending,
-                onSync = onSync,
-            )
-            CanvasDrawer(pages, page, drawerOpen, showDone, actions)
+        // The toolbar is its own window: the ink surface is above this one while frames exist (contract §3.5).
+        ChromeWindow(ChromeCorner.TOP_CENTER) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(CHROME_MARGIN_DP.dp),
+            ) {
+                MiniBar(
+                    state = page.tools,
+                    expanded = drawerOpen,
+                    onToggle = { onDrawerOpenChange(!drawerOpen) },
+                    onUndo = page::undo,
+                    onRedo = page::redo,
+                    syncStatus = syncStatus,
+                    pending = pending,
+                    onSync = onSync,
+                )
+                CanvasDrawer(pages, page, drawerOpen, showDone, actions)
+            }
         }
+        OverviewHost(page, pages)
     }
     confirmClear?.let { forPage -> ClearPageDialog(forPage, open, page) { confirmClear = null } }
     if (showAddFrame) NewFrameDialog(projects, page, canvasSize) { showAddFrame = false }

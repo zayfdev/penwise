@@ -41,10 +41,17 @@ internal class FrameHttp(
     /** `POST` with an empty body. */
     fun post(path: String): Reply? = call("POST", path, null)
 
+    /** `PUT` of a JSON [body]. */
+    fun put(
+        path: String,
+        body: String,
+    ): Reply? = call("PUT", path, null, body.toByteArray(Charsets.UTF_8))
+
     private fun call(
         method: String,
         pathOrUrl: String,
         etag: String?,
+        body: ByteArray? = null,
     ): Reply? {
         val url = if (pathOrUrl.startsWith("http")) pathOrUrl else server.base.trimEnd('/') + pathOrUrl
         val connection = runCatching { URL(url).openConnection() as HttpURLConnection }.getOrNull() ?: return null
@@ -54,9 +61,13 @@ internal class FrameHttp(
             connection.readTimeout = timeoutMs
             if (server.token.isNotEmpty()) connection.setRequestProperty("X-Penwise-Token", server.token)
             if (etag != null) connection.setRequestProperty("If-None-Match", etag)
-            if (method == "POST") {
+            if (method == "POST" || body != null) {
                 connection.doOutput = true
-                connection.setFixedLengthStreamingMode(0)
+                connection.setFixedLengthStreamingMode(body?.size ?: 0)
+                if (body != null) {
+                    connection.setRequestProperty("Content-Type", "application/json")
+                    connection.outputStream.use { it.write(body) }
+                }
             }
             val code = connection.responseCode
             val stream = if (code in HTTP_OK_FIRST..HTTP_OK_LAST) connection.inputStream else connection.errorStream

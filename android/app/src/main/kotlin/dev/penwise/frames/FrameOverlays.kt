@@ -1,13 +1,8 @@
 package dev.penwise.frames
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.res.stringResource
@@ -15,7 +10,6 @@ import androidx.compose.ui.unit.dp
 import dev.penwise.R
 import dev.penwise.tools.ToolChip
 
-private const val MARGIN_DP = 12
 private const val GAP_DP = 8
 private const val DISABLED_ALPHA = 0.4f
 private const val DISMISS = "\u00D7"
@@ -34,8 +28,9 @@ internal class FrameOverlayModel(
 )
 
 /**
- * The chip area at the top edge of the stage (the UI design pass is deferred; this is the minimal, working form): the
- * Send button, which closes the open round (spec §4) and is disabled while offline, and the chip
+ * The chip area at the top-right of the screen, in its own window (the UI design pass is deferred; this is the
+ * minimal, working form): the Send button, which closes the open round (spec §4) and is disabled while offline,
+ * and the chip
  * "Agent: open <label> →" that does a camera move held back because the owner was drawing.
  */
 @Composable
@@ -43,9 +38,11 @@ internal fun FrameOverlays(
     model: FrameOverlayModel,
     modifier: Modifier = Modifier,
 ) {
-    Box(modifier.fillMaxSize().safeDrawingPadding().padding(MARGIN_DP.dp)) {
+    if (model.chip == null && !model.showSend) return
+    // Its own window: the ink surface is above the activity window while frames exist (contract §3.5).
+    ChromeWindow(ChromeCorner.TOP_END) {
         Row(
-            modifier = Modifier.align(Alignment.TopEnd),
+            modifier = modifier,
             horizontalArrangement = Arrangement.spacedBy(GAP_DP.dp),
         ) {
             model.chip?.let { target ->
