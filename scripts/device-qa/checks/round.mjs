@@ -1,12 +1,11 @@
 // Check 9 (round): tap Send on the tablet, look shows the round sent, resolve it, the next look shows the next round open.
 import * as adb from '../adb.mjs';
 import { drawStroke, roundState, scrollToTop } from '../gestures.mjs';
-import { mcpClient, openFrame } from '../session.mjs';
+import { findNode, mcpClient, openFrame } from '../session.mjs';
 import { ROUTE, openMain } from './open.mjs';
 
 async function tapSend() {
-  const nodes = await adb.uiNodes();
-  const send = nodes.find((n) => n.pkg === adb.PKG && (n.text === 'Send' || n.desc === 'Send'));
+  const send = await findNode((n) => n.text === 'Send' || n.desc === 'Send');
   if (!send) return false;
   await adb.tap(...adb.center(send));
   return true;
@@ -26,7 +25,7 @@ export default async function round(ctx) {
   const n = st.round;
   report.check(g, 'open round holds marks before Send', st.status === 'open' && st.marks >= 1, { measured: `round ${n} ${st.status}, ${st.marks} mark(s)`, threshold: 'open, >= 1' });
   const found = await tapSend();
-  report.check(g, 'Send button found by uiautomator', found, { measured: found ? 'found' : 'no node with text Send', threshold: 'present' });
+  report.check(g, 'Send button found (uiautomator --windows)', found, { measured: found ? 'found' : 'no node with text Send', threshold: 'present' });
   let after = st;
   for (let i = 0; i < 20; i++) {
     await adb.sleep(500);

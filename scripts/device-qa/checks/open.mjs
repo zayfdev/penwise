@@ -3,13 +3,13 @@ import * as adb from '../adb.mjs';
 import { sample } from '../cdp.mjs';
 import { scrollToTop, settle, shot } from '../gestures.mjs';
 import { docHeight } from '../server.mjs';
-import { openFrame } from '../session.mjs';
+import { measureScreen, openFrame } from '../session.mjs';
 
 export const ROUTE = '/sticky-header/';
 
 /** Opens the main frame and returns the sample; shared by later groups through ctx.frame. */
 export async function openMain(ctx) {
-  ctx.screen = await adb.screen();
+  ctx.screen = await measureScreen();
   ctx.frame = await openFrame(ROUTE);
   await scrollToTop(ctx, ROUTE);
   await settle(ROUTE);
@@ -22,9 +22,12 @@ export default async function open(ctx) {
   const s = await openMain(ctx);
   if (!s) return report.add(g, 'live page', 'fail', { measured: 'no live WebView page after 90 s', threshold: 'page attached' });
   await shot(ctx, 'open');
-  const { w, h } = ctx.screen;
+  const { width: w, height: h } = ctx.screen.pixels;
   const v = s.view;
-  report.check(g, 'WebView = screen size', v.width === w && v.height === h, { measured: `${v.width}x${v.height}`, threshold: `${w}x${h}` });
+  report.check(g, 'WebView = page pixels for the preset', v.width === w && v.height === h, {
+    measured: `${v.width}x${v.height}`,
+    threshold: `${w}x${h} (PagePixels: 1440x900 at density ${ctx.screen.density}, short side ${Math.min(ctx.screen.w, ctx.screen.h)}; live window ${ctx.screen.live.w}x${ctx.screen.live.h} of ${ctx.screen.w}x${ctx.screen.h})`,
+  });
   report.check(g, 'WebView screenY = 0', v.screenY === 0, { measured: v.screenY, threshold: '0' });
   report.check(g, 'innerWidth = 1440', s.innerWidth === 1440, { measured: s.innerWidth, threshold: '1440' });
   report.check(g, 'innerHeight = 900', s.innerHeight === 900, { measured: s.innerHeight, threshold: '900' });

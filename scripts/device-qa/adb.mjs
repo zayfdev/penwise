@@ -87,14 +87,31 @@ export const finger = (x1, y1, x2, y2, ms = 400) =>
 export const pen = (x1, y1, x2, y2, ms = 400) =>
   sh(`input stylus swipe ${r(x1)} ${r(y1)} ${r(x2)} ${r(y2)} ${r(ms)}`);
 
-/** `uiautomator dump` parsed to flat nodes {text, desc, id, bounds:[x1,y1,x2,y2], clickable}. */
+/**
+ * The UI of every window as flat nodes {text, desc, id, pkg, clickable, bounds:[x1,y1,x2,y2], window}. The toolbar,
+ * Send, the sync dot, the switcher and the overview button are separate popup windows, and a plain `uiautomator dump`
+ * only dumps the focused one, so this uses `uiautomator dump --windows` (Android 16 here) and falls back to the plain
+ * dump when that flag is refused. A node appears once per window listing it, so callers use find().
+ */
 export async function uiNodes() {
-  await sh('uiautomator dump /sdcard/penwise-qa-ui.xml');
-  const xml = await sh('cat /sdcard/penwise-qa-ui.xml');
+  let xml = '';
+  try {
+    await sh('uiautomator dump --windows /sdcard/penwise-qa-ui.xml');
+    xml = await sh('cat /sdcard/penwise-qa-ui.xml');
+  } catch {}
+  if (!xml.includes('<node ')) {
+    await sh('uiautomator dump /sdcard/penwise-qa-ui.xml');
+    xml = await sh('cat /sdcard/penwise-qa-ui.xml');
+  }
   const nodes = [];
-  for (const m of xml.matchAll(/<node ([^>]*?)\/?>/g)) {
-    const attr = (n) => new RegExp(`${n}="([^"]*)"`).exec(m[1])?.[1] ?? '';
+  let window = null;
+  for (const m of xml.matchAll(/<(window|node) ([^>]*?)\/?>/g)) {
+    const attr = (n) => new RegExp(`(?:^|\\s)${n}="([^"]*)"`).exec(m[2])?.[1] ?? '';
     const b = /\[(\d+),(\d+)\]\[(\d+),(\d+)\]/.exec(attr('bounds'));
+    if (m[1] === 'window') {
+      window = { title: attr('title'), bounds: b ? b.slice(1).map(Number) : null };
+      continue;
+    }
     if (!b) continue;
     nodes.push({
       text: attr('text'),
@@ -103,9 +120,17 @@ export async function uiNodes() {
       pkg: attr('package'),
       clickable: attr('clickable') === 'true',
       bounds: b.slice(1).map(Number),
+      window,
     });
   }
   return nodes;
+}
+
+/** The display density in dpi (the override when one is set), for computing the app's page pixels. */
+export async function density() {
+  const out = await sh('wm density');
+  const o = /Override density:\s*(\d+)/.exec(out) ?? /Physical density:\s*(\d+)/.exec(out);
+  return Number(o[1]);
 }
 
 export const center = (n) => [(n.bounds[0] + n.bounds[2]) / 2, (n.bounds[1] + n.bounds[3]) / 2];

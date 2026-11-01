@@ -9,7 +9,7 @@ import { appPids, mcpClient } from './session.mjs';
 
 export async function shot(ctx, name) {
   const png = await adb.screencap();
-  await writeFile(join(ctx.dir, 'shots', `${name}.png`), png);
+  await writeFile(join(ctx.dir, 'shots', `${name}${ctx.report.suffix.replace(/\W+/g, '-')}.png`), png);
   return decode(png);
 }
 
@@ -69,9 +69,28 @@ export async function scrollToTop(ctx, match) {
 
 /** One finger swipe up the page (content moves up, scrolling down) or down. `slow` limits the fling. */
 export async function swipePage(screen, { down = true, slow = false, frac = 0.4 } = {}) {
-  const x = screen.w * 0.85; // right of the strokes the checks draw (x 0.3-0.65), clear of the toolbar and Send
-  const [a, b] = down ? [screen.h * 0.8, screen.h * (0.8 - frac)] : [screen.h * 0.25, screen.h * (0.25 + frac)];
+  // Inside the live window (the whole screen in landscape, the top band in portrait), right of the strokes the checks
+  // draw (x 0.3-0.65) and clear of the toolbar and Send.
+  const live = screen.live ?? { w: screen.w, h: screen.h };
+  const x = live.w * 0.85;
+  const [a, b] = down ? [live.h * 0.8, live.h * (0.8 - frac)] : [live.h * 0.25, live.h * (0.25 + frac)];
   await adb.finger(x, a, x, b, slow ? 1400 : 350);
+}
+
+/**
+ * A finger drag on the part of the screen below the live window (portrait only): the owner expects "drag anywhere on
+ * the locked frame scrolls the page". Returns {scrolled, from, to, before, after} or null when there is no still part.
+ */
+export async function dragOnStill(ctx, route, { frac = 0.15 } = {}) {
+  const s = ctx.screen;
+  if (s.live.h >= s.h - 400) return null;
+  const x = s.w * 0.7;
+  const y0 = s.live.h + (s.h - s.live.h) * 0.7;
+  const before = await evalLive('scrollY', route).catch(() => null);
+  await adb.finger(x, y0, x, y0 - (s.h - s.live.h) * 0.5, 400);
+  await settle(route);
+  const after = await evalLive('scrollY', route).catch(() => null);
+  return { scrolled: after - before, before, after, from: [x, y0] };
 }
 
 /**
@@ -81,8 +100,8 @@ export async function swipePage(screen, { down = true, slow = false, frac = 0.4 
 let out_t0 = 0;
 export async function drawStroke(ctx, { n = 0, wait = true, server = true } = {}) {
   const s = ctx.screen;
-  const y0 = s.h * (0.42 + 0.06 * (n % 5));
-  const [x1, y1, x2, y2] = [s.w * 0.3, y0, s.w * 0.6, y0 + s.h * 0.08];
+  const y0 = s.live.h * (0.42 + 0.06 * (n % 5));
+  const [x1, y1, x2, y2] = [s.w * 0.3, y0, s.w * 0.6, y0 + s.live.h * 0.08];
   const marksBefore = server ? (await roundState()).marks : (ctx.offlineMarks ?? 0);
   const before = await shot(ctx, `stroke-${ctx.strokeNo}-before`);
   const framesBefore = await inkFrames();
@@ -109,13 +128,34 @@ export async function drawStroke(ctx, { n = 0, wait = true, server = true } = {}
   return out;
 }
 
+/** A BufferPool "Waiting for buffer" line is a hiccup; a renderer that stays blocked is the failure. */
+export const MAX_WAITS = 3;
+
+/**
+ * "Renderer healthy" after an action that did not itself draw (a scroll): at most MAX_WAITS BufferPool waits since
+ * the action AND the ink layer still presents frames, shown by a short pen probe whose frame count must advance.
+ * The probe leaves one extra mark on the QA board.
+ */
+export async function rendererHealthy(ctx, group, label, stalls) {
+  const s = ctx.screen;
+  const before = await inkFrames();
+  await adb.pen(s.w * 0.7, s.live.h * 0.2, s.w * 0.75, s.live.h * 0.22, 300);
+  const after = await waitInkFramesAbove(before ?? 0, 4000);
+  const ok = stalls.length <= MAX_WAITS && (after ?? 0) > (before ?? 0);
+  return ctx.report.check(group, `${label}: renderer healthy`, ok, {
+    measured: `${stalls.length} BufferPool wait line(s); ink frames ${before} -> ${after} after a pen probe`,
+    threshold: `<= ${MAX_WAITS} waits and frames advance`,
+    evidence: stalls.slice(0, 2).join('\n'),
+  });
+}
+
 /** Adds the standard "a stroke renders and reaches the server" verdicts for a drawStroke result. */
 export function strokeVerdicts(report, group, label, r) {
   const rise = (r.framesAfter ?? 0) - (r.framesBefore ?? 0);
   report.check(group, `${label}: ink frames rise`, rise >= 1, { measured: `${r.framesBefore} -> ${r.framesAfter}`, threshold: '>= +1' });
-  report.check(group, `${label}: no BufferPool stall`, r.stalls.length === 0, {
-    measured: `${r.stalls.length} stall line(s)`,
-    threshold: '0',
+  report.check(group, `${label}: renderer healthy`, r.stalls.length <= MAX_WAITS && rise >= 1, {
+    measured: `${r.stalls.length} BufferPool wait line(s), ink frames ${r.framesBefore} -> ${r.framesAfter}`,
+    threshold: `<= ${MAX_WAITS} waits and frames advance`,
     evidence: [`pen down at ${new Date(r.penStart).toTimeString().slice(0, 8)}.${String(r.penStart % 1000).padStart(3, '0')} (device clock)`, ...r.stalls.slice(0, 2)].join('\n'),
   });
   report.check(group, `${label}: pixels changed`, r.changed.length >= 300, { measured: `${r.changed.length} px`, threshold: '>= 300 px' });

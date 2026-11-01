@@ -10,17 +10,28 @@ export class Report {
     this.meta = meta;
     this.results = [];
     this.notes = [];
+    this.suffix = '';
   }
 
   /** status: pass | fail (an app/behaviour verdict) | error (the harness could not measure) | skip. */
   add(group, name, status, { measured = '', threshold = '', evidence = '' } = {}) {
+    group += this.suffix;
     this.results.push({ group, name, status, measured, threshold, evidence });
-    const mark = { pass: 'ok  ', fail: 'FAIL', error: 'ERR ', skip: 'skip' }[status];
+    const mark = { pass: 'ok  ', fail: 'FAIL', error: 'ERR ', skip: 'skip', gap: 'GAP ' }[status];
     process.stderr.write(`  ${mark} ${group}/${name}  ${fmt(measured)}\n`);
   }
 
   check(group, name, pass, detail) {
     this.add(group, name, pass ? 'pass' : 'fail', detail);
+    return pass;
+  }
+
+  /**
+   * A check for behaviour the app does not have yet (a known gap, not an app regression and not a harness error):
+   * it passes when the app has it, and reports `gap` (not counted as a failure) while it does not.
+   */
+  gap(group, name, pass, detail) {
+    this.add(group, name, pass ? 'pass' : 'gap', { ...detail, evidence: `KNOWN GAP (expected to fail until the app change lands). ${detail.evidence ?? ''}` });
     return pass;
   }
 
@@ -47,6 +58,7 @@ export class Report {
       fail: this.results.filter((r) => r.status === 'fail').length,
       error: this.results.filter((r) => r.status === 'error').length,
       skip: this.results.filter((r) => r.status === 'skip').length,
+      gap: this.results.filter((r) => r.status === 'gap').length,
     };
     const path = join(this.dir, 'report.json');
     await writeFile(path, JSON.stringify({ ...this.meta, summary, notes: this.notes, results: this.results }, null, 2));

@@ -2,9 +2,9 @@
 // infinite-feed is expected to switch to viewport mode (box = the preset viewport, 1440x900): asserted instead of
 // the document-length checks.
 import * as adb from '../adb.mjs';
-import { sample, waitForPage } from '../cdp.mjs';
+import { sample, targets } from '../cdp.mjs';
 import { frameBox, scrollToTop, settle, shot } from '../gestures.mjs';
-import { mcpClient, waitSynced } from '../session.mjs';
+import { mcpClient, waitLive, waitSynced } from '../session.mjs';
 import { openMain } from './open.mjs';
 import { scrollToBottom, scrollVerdicts } from './scroll.mjs';
 
@@ -15,7 +15,7 @@ async function focusFrame(route) {
   const shown = await client.call('show', { frame: { route } });
   if (shown.isError) throw new Error(`show ${route}: ${shown.text}`);
   await client.call('show', { focus: { frame: shown.json.frame } });
-  const page = await waitForPage(route, 60000);
+  const page = await waitLive(route, 60000);
   await waitSynced(10000);
   await adb.sleep(1500);
   return { id: shown.json.frame, page };
@@ -30,7 +30,14 @@ export default async function fixtures(ctx) {
     try {
       const f = await focusFrame(route);
       if (!f.page) {
-        report.check(g, 'live page', false, { measured: 'no live page in 60 s', threshold: 'attached' });
+        // Evidence for the app-or-harness question: every WebView the app lists, and what the screen shows.
+        const all = await targets();
+        await shot(ctx, `fixture-${name}-nolive`);
+        report.check(g, 'live page', false, {
+          measured: 'no live page in 60 s',
+          threshold: 'attached and visible',
+          evidence: `targets: ${JSON.stringify(all.map((t) => ({ url: t.url, attached: t.view.attached, visible: t.view.visible, screenY: t.view.screenY, empty: t.view.empty })))}; shot fixture-${name}-nolive.png`,
+        });
         continue;
       }
       await scrollToTop(ctx, route);
@@ -51,7 +58,7 @@ export default async function fixtures(ctx) {
       const endless = name === 'infinite-feed';
       const r = await scrollToBottom(ctx, route, endless ? 8 : 40);
       await shot(ctx, `fixture-${name}-bottom`);
-      scrollVerdicts(report, g, 'scroll', ctx, r, { endless });
+      await scrollVerdicts(report, g, 'scroll', ctx, r, { endless, topY: null });
       await scrollToTop(ctx, route);
     } catch (error) {
       report.add(g, 'harness', 'error', { measured: error.message, evidence: error.stack });

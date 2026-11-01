@@ -17,16 +17,23 @@ export async function glueMeasure(ctx, label) {
   await adb.sleep(1200);
   const s1 = await sample(ROUTE);
   const after = await shot(ctx, `glue-${label}-scrolled`);
-  const scale = s0.view.width / s0.innerWidth;
+  const scale = ctx.screen.live.w / s0.innerWidth; // screen px per css px (the view is drawn scaled to the screen width)
   const css = (s1?.scrollY ?? y1) - s0.scrollY;
   const expected = -css * scale;
   const strokeBox = stroke.box ?? [0, 0, 1, 1];
   const rect = [Math.round(strokeBox[0]) - 40, Math.round(strokeBox[1]) - 40, Math.round(strokeBox[2]) + 40, Math.round(strokeBox[3]) + 40];
   const points = stroke.dark.length ? stroke.dark : darkPixels(stroke.after, rect, 50);
-  const win = 150;
-  const found = findShift(after, points, Math.round(expected) - win, Math.round(expected) + win, 60);
-  const refRect = [60, 220, Math.round(ctx.screen.w * 0.2), ctx.screen.h - 60];
+  // Page content clear of the strokes and of the fixed popups (frame chip top left, toolbar top centre) that would
+  // pull the correlation toward a zero shift: the left band in landscape, the right band in portrait.
+  const portrait = ctx.screen.h > ctx.screen.w;
+  // Rows that stay clear of the page's fixed header (about 150 px) in both screenshots over the whole search window.
+  const top = Math.max(260, 150 - (Math.round(expected) - 60));
+  const bottom = ctx.screen.live.h - 60 - Math.max(0, Math.round(expected) + 60);
+  const refRect = [Math.round(ctx.screen.w * (portrait ? 0.72 : 0.04)), top, Math.round(ctx.screen.w * (portrait ? 0.9 : 0.2)), bottom];
   const pageShift = verticalShift(stroke.after, after, refRect, Math.round(expected) - 60, Math.round(expected) + 60);
+  // Strokes of earlier checks sit on the board at regular spacing (about 60 px), so the stroke is searched only within
+  // +-20 px of where the page itself moved: a stroke that stayed put or lagged by more than that is not found.
+  const found = findShift(after, points, pageShift.dy - 20, pageShift.dy + 20, 60);
   const diff = found.dy - pageShift.dy;
   ctx.report.check(g, `${label}: page scrolled`, Math.abs(css) >= 100, { measured: `${css.toFixed(1)} css px (${expected.toFixed(1)} screen px)`, threshold: '>= 100 css px' });
   ctx.report.check(g, `${label}: stroke found after scroll`, found.score >= 0.5, { measured: `${(found.score * 100).toFixed(0)}% of ${points.length} px`, threshold: '>= 50%' });

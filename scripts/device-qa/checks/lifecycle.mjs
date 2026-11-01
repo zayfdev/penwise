@@ -3,7 +3,7 @@
 import * as adb from '../adb.mjs';
 import { waitForPage } from '../cdp.mjs';
 import { drawStroke, roundState, scrollToTop, settle, strokeVerdicts } from '../gestures.mjs';
-import { notePid, openFrame, refocus } from '../session.mjs';
+import { measureScreen, notePid, openFrame, orientationName, refocus } from '../session.mjs';
 import { ROUTE, openMain } from './open.mjs';
 
 async function afterStep(ctx, label, expectMarks) {
@@ -30,15 +30,17 @@ export default async function lifecycle(ctx) {
   await notePid();
   marks = (await afterStep(ctx, 'home + relaunch', marks)) ?? marks;
 
-  await adb.setRotation(0);
+  const here = (await adb.screen()).rot % 2;
+  const other = 1 - here;
+  await adb.setRotation(other);
   await adb.sleep(3500);
-  const portrait = await adb.screen();
-  ctx.report.check('lifecycle', 'rotated to portrait', portrait.h > portrait.w, { measured: `${portrait.w}x${portrait.h}`, threshold: 'h > w' });
-  await adb.setRotation(1);
+  const turned = await adb.screen();
+  ctx.report.check('lifecycle', `rotated to ${orientationName(other)}`, (turned.rot % 2) === other, { measured: `${turned.w}x${turned.h}`, threshold: orientationName(other) });
+  await adb.setRotation(here);
   await adb.sleep(3500);
-  ctx.screen = await adb.screen();
+  ctx.screen = await measureScreen();
   await refocus(ctx.frame.frame, ROUTE);
-  marks = (await afterStep(ctx, 'rotate portrait and back', marks)) ?? marks;
+  marks = (await afterStep(ctx, 'rotate away and back', marks)) ?? marks;
 
   await adb.forceStop();
   await adb.sleep(1000);

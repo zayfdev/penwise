@@ -25,8 +25,8 @@ async function reading() {
 
 async function cycle(ctx, i) {
   const s = ctx.screen;
-  const y = s.h * (0.35 + 0.07 * (i % 6));
-  await adb.pen(s.w * 0.3, y, s.w * 0.6, y + s.h * 0.06, 500);
+  const y = s.live.h * (0.35 + 0.07 * (i % 6));
+  await adb.pen(s.w * 0.3, y, s.w * 0.6, y + s.live.h * 0.06, 500);
   await adb.sleep(300);
   await swipePage(s, { down: i % 8 < 5, frac: 0.35 });
   await adb.sleep(1800);
