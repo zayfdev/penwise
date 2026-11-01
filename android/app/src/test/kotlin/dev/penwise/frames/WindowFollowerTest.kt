@@ -15,6 +15,7 @@ class WindowFollowerTest {
         override val spec: FrameSpec,
     ) : FollowTarget {
         override val moves = true
+        override val pxPerCss = DENSITY
         override var cssX = 0f
         override var cssY = 0f
         override var needsAlign = false
@@ -46,7 +47,6 @@ class WindowFollowerTest {
     private val follower =
         WindowFollower(
             camera = { viewport },
-            density = { DENSITY },
             screenHeight = { 1600 },
             isLive = { true },
             penActive = { penActive },

@@ -9,7 +9,6 @@ internal class LayerPenHost(
     private val lookup: FrameLookup,
     private val stills: FrameStills,
     private val scene: () -> PageScene?,
-    override val density: Float,
 ) : PenHitHost {
     override fun liveAt(
         x: Float,

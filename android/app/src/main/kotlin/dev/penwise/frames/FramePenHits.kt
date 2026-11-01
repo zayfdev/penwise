@@ -41,8 +41,6 @@ internal interface PenHitHost {
         docY: Float,
         done: (HitAnswer?) -> Unit,
     )
-
-    val density: Float
 }
 
 /**
@@ -61,8 +59,8 @@ internal class FramePenHits(
         bindToElement: Boolean,
     ): PendingBinding? {
         host.liveAt(windowX, windowY)?.let { entry ->
-            val x = entry.placement.toCssX(windowX, host.density)
-            val y = entry.placement.toCssY(windowY, host.density)
+            val x = entry.placement.toCssX(windowX, entry.pxPerCss)
+            val y = entry.placement.toCssY(windowY, entry.pxPerCss)
             return binding(entry.spec, bindToElement, hits.ask(entry.view, x, y))
         }
         val spec = host.specAt(windowX, windowY) ?: return null

@@ -22,8 +22,6 @@ internal class LivePages(
     /** The page the owner works in. */
     val live: FrameEntry? get() = slots.live
 
-    private val density: Float get() = context.resources.displayMetrics.density
-
     fun entry(id: String): FrameEntry? = slots.entry(id)
 
     fun all(): List<FrameEntry> = slots.all()
@@ -41,7 +39,8 @@ internal class LivePages(
     ) {
         for (id in plan.close) close(id)
         for (spec in plan.load) entry(spec.id)?.let { PageOps.load(it, spec) }
-        for (spec in plan.resize) entry(spec.id)?.let { PageOps.resize(it, spec, density) }
+        val metrics = context.resources.displayMetrics
+        for (spec in plan.resize) entry(spec.id)?.let { PageOps.resize(it, spec, PagePixels.on(spec, metrics)) }
         for (spec in next) entry(spec.id)?.spec = spec
     }
 
@@ -69,8 +68,9 @@ internal class LivePages(
     }
 
     private fun open(spec: FrameSpec): FrameEntry {
-        val view = FrameViews.open(context, spec, density) { message -> sink(spec.id, message) }
-        val entry = FrameEntry(spec, view)
+        val pixels = PagePixels.on(spec, context.resources.displayMetrics)
+        val view = FrameViews.open(context, spec, pixels) { message -> sink(spec.id, message) }
+        val entry = FrameEntry(spec, view, pixels)
         view.onScroll = ScrollListener { x, y -> onScroll.scrolled(entry, x, y) }
         parent.addView(view)
         entry.needsAlign = true

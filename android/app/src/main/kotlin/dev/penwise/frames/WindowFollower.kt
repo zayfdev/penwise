@@ -31,6 +31,9 @@ internal interface FollowTarget {
     /** The frame's window moves with the page's scroll (a full-length frame). */
     val moves: Boolean
 
+    /** Device px per CSS px inside the page ([PagePixels.pxPerCss]): converts the WebView's scroll offsets. */
+    val pxPerCss: Float
+
     /** The page's scroll offset in CSS px, as of its last scroll event. */
     var cssX: Float
     var cssY: Float
@@ -56,7 +59,6 @@ internal interface FollowTarget {
  */
 internal class WindowFollower(
     private val camera: () -> ViewportState?,
-    private val density: () -> Float,
     private val screenHeight: () -> Int,
     private val isLive: (FollowTarget) -> Boolean,
     private val penActive: () -> Boolean,
@@ -89,8 +91,8 @@ internal class WindowFollower(
         left: Int,
         top: Int,
     ) {
-        val x = ScrollLink.cssOffset(left, density())
-        val y = ScrollLink.cssOffset(top, density())
+        val x = ScrollLink.cssOffset(left, target.pxPerCss)
+        val y = ScrollLink.cssOffset(top, target.pxPerCss)
         val dx = x - target.cssX
         val dy = y - target.cssY
         target.cssX = x
@@ -114,7 +116,7 @@ internal class WindowFollower(
     /** Scrolls [target]'s page so its window covers the visible part of its frame (clamped to the document). */
     fun align(target: FollowTarget) {
         val scrollTo = coverTarget(target) ?: return
-        target.scrollToDevicePx((scrollTo * density()).roundToInt())
+        target.scrollToDevicePx((scrollTo * target.pxPerCss).roundToInt())
         place()
     }
 

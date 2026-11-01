@@ -8,6 +8,7 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
+import androidx.core.view.doOnLayout
 import dev.penwise.BuildConfig
 
 /**
@@ -16,15 +17,16 @@ import dev.penwise.BuildConfig
  * messages to [sink] (the frame layer's delivery).
  */
 internal object FrameViews {
-    /** The page of [spec] at [density], already loading its URL. */
+    /** The page of [spec] at [pixels], already loading its URL. */
     @SuppressLint("SetJavaScriptEnabled")
     fun open(
         context: Context,
         spec: FrameSpec,
-        density: Float,
+        pixels: PagePixels,
         sink: (FrameMessage) -> Unit,
     ): FrameWebView {
         val view = FrameWebView(context)
+        view.viewportMeta = pixels.viewportMeta(spec.cssWidth)
         with(view.settings) {
             javaScriptEnabled = true
             domStorageEnabled = true
@@ -32,8 +34,8 @@ internal object FrameViews {
             setSupportZoom(false)
             builtInZoomControls = false
             displayZoomControls = false
-            // No useWideViewPort: the layout width is the view's width, so the page sees the preset as its viewport.
-            useWideViewPort = false
+            // The viewport <meta> decides the layout width: the bridge sets it to the preset under the view's zoom.
+            useWideViewPort = true
             loadWithOverviewMode = false
             mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
         }
@@ -43,13 +45,14 @@ internal object FrameViews {
         view.isVerticalScrollBarEnabled = false
         view.isHorizontalScrollBarEnabled = false
         view.webViewClient = WebViewClient()
-        view.addJavascriptInterface(FrameBridge(sink), FrameMessages.HOST)
-        view.layoutParams =
-            FrameLayout.LayoutParams((spec.cssWidth * density).toInt(), (spec.cssHeight * density).toInt())
+        view.addJavascriptInterface(FrameBridge(sink) { view.viewportMeta }, FrameMessages.HOST)
+        view.layoutParams = FrameLayout.LayoutParams(pixels.width, pixels.height)
         view.pivotX = 0f
         view.pivotY = 0f
         if (BuildConfig.DEBUG) WebView.setWebContentsDebuggingEnabled(true)
-        view.loadUrl(spec.url)
+        // Loading before the view has its size lays the page out at Chromium's 980 px default first; a page that
+        // sizes itself from its own scroll height (the portfolio's spine) then keeps the taller height for good.
+        view.doOnLayout { if (view.url == null) view.loadUrl(spec.url) }
         return view
     }
 }

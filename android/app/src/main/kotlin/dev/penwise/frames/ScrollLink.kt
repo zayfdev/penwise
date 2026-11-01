@@ -38,12 +38,11 @@ class WindowBase(
 
 /** The maths of the scroll link, apart from any view so it is tested without a WebView. */
 object ScrollLink {
-    /** A WebView's scroll offset in device px as CSS px (a WebView at 100 % page zoom: one CSS px is [density] px). */
+    /** A WebView's scroll offset in device px as CSS px; [pxPerCss] is the page's [PagePixels.pxPerCss]. */
     fun cssOffset(
         devicePx: Int,
-        density: Float,
-        pageZoom: Float = 1f,
-    ): Float = devicePx / (density * pageZoom)
+        pxPerCss: Float,
+    ): Float = devicePx / pxPerCss
 
     /**
      * The camera translation (screen px) along one axis that keeps the content under the finger when the page scrolled

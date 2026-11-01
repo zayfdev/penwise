@@ -8,6 +8,9 @@ internal object PageOps {
     /** Route reports right after a programmatic load describe the document being replaced. */
     private const val LOAD_QUIET_MS = 1_500L
 
+    /** Has the bridge re-read [FrameBridge.viewport] (a preset switch changed the zoom). */
+    private const val VIEWPORT_JS = "window.PenwiseBridge && PenwiseBridge.viewport && PenwiseBridge.viewport()"
+
     /**
      * Points [entry] at [spec]: a page that already shows the spec's route (the user clicked a link; the item follows)
      * adopts it without a reload, anything else (another project, another host, a route typed by the user) loads.
@@ -33,11 +36,13 @@ internal object PageOps {
     fun resize(
         entry: FrameEntry,
         spec: FrameSpec,
-        density: Float,
+        pixels: PagePixels,
     ) {
         entry.spec = spec
-        entry.view.layoutParams =
-            FrameLayout.LayoutParams((spec.cssWidth * density).toInt(), (spec.cssHeight * density).toInt())
+        entry.pixels = pixels
+        entry.view.viewportMeta = pixels.viewportMeta(spec.cssWidth)
+        entry.view.layoutParams = FrameLayout.LayoutParams(pixels.width, pixels.height)
+        entry.view.evaluateJavascript(VIEWPORT_JS, null)
     }
 
     /** Loads one frame's page again (the chip's reload); its scroll position comes back through the bridge. */

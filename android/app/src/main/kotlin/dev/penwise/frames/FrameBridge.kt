@@ -171,9 +171,14 @@ internal object FrameMessages {
  */
 internal class FrameBridge(
     private val sink: (FrameMessage) -> Unit,
+    private val meta: () -> String,
 ) {
     @JavascriptInterface
     fun post(json: String) {
         FrameMessages.parse(json)?.let(sink)
     }
+
+    /** The viewport `<meta>` content the bridge sets on the page: the preset width under the view's zoom. */
+    @JavascriptInterface
+    fun viewport(): String = meta()
 }

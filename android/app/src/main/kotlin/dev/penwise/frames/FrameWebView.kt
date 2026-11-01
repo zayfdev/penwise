@@ -13,6 +13,10 @@ internal class FrameWebView(
     /** Called with the new scroll offset (device px) from inside the WebView's own scroll handling. */
     var onScroll: ScrollListener? = null
 
+    /** The viewport `<meta>` the bridge gives the page ([PagePixels.viewportMeta]); read on the bridge's thread. */
+    @Volatile
+    var viewportMeta: String = ""
+
     override fun onScrollChanged(
         l: Int,
         t: Int,

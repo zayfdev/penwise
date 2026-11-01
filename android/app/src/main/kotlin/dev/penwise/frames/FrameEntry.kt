@@ -10,6 +10,8 @@ import androidx.core.view.isVisible
 internal class FrameEntry(
     override var spec: FrameSpec,
     val view: FrameWebView,
+    /** The view's device size and zoom for the spec (a preset switch replaces it). */
+    var pixels: PagePixels,
 ) : FollowTarget {
     var placement = FramePlacement(0f, 0f, 0f, 0f, 1f)
     var scroll = FrameScroll.NONE
@@ -43,6 +45,8 @@ internal class FrameEntry(
 
     /** The window should still be made to cover the visible part (a fresh or woken page that has not been aligned). */
     override var needsAlign = false
+
+    override val pxPerCss: Float get() = pixels.pxPerCss
 
     /** The core's box height: the frame's document, measured or hinted, never less than the preset. */
     override val documentHeight: Float get() = spec.boxHeight.toFloat()

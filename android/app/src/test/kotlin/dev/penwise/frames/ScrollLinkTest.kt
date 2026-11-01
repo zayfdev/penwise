@@ -11,7 +11,7 @@ class ScrollLinkTest {
     fun a_webview_scroll_in_device_px_is_css_px() {
         // 2.625 is the Tab S9's density class: 2625 device px are 1000 css px.
         assertEquals(1000f, ScrollLink.cssOffset(2625, 2.625f), 1e-3f)
-        assertEquals(500f, ScrollLink.cssOffset(2625, 2.625f, pageZoom = 2f), 1e-3f)
+        assertEquals(500f, ScrollLink.cssOffset(2625, 2.625f * 2f), 1e-3f)
     }
 
     private fun frame(
