@@ -71,17 +71,33 @@ internal object StripPagesClient {
     }
 }
 
-/** `GET /projects/{p}/rounds`: the round Send would close next. */
+/** The round the "now" column's marks belong to: [n], and whether it was already sent (not yet resolved). */
+internal data class NowRound(
+    val n: Int,
+    val sent: Boolean = false,
+)
+
+/**
+ * `GET /projects/{p}/rounds`: `{"rounds":[{"n","status","marks",...}]}`, every stored round plus, after a Send, the
+ * next open round with no row and no marks.
+ */
 internal object OpenRoundJson {
-    /** The number of the round whose status is `open`; null when the reply names none. */
-    fun parse(json: String): Int? =
+    /**
+     * The round the "now" column's marks belong to: the open round when it holds marks; else the latest sent (not
+     * yet resolved) round; else the open round. Null when the reply names none.
+     */
+    fun parse(json: String): NowRound? =
         try {
-            val rounds = JSONObject(json).optJSONArray("rounds")
-            (0 until (rounds?.length() ?: 0))
-                .mapNotNull { rounds?.optJSONObject(it) }
-                .lastOrNull { it.optString("status") == "open" }
-                ?.optInt("n")
-                ?.takeIf { it > 0 }
+            val array = JSONObject(json).optJSONArray("rounds")
+            val rounds = (0 until (array?.length() ?: 0)).mapNotNull { array?.optJSONObject(it) }
+            val open = rounds.lastOrNull { it.optString("status") == "open" }
+            val sent = rounds.lastOrNull { it.optString("status") == "sent" }
+            when {
+                open != null && open.optInt("marks") > 0 -> NowRound(open.optInt("n"))
+                sent != null -> NowRound(sent.optInt("n"), sent = true)
+                open != null -> NowRound(open.optInt("n"))
+                else -> null
+            }?.takeIf { it.n > 0 }
         } catch (ignored: JSONException) {
             null
         }
@@ -89,7 +105,7 @@ internal object OpenRoundJson {
     fun fetch(
         server: FrameServer,
         project: String,
-    ): Int? {
+    ): NowRound? {
         val reply = FrameHttp(server).get("/projects/${encode(project)}/rounds")?.takeIf { it.ok } ?: return null
         return parse(reply.body.decodeToString())
     }
@@ -100,7 +116,7 @@ internal data class OverviewRemote(
     val history: Map<LaneKey, List<Generation>> = emptyMap(),
     val stripPages: Map<LaneKey, List<StripPage>> = emptyMap(),
     /** Project to the round that is open now. */
-    val openRounds: Map<String, Int> = emptyMap(),
+    val openRounds: Map<String, NowRound> = emptyMap(),
 ) {
     companion object {
         /** Fetches [lanes]' history and their projects' strip pages and open round; what fails is left out. */

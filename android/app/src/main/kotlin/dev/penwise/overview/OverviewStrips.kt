@@ -23,6 +23,8 @@ internal sealed interface OverviewColumn {
         val variants: List<FrameSpec>,
         /** The round the frames are in: the project's open round on the server. */
         val round: Int,
+        /** That round was sent and not resolved yet: the marks on these frames belong to it. */
+        val sent: Boolean = false,
     ) : OverviewColumn {
         override val key: String get() = NOW_KEY
     }
@@ -68,7 +70,7 @@ internal object OverviewStrips {
         specs: List<FrameSpec>,
         history: Map<LaneKey, List<Generation>>,
         stripPages: Map<LaneKey, List<StripPage>>,
-        openRounds: Map<String, Int> = emptyMap(),
+        openRounds: Map<String, NowRound> = emptyMap(),
         pageTitle: (String) -> String?,
     ): List<OverviewStrip> =
         lives(specs).map { live ->
@@ -78,8 +80,9 @@ internal object OverviewStrips {
                 stripPages[lane].orEmpty().mapNotNull { attached ->
                     pageTitle(attached.page)?.let { OverviewColumn.Sketch(attached.page, it) }
                 }
-            val round = openRounds[lane.project] ?: ((past.lastOrNull()?.round ?: 0) + 1)
-            val now = OverviewColumn.Now(live, FrameLane.variants(specs, lane), round)
+            val open = openRounds[lane.project]
+            val round = open?.n ?: ((past.lastOrNull()?.round ?: 0) + 1)
+            val now = OverviewColumn.Now(live, FrameLane.variants(specs, lane), round, open?.sent == true)
             OverviewStrip(
                 lane = lane,
                 title = title(lane),

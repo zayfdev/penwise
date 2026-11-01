@@ -15,6 +15,7 @@ class SyncEngine(
     token: () -> String,
     listener: SyncListener,
     clock: () -> Long = System::currentTimeMillis,
+    network: NetworkSource? = null,
 ) : AutoCloseable {
     private val stateDir = File(filesDir, "sync")
     private val stateFile = SyncStateFile(stateDir)
@@ -33,13 +34,19 @@ class SyncEngine(
             core,
             endpoints,
             token,
-            object : SyncListener by listener {
-                override fun onStatus(status: SyncStatus) {
-                    if (status == SyncStatus.ONLINE) announce.resend(::send)
-                    listener.onStatus(status)
-                }
-            },
+            clock = clock,
+            activeNetwork = { network?.active() },
+            listener =
+                object : SyncListener by listener {
+                    override fun onStatus(status: SyncStatus) {
+                        if (status == SyncStatus.ONLINE) announce.resend(::send)
+                        listener.onStatus(status)
+                    }
+                },
         )
+
+    /** Reconnects at once when the network returns; closed with the engine. */
+    private val networkWatch: AutoCloseable? = network?.watch(connection::networkValidated)
 
     init {
         core.onMutated = {
@@ -88,6 +95,7 @@ class SyncEngine(
 
     /** Persists the outbox, stops the socket and frees the core. Scenes opened on it must be closed first. */
     override fun close() {
+        networkWatch?.close()
         connection.stop()
         persister.close()
         core.close()

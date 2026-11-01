@@ -24,7 +24,7 @@ class OverviewStripsTest {
         history: Map<LaneKey, List<Generation>> = emptyMap(),
         pages: Map<LaneKey, List<StripPage>> = emptyMap(),
         titles: Map<String, String> = emptyMap(),
-        rounds: Map<String, Int> = emptyMap(),
+        rounds: Map<String, NowRound> = emptyMap(),
     ) = OverviewStrips.of(specs, history, pages, rounds) { titles[it] }
 
     @Test

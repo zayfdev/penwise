@@ -71,12 +71,15 @@ internal class OverviewImages(
     suspend fun preload(
         image: CardImage,
         timeoutMs: Long,
-    ): Bitmap? = CardLoading.within(background, timeoutMs, { peek(image) }) { card(image) }
+    ): Bitmap? = CardLoading.within(background, timeoutMs, { peek(image) }) { card(image, PRELOAD_TRIES) }
 
     /** The bitmap of a card, or null while the server is away (or for a placeholder). */
-    suspend fun card(image: CardImage): Bitmap? =
+    suspend fun card(
+        image: CardImage,
+        tries: Int = STILL_TRIES,
+    ): Bitmap? =
         when (image) {
-            is CardImage.Still -> still(image.frameId)
+            is CardImage.Still -> still(image.frameId, tries)
             is CardImage.Asset -> asset(image.asset, CARD_WIDTH, cards, MAX_SIDE, Long.MAX_VALUE)
             is CardImage.Placeholder -> null
         }
@@ -87,16 +90,29 @@ internal class OverviewImages(
         widthPx: Int,
     ): Bitmap? = asset(asset, widthPx, viewer, VIEWER_MAX_SIDE, VIEWER_MAX_PIXELS)
 
-    private suspend fun still(frameId: String): Bitmap? =
-        withContext(Dispatchers.IO) {
-            val server = server() ?: return@withContext null
-            val client = StillClient(server)
-            val manifest = (client.manifest(frameId, null) as? StillReply.Fresh)?.manifest
-            val strip = manifest?.strips?.firstOrNull() ?: return@withContext null
-            val url = strip.url + (if ('?' in strip.url) "&" else "?") + "w=$CARD_WIDTH"
-            stillKeys[frameId] = url
-            cached(cards, url, Decode(CARD_WIDTH, MAX_SIDE, Long.MAX_VALUE)) { client.strip(url) }
+    private suspend fun still(
+        frameId: String,
+        tries: Int,
+    ): Bitmap? =
+        CardLoading.untilReady(tries) {
+            withContext(Dispatchers.IO) { stillOnce(frameId) }
         }
+
+    private fun stillOnce(frameId: String): CardLoading.Attempt<Bitmap> {
+        val server = server() ?: return CardLoading.Attempt.Failed
+        val client = StillClient(server)
+        val manifest =
+            when (val reply = client.manifest(frameId, null)) {
+                is StillReply.Busy -> return CardLoading.Attempt.Busy(reply.retryAfterMs)
+                is StillReply.Fresh -> reply.manifest
+                else -> null
+            }
+        val strip = manifest?.strips?.firstOrNull() ?: return CardLoading.Attempt.Failed
+        val url = strip.url + (if ('?' in strip.url) "&" else "?") + "w=$CARD_WIDTH"
+        stillKeys[frameId] = url
+        val bitmap = cached(cards, url, Decode(CARD_WIDTH, MAX_SIDE, Long.MAX_VALUE)) { client.strip(url) }
+        return bitmap?.let { CardLoading.Attempt.Ready(it) } ?: CardLoading.Attempt.Failed
+    }
 
     private suspend fun asset(
         asset: String,
@@ -159,6 +175,12 @@ internal class OverviewImages(
     private companion object {
         /** The strip width the server shrinks a card's still to. */
         const val CARD_WIDTH = 360
+
+        /** A still the server is capturing is asked for again after its `Retry-After`, this many times at most. */
+        const val STILL_TRIES = 6
+
+        /** The preload runs detached from the overview, so it asks once; the cards' own loads do the retrying. */
+        const val PRELOAD_TRIES = 1
         const val MAX_SIDE = 4096
         const val CARD_CACHE_BYTES = 48 * 1024 * 1024
 

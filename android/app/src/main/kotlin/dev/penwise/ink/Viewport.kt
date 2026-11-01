@@ -127,7 +127,15 @@ class ViewportState {
         val screen = CameraScreen(viewWidth, viewHeight, minScale, MAX_SCALE)
         val wanted = CameraFit.target(rect, mode, screen, transform)
         // A locked camera never lands outside its box, whatever it was asked to show.
-        val target = if (lock == null) wanted else clamped(wanted)
+        flyTo(if (lock == null) wanted else clamped(wanted), durationMs)
+    }
+
+    /** Flies (or, without a driver, jumps) the camera to [target] in [durationMs]. */
+    internal fun flyTo(
+        target: ViewTransform,
+        durationMs: Long = CameraTween.DURATION_MS,
+    ) {
+        if (viewWidth <= 0f || viewHeight <= 0f) return
         flight.cancel()
         fitted = false
         val driver = driver

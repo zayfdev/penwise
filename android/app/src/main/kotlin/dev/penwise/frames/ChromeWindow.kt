@@ -3,7 +3,11 @@ package dev.penwise.frames
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.IntOffset
@@ -59,6 +63,27 @@ internal object ChromePlacement {
     }
 
     /**
+     * [spot] moved below [avoid] (another chrome window's rect) when the [popup] placed there would overlap it, so the
+     * frame chip and the toolbar never cover each other: side by side when the screen is wide enough, stacked when not.
+     */
+    fun clearOf(
+        spot: ChromeSpot,
+        popup: IntSize,
+        avoid: IntRect?,
+        margin: Int,
+        window: IntSize,
+        insets: ChromeInsets,
+    ): ChromeSpot {
+        if (avoid == null) return spot
+        val overlaps =
+            spot.x < avoid.right + margin && spot.x + popup.width + margin > avoid.left &&
+                spot.y < avoid.bottom + margin && spot.y + popup.height + margin > avoid.top
+        if (!overlaps) return spot
+        val maxY = (window.height - insets.bottom - margin - popup.height).coerceAtLeast(insets.top + margin)
+        return ChromeSpot(spot.x, (avoid.bottom + margin).coerceAtMost(maxY))
+    }
+
+    /**
      * A window that follows a point ([x], [y] px) but never leaves the safe area: the frame chip sits at its frame's
      * top-left corner and slides to the screen's edge when the frame's corner is scrolled out of view.
      */
@@ -93,6 +118,7 @@ private val ChromeProperties =
 @Composable
 internal fun ChromeWindow(
     corner: ChromeCorner,
+    report: ((IntRect) -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
     val insets = rememberChromeInsets()
@@ -107,6 +133,7 @@ internal fun ChromeWindow(
                     popupContentSize: IntSize,
                 ): IntOffset {
                     val spot = ChromePlacement.corner(corner, windowSize, popupContentSize, margin, insets)
+                    report?.invoke(IntRect(IntOffset(spot.x, spot.y), popupContentSize))
                     return IntOffset(spot.x, spot.y)
                 }
             }
@@ -119,12 +146,13 @@ internal fun ChromeWindow(
 internal fun PinnedChromeWindow(
     x: Int,
     y: Int,
+    avoid: IntRect? = null,
     content: @Composable () -> Unit,
 ) {
     val insets = rememberChromeInsets()
     val margin = with(LocalDensity.current) { MARGIN_DP.dp.roundToPx() }
     val provider =
-        remember(x, y, insets, margin) {
+        remember(x, y, avoid, insets, margin) {
             object : PopupPositionProvider {
                 override fun calculatePosition(
                     anchorBounds: IntRect,
@@ -132,7 +160,9 @@ internal fun PinnedChromeWindow(
                     layoutDirection: LayoutDirection,
                     popupContentSize: IntSize,
                 ): IntOffset {
-                    val spot = ChromePlacement.pinned(x, y, windowSize, popupContentSize, margin, insets)
+                    val pinned = ChromePlacement.pinned(x, y, windowSize, popupContentSize, margin, insets)
+                    val spot =
+                        ChromePlacement.clearOf(pinned, popupContentSize, avoid, margin, windowSize, insets)
                     return IntOffset(spot.x, spot.y)
                 }
             }
@@ -152,3 +182,12 @@ private fun rememberChromeInsets(): ChromeInsets {
         safe.getBottom(density),
     )
 }
+
+/** Where the toolbar window sits, so the frame chip can keep clear of it. */
+internal class ChromeAvoid {
+    var toolbar: IntRect? by mutableStateOf(null)
+}
+
+private val sharedAvoid = ChromeAvoid()
+
+internal val LocalChromeAvoid = compositionLocalOf { sharedAvoid }

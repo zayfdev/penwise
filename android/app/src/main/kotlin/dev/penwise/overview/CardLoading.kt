@@ -2,6 +2,7 @@ package dev.penwise.overview
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
 
 /** How a card's picture gets on screen. Pure of Android, so the order and the time limit are unit-tested. */
@@ -33,5 +34,37 @@ internal object CardLoading {
     ): T? {
         val job = scope.async { fetch() }
         return withTimeoutOrNull(timeoutMs) { job.await() } ?: fallback()
+    }
+
+    /** One try at a picture: ready, being made by the server (ask again after [Busy.retryAfterMs]), or not there. */
+    sealed interface Attempt<out T> {
+        data class Ready<T>(
+            val value: T,
+        ) : Attempt<T>
+
+        data class Busy(
+            val retryAfterMs: Long,
+        ) : Attempt<Nothing>
+
+        data object Failed : Attempt<Nothing>
+    }
+
+    /**
+     * Tries [attempt] up to [maxTries] times, waiting the server's `Retry-After` between tries while it says busy; a
+     * failure ends it. Cancelling the caller (the card leaving the screen) ends the wait.
+     */
+    suspend fun <T : Any> untilReady(
+        maxTries: Int,
+        wait: suspend (Long) -> Unit = { delay(it) },
+        attempt: suspend () -> Attempt<T>,
+    ): T? {
+        repeat(maxTries) { n ->
+            when (val result = attempt()) {
+                is Attempt.Ready -> return result.value
+                is Attempt.Failed -> return null
+                is Attempt.Busy -> if (n < maxTries - 1) wait(result.retryAfterMs)
+            }
+        }
+        return null
     }
 }

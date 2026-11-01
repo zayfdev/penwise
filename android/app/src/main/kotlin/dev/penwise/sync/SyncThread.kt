@@ -29,12 +29,18 @@ internal class SyncThread {
         }
     }
 
-    /** Runs [task] after [delay] [unit]; the future cancels it. */
+    /** Runs [task] after [delay] [unit]; the future cancels it. Null (and dropped) after [shutdown]. */
     fun later(
         delay: Long,
         unit: TimeUnit,
         task: () -> Unit,
-    ): ScheduledFuture<*> = executor.schedule({ guard(task) }, delay, unit)
+    ): ScheduledFuture<*>? =
+        try {
+            executor.schedule({ guard(task) }, delay, unit)
+        } catch (_: RejectedExecutionException) {
+            Log.d(TAG, "sync stopped; a late timer was dropped")
+            null
+        }
 
     fun shutdown() {
         executor.shutdown()
@@ -89,7 +95,7 @@ internal class Backoff {
     fun schedule(
         thread: SyncThread,
         reconnect: () -> Unit,
-    ): ScheduledFuture<*> {
+    ): ScheduledFuture<*>? {
         val delay = BACKOFF_SECONDS[minOf(attempt, BACKOFF_SECONDS.lastIndex)]
         attempt++
         // A drop right after a good connection retries the same endpoint once; failures rotate.

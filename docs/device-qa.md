@@ -25,9 +25,8 @@ Groups: `open scroll ink glue lifecycle network reload fixtures round memory`. T
   to the sequence number of its creation (`target/device-qa/board-base-seq.json`), which removes earlier marks and
   frames through ordinary compensating ops, so repeated runs start clean.
 - The harness uses the pen for strokes and the finger for scrolling, and never scrolls the page from page JS to
-  navigate: by design (`ScrollOwner.kt`, contract section 1) a scroll the finger did not make moves only the live
-  window, not the camera, so afterwards the WebView sits off-screen over the board and finger swipes pan the camera
-  instead of scrolling the page. No browser is opened. The network group restarts the user service
+  navigate (a frame is locked, so the camera follows page-initiated scrolls too, contract section 3.1; the harness
+  still drives scrolling by finger so its numbers measure the finger path). No browser is opened. The network group restarts the user service
   `penwise` once.
 
 ## Reading the report

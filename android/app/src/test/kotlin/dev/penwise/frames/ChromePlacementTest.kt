@@ -1,5 +1,6 @@
 package dev.penwise.frames
 
+import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -39,5 +40,35 @@ class ChromePlacementTest {
     fun a_window_bigger_than_the_screen_sticks_to_the_start() {
         val huge = IntSize(3000, 100)
         assertEquals(ChromeSpot(12, 300), ChromePlacement.pinned(700, 300, window, huge, 12, insets))
+    }
+
+    private val chip = IntSize(1000, 90)
+
+    @Test
+    fun in_portrait_the_chip_drops_below_the_toolbar_it_would_cover() {
+        val screen = IntSize(1600, 2560)
+        val toolbar = IntRect(500, 52, 1100, 160)
+        val pinned = ChromePlacement.pinned(20, 60, screen, chip, 12, insets)
+        val spot = ChromePlacement.clearOf(pinned, chip, toolbar, 12, screen, insets)
+        assertEquals(ChromeSpot(pinned.x, 172), spot)
+    }
+
+    @Test
+    fun in_landscape_the_chip_stays_beside_the_toolbar_when_it_fits() {
+        val screen = IntSize(2560, 1600)
+        val toolbar = IntRect(980, 52, 1580, 160)
+        val narrow = IntSize(800, 90)
+        val pinned = ChromePlacement.pinned(20, 60, screen, narrow, 12, insets)
+        assertEquals(pinned, ChromePlacement.clearOf(pinned, narrow, toolbar, 12, screen, insets))
+        val wide = ChromePlacement.pinned(20, 60, screen, chip, 12, insets)
+        val moved = ChromePlacement.clearOf(wide, chip, toolbar, 12, screen, insets)
+        assertEquals(172, moved.y)
+    }
+
+    @Test
+    fun a_chip_far_below_the_toolbar_is_left_alone() {
+        val screen = IntSize(1600, 2560)
+        val spot = ChromeSpot(20, 900)
+        assertEquals(spot, ChromePlacement.clearOf(spot, chip, IntRect(500, 52, 1100, 160), 12, screen, insets))
     }
 }

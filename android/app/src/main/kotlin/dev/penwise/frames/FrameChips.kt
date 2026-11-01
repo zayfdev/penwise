@@ -101,7 +101,9 @@ internal fun FrameChips(
     if (spec != null && resting) {
         val box = FrameRect(spec.x, spec.y, spec.cssWidth.toFloat(), spec.boxHeight.toFloat())
         val placement = FrameGeometry.place(box, transform, density)
-        PinnedChromeWindow(placement.left.roundToInt() + CHIP_INSET_PX, placement.top.roundToInt() + CHIP_INSET_PX) {
+        val x = placement.left.roundToInt() + CHIP_INSET_PX
+        val y = placement.top.roundToInt() + CHIP_INSET_PX
+        PinnedChromeWindow(x, y, LocalChromeAvoid.current.toolbar) {
             key(spec.id) {
                 FrameChip(spec, FrameChipState.of(spec, ghosts[spec.id] ?: true), layer, actions, onEditRoute = {
                     editingRoute = spec.id

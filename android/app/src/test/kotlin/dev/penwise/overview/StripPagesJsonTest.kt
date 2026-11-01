@@ -40,10 +40,24 @@ class StripPagesJsonTest {
     }
 
     @Test
-    fun the_open_round_is_the_one_with_status_open() {
-        val json = """{"rounds":[{"n":3,"status":"resolved"},{"n":4,"status":"sent"},{"n":5,"status":"open"}]}"""
-        assertEquals(5, OpenRoundJson.parse(json))
-        assertNull(OpenRoundJson.parse("""{"rounds":[{"n":3,"status":"resolved"}]}"""))
+    fun the_open_round_with_marks_is_the_now_round() {
+        val json = """{"rounds":[{"n":1,"status":"sent","marks":1},{"n":2,"status":"open","marks":3}]}"""
+        assertEquals(NowRound(2, sent = false), OpenRoundJson.parse(json))
+    }
+
+    @Test
+    fun an_empty_open_round_after_a_send_leaves_the_now_column_on_the_sent_round() {
+        val json =
+            """{"rounds":[{"n":5,"status":"resolved","marks":2},{"n":6,"status":"sent","marks":3},""" +
+                """{"n":7,"status":"open","marks":0}]}"""
+        assertEquals(NowRound(6, sent = true), OpenRoundJson.parse(json))
+    }
+
+    @Test
+    fun with_nothing_sent_an_empty_open_round_is_the_now_round() {
+        val json = """{"rounds":[{"n":3,"status":"resolved","marks":1},{"n":4,"status":"open","marks":0}]}"""
+        assertEquals(NowRound(4), OpenRoundJson.parse(json))
+        assertNull(OpenRoundJson.parse("""{"rounds":[{"n":3,"status":"resolved","marks":1}]}"""))
         assertNull(OpenRoundJson.parse("nope"))
     }
 }

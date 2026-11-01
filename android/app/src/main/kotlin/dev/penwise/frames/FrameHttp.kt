@@ -61,13 +61,11 @@ internal class FrameHttp(
             connection.readTimeout = timeoutMs
             if (server.token.isNotEmpty()) connection.setRequestProperty("X-Penwise-Token", server.token)
             if (etag != null) connection.setRequestProperty("If-None-Match", etag)
-            if (method == "POST" || body != null) {
+            RequestShape.of(method, body)?.let { shape ->
                 connection.doOutput = true
-                connection.setFixedLengthStreamingMode(body?.size ?: 0)
-                if (body != null) {
-                    connection.setRequestProperty("Content-Type", "application/json")
-                    connection.outputStream.use { it.write(body) }
-                }
+                connection.setRequestProperty("Content-Type", shape.contentType)
+                connection.setFixedLengthStreamingMode(shape.body.size)
+                connection.outputStream.use { it.write(shape.body) }
             }
             val code = connection.responseCode
             val stream = if (code in HTTP_OK_FIRST..HTTP_OK_LAST) connection.inputStream else connection.errorStream

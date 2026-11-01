@@ -34,6 +34,7 @@ import dev.penwise.frames.EdgeStrips
 import dev.penwise.frames.FrameOverlays
 import dev.penwise.frames.FramePreset
 import dev.penwise.frames.FrameStage
+import dev.penwise.frames.LocalChromeAvoid
 import dev.penwise.frames.MarksGuide
 import dev.penwise.ink.InkCanvas
 import dev.penwise.ink.PageList
@@ -119,7 +120,8 @@ fun CanvasScreen(
         FrameOverlays(overlay)
         GestureExclusionStrips()
         // The toolbar is its own window: the ink surface is above this one while frames exist (contract §3.5).
-        ChromeWindow(ChromeCorner.TOP_CENTER) {
+        val avoid = LocalChromeAvoid.current
+        ChromeWindow(ChromeCorner.TOP_CENTER, report = { if (avoid.toolbar != it) avoid.toolbar = it }) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(CHROME_MARGIN_DP.dp),

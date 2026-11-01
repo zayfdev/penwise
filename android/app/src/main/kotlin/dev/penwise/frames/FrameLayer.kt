@@ -73,7 +73,7 @@ internal class FrameLayer(
     private val gestures = FrameGestures(touch, ViewConfiguration.get(context).scaledTouchSlop.toFloat())
     private val penHits = FramePenHits(LayerPenHost(lookup, stills, { scene }))
     private val pages: LivePages =
-        LivePages(this, context, ::deliver, { entry, x, y -> follower.onScroll(entry, x, y) }) { gestures.release(it) }
+        LivePages(this, context, ::deliver, { entry, x, y -> onPageScroll(entry, x, y) }) { gestures.release(it) }
     private val lock = LayerLock({ viewport }, { specs }, ::applyFocus, callbacks::lockChanged)
     private val edges =
         EdgeSwipeRouter(
@@ -288,6 +288,16 @@ internal class FrameLayer(
         entry.view.scaleY = placement.scale
     }
 
+    private fun onPageScroll(
+        entry: FrameEntry,
+        x: Int,
+        y: Int,
+    ) {
+        follower.onScroll(entry, x, y)
+        // Scroll the camera skipped under the pen is paid back from the settle step once the pen is up.
+        if (follower.owes) scheduleSettle()
+    }
+
     private fun scheduleSettle() {
         removeCallbacks(settle)
         postDelayed(settle, SETTLE_MS)
@@ -302,6 +312,11 @@ internal class FrameLayer(
         }
         if (lock.settle()) {
             scheduleSettle()
+            return
+        }
+        if (follower.catchUp()) {
+            scheduleSettle()
+            stills.refresh()
             return
         }
         pages.live?.let(follower::align)

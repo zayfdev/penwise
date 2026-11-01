@@ -14,7 +14,7 @@ class BackoffTest {
     fun stop() = thread.shutdown()
 
     private fun fail() {
-        backoff.schedule(thread) {}.cancel(false)
+        backoff.schedule(thread) {}?.cancel(false)
     }
 
     @Test

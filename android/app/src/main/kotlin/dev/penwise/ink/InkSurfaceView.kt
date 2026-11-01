@@ -3,6 +3,7 @@ package dev.penwise.ink
 import android.content.Context
 import android.graphics.PixelFormat
 import android.util.AttributeSet
+import android.view.Choreographer
 import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.PointerIcon
@@ -307,7 +308,13 @@ class InkSurfaceView
             scene?.undo()
         }
 
-        private fun redrawPage() = redraws.request()
+        // Redraw requests go to the display's pace first (one per frame), then through the in-flight gate.
+        // The UI thread's choreographer, taken at construction: `Choreographer.getInstance()` throws on a thread
+        // without a looper, and scene changes arrive from the sync and worker threads.
+        private val choreographer = Choreographer.getInstance()
+        private val pacer = RedrawPacer({ frame -> choreographer.postFrameCallback { frame() } }, redraws::request)
+
+        private fun redrawPage() = pacer.request()
 
         /** The view moved: repaint the page, and the selection frame (it lives on the front layer in page space). */
         private fun onViewChanged() {

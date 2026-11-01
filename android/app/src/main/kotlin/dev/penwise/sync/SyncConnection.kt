@@ -53,6 +53,8 @@ class SyncConnection(
     private val endpoints: () -> List<String>,
     private val token: () -> String,
     private val listener: SyncListener,
+    private val clock: () -> Long = System::currentTimeMillis,
+    private val activeNetwork: () -> Any? = { null },
     private val client: OkHttpClient =
         OkHttpClient
             .Builder()
@@ -75,8 +77,17 @@ class SyncConnection(
         }
     private var running = false
     private val firstContact = FirstContact(endpoints, listener::onUnreachable)
-    private val quiet = QuietTimer(thread, QUIET_CATCH_UP_MS, ::quietElapsed)
+    private val quiet: QuietTimer =
+        QuietTimer(thread, QUIET_CATCH_UP_MS) {
+            // Quiet only counts as "caught up" when the replica holds what `Welcome` announced; a slow stream waits.
+            if (core.caughtUp()) listener.onCaughtUp() else quiet.rearm()
+        }
     private var reconnect: ScheduledFuture<*>? = null
+    private val networkRetry = NetworkRetry(clock)
+    private var networkLook: ScheduledFuture<*>? = null
+
+    /** The network that was usable when the current socket was opened; null when none was known yet. */
+    private var openedOn: Any? = null
 
     /** The endpoint the socket is open to (or being opened to); `null` while stopped. */
     @Volatile
@@ -97,11 +108,37 @@ class SyncConnection(
         }
     }
 
+    /**
+     * The device's default network became usable ([network] identifies it). Looks at the socket after a short
+     * debounce (a newer event replaces the pending look) and redials at once if it is waiting out its backoff, or
+     * is online on another network. A dial in flight or a healthy socket is left alone.
+     */
+    fun networkValidated(network: Any) {
+        thread.run {
+            val delay = networkRetry.onValidated(network)
+            networkLook?.cancel(false)
+            networkLook =
+                thread.later(delay, TimeUnit.MILLISECONDS) {
+                    val online = status == SyncStatus.ONLINE
+                    if (online && openedOn == null) openedOn = networkRetry.latest
+                    if (running && networkRetry.shouldRedial(socket != null, online, openedOn)) {
+                        Log.i(TAG, "network is back; reconnecting now")
+                        networkRetry.redialed()
+                        reconnect?.cancel(false)
+                        closeSocket()
+                        backoff.restart()
+                        open()
+                    }
+                }
+        }
+    }
+
     /** Stops for good: closes the socket and cancels retries. */
     fun stop() {
         thread.run {
             running = false
             reconnect?.cancel(false)
+            networkLook?.cancel(false)
             closeSocket()
             status = SyncStatus.STOPPED
         }
@@ -127,17 +164,10 @@ class SyncConnection(
         }
         val url = urls[backoff.endpoint(urls)]
         currentUrl = url
+        openedOn = null
         Log.i(TAG, "connecting to $url")
         status = SyncStatus.CONNECTING
         socket = client.newWebSocket(Request.Builder().url(url).build(), Link())
-    }
-
-    /**
-     * The server has been quiet for a while. That only counts as "caught up" when the replica really holds what the
-     * server announced at `Welcome` (or a snapshot ended); a slow or paused stream keeps waiting.
-     */
-    private fun quietElapsed() {
-        if (core.caughtUp()) listener.onCaughtUp() else quiet.rearm()
     }
 
     private fun closeSocket() {
@@ -215,7 +245,11 @@ class SyncConnection(
             response: Response,
         ) {
             thread.run {
-                if (webSocket === socket) webSocket.send(core.hello(token()).toByteString())
+                if (webSocket === socket) {
+                    // The network the socket really opened on (a dial may land on another one than it started on).
+                    openedOn = activeNetwork() ?: networkRetry.latest
+                    webSocket.send(core.hello(token()).toByteString())
+                }
             }
         }
 

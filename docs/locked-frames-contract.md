@@ -74,6 +74,11 @@ scope here).
   fit-width scale; `transformBy`, `fitRect` and pans clamp so the screen stays inside the box horizontally and
   between the box's top and bottom vertically. Agent `Focus(frame)` changes the lock (switching page first);
   `Focus(None)` opens the overview. Agent moves still defer while the owner drew in the last 10 s.
+- Scroll follow: while a frame is locked, the camera follows **every** scroll of the locked live page (a finger, a fling,
+  an anchor link, `scrollIntoView`, a smooth-scroll library, a restored position), so the window stays exactly on
+  screen at the camera's in-frame zoom. Owner decision: "a frame is the screen, like a browser". The exception is the
+  pen: while it is down or hovering the camera stays, and when it lifts it catches up with one short (120 ms) flight.
+  The owner-only rule (`ScrollOwner`) applies only while the camera is not locked.
 - Dead zone: during a two-finger gesture that starts at min scale, accumulate the pinch factor below 1; at
   `≤ GRID_PINCH = 0.82` the overview opens on release (or at once when it passes `0.70`). A pinch that does not reach it
   springs back to fit.

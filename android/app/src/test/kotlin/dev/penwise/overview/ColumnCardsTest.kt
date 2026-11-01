@@ -79,4 +79,10 @@ class ColumnCardsTest {
         assertEquals("C", ColumnCards.variantName(2, ""))
         assertEquals("B · warm", ColumnCards.variantName(1, " warm "))
     }
+
+    @Test
+    fun a_sent_round_is_named_sent_on_the_now_column() {
+        val sent = OverviewColumn.Now(frame("live", 0f), emptyList(), 6, sent = true)
+        assertEquals("Now · round 6 · sent", ColumnCards.of(sent, lane).head?.title)
+    }
 }

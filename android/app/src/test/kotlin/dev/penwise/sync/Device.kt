@@ -9,6 +9,7 @@ class Device(
     val dir: File = Files.createTempDirectory("penwise-tablet").toFile(),
     private val server: TestServer?,
     clock: () -> Long = System::currentTimeMillis,
+    network: NetworkSource? = null,
     private val token: () -> String = { server?.token.orEmpty() },
 ) : AutoCloseable {
     val recorder = Recorder()
@@ -19,6 +20,7 @@ class Device(
             token = token,
             listener = recorder,
             clock = clock,
+            network = network,
         )
     val core: SyncCore get() = engine.core
     val library: Library get() = engine.library

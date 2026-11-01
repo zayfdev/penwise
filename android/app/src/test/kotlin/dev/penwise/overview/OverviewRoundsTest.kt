@@ -11,7 +11,7 @@ class OverviewRoundsTest {
 
     private fun now(
         history: Map<LaneKey, List<Generation>> = emptyMap(),
-        rounds: Map<String, Int> = emptyMap(),
+        rounds: Map<String, NowRound> = emptyMap(),
     ) = OverviewStrips
         .of(specs, history, emptyMap(), rounds) { null }
         .single()
@@ -21,18 +21,24 @@ class OverviewRoundsTest {
 
     @Test
     fun a_lane_without_generations_shows_the_projects_open_round() {
-        assertEquals(5, now(rounds = mapOf("p" to 5)).round)
-        assertEquals(5, now(mapOf(desktop to listOf(generation(2))), mapOf("p" to 5)).round)
+        assertEquals(5, now(rounds = mapOf("p" to NowRound(5))).round)
+        assertEquals(5, now(mapOf(desktop to listOf(generation(2))), mapOf("p" to NowRound(5))).round)
     }
 
     @Test
     fun another_projects_round_is_not_used() {
-        assertEquals(1, now(rounds = mapOf("q" to 9)).round)
+        assertEquals(1, now(rounds = mapOf("q" to NowRound(9))).round)
     }
 
     @Test
     fun without_the_open_round_the_now_round_is_one_after_the_newest_resolved_one() {
         assertEquals(1, now().round)
         assertEquals(8, now(mapOf(desktop to listOf(generation(7), generation(4)))).round)
+    }
+
+    @Test
+    fun a_sent_latest_round_marks_the_now_column_sent() {
+        assertEquals(true, now(rounds = mapOf("p" to NowRound(6, sent = true))).sent)
+        assertEquals(false, now(rounds = mapOf("p" to NowRound(6))).sent)
     }
 }

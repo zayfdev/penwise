@@ -15,6 +15,7 @@ import dev.penwise.frames.MoveTarget
 import dev.penwise.frames.ProjectsClient
 import dev.penwise.frames.SceneMark
 import dev.penwise.overview.OverviewController
+import dev.penwise.sync.AndroidNetworkSource
 import dev.penwise.sync.Ids
 import dev.penwise.sync.Kind
 import dev.penwise.sync.Outcome
@@ -292,6 +293,7 @@ class PageViewModel(
                     endpoints = settings::endpoints,
                     token = { settings.token },
                     listener = Listener(),
+                    network = AndroidNetworkSource(getApplication()),
                 )
             } catch (error: Exception) {
                 Log.e(TAG, "sync state unavailable: ${error.message}")

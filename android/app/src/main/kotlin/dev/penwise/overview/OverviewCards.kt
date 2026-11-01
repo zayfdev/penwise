@@ -136,7 +136,7 @@ internal object ColumnCards {
             spec: FrameSpec,
             title: String,
         ) = OverviewCard(spec.id, title, CardImage.Still(spec.id), spec.chosen, CardAction.LockFrame(spec.id))
-        val head = card(column.og, "Now · round ${column.round} · OG")
+        val head = card(column.og, "Now · round ${column.round}${if (column.sent) " · sent" else " · OG"}")
         val variants = column.variants.mapIndexed { index, spec -> card(spec, variantName(index, spec.label)) }
         return ColumnContent(
             head,
