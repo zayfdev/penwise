@@ -65,7 +65,6 @@ internal class FrameLayer(
     private val follower =
         WindowFollower(
             camera = { viewport },
-            density = { density },
             screenHeight = { height },
             isLive = { it === pages.live },
             penActive = { pen?.active() == true },
@@ -74,7 +73,7 @@ internal class FrameLayer(
         )
     private val touch = LayerTouch(lookup, follower, this, transform, ::onDoubleTap)
     private val gestures = FrameGestures(touch, ViewConfiguration.get(context).scaledTouchSlop.toFloat())
-    private val penHits = FramePenHits(LayerPenHost(lookup, stills, { scene }, density))
+    private val penHits = FramePenHits(LayerPenHost(lookup, stills, { scene }))
     private val pages: LivePages =
         LivePages(this, context, ::deliver, { entry, x, y -> follower.onScroll(entry, x, y) }) { gestures.release(it) }
     private val inbox = LayerInbox(pages, stills, penHits, follower, this, { watch }, callbacks)
@@ -132,6 +131,9 @@ internal class FrameLayer(
         if (active) stills.resume() else stills.pause()
     }
 
+    /** The frame a board that just got its frames still has to open on ([FrameOpening]); null once done. */
+    private var opening: String? = null
+
     /**
      * Shows [next]: a frame that is gone is closed (and its page destroyed when it was live or warm), a live or warm
      * frame whose URL changed is loaded again, a resized one is re-laid out. A frame that stays keeps its WebView and
@@ -139,6 +141,7 @@ internal class FrameLayer(
      */
     fun setFrames(next: List<FrameSpec>) {
         val plan = FrameDiff.plan(specs, next)
+        val first = specs.isEmpty()
         specs = next
         for (id in plan.close) closeFrame(id)
         pages.update(plan, next)
@@ -146,6 +149,7 @@ internal class FrameLayer(
         for (entry in pages.all()) PageOps.sendPatch(entry)
         scheduleSettle()
         stills.refresh()
+        if (first) opening = FrameOpening.target(next)
     }
 
     /** The Ghost chip's on/off toggle: a local before/after view of the frame's patch, never synced. */
@@ -273,7 +277,7 @@ internal class FrameLayer(
         val view = transform()
         stills.show(view)
         val entry = pages.live ?: return
-        val placement = FrameGeometry.place(entry.window(), view, density)
+        val placement = FrameGeometry.place(entry.window(), view, entry.pxPerCss)
         entry.placement = placement
         entry.view.translationX = placement.left
         entry.view.translationY = placement.top
@@ -293,6 +297,16 @@ internal class FrameLayer(
         val camera = viewport ?: return
         if (camera.gesturing || camera.animating) {
             scheduleSettle()
+            return
+        }
+        // A board that just got its frames opens fitted on one, once the camera knows the screen and the page.
+        opening?.let { id ->
+            if (!camera.hasSize) {
+                scheduleSettle()
+                return
+            }
+            opening = null
+            fitFrame(id)
             return
         }
         if (width > 0 && height > 0) {

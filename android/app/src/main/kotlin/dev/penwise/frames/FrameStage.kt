@@ -148,7 +148,7 @@ internal fun FrameStage(
             scroll = scroll,
             modifier =
                 Modifier
-                    .align(Alignment.TopStart)
+                    .align(Alignment.BottomStart)
                     .safeDrawingPadding()
                     .padding(READOUT_MARGIN_DP.dp),
         )

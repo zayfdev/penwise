@@ -82,6 +82,9 @@ class ViewportState {
         reset()
     }
 
+    /** The canvas has told the camera its size, so a [fitRect] can land. */
+    val hasSize: Boolean get() = viewWidth > 0f && viewHeight > 0f
+
     /** True while a [fitRect] flight runs. */
     val animating: Boolean get() = flight.active
 
