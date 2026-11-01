@@ -10,6 +10,7 @@ mod b64;
 mod collect;
 mod digits;
 mod gather;
+mod history;
 mod overview;
 mod single;
 #[cfg(test)]
@@ -201,6 +202,11 @@ async fn round_view<'a>(
         .and_then(|page| views.get(&page))
         .map(|view| picks(view.replica.scene()))
         .unwrap_or_default();
+    // A failed read of the kept generations costs the history lines, not the look.
+    let past = history::lines(app, &project.id).await.unwrap_or_else(|error| {
+        tracing::warn!(status = %error.status, reason = %error.message, "look: history lines left out");
+        BTreeMap::new()
+    });
     let listed: Vec<MarkRow<'_>> = rows.iter().map(row_of).collect();
     let after_send: Vec<MarkRow<'_>> = since_rows.iter().map(row_of).collect();
     let mut images = Vec::new();
@@ -209,7 +215,7 @@ async fn round_view<'a>(
     }
     mark_seen(app, &views, &shown).await?;
     Ok(json!({
-        "text": text::render(&header, &frames, &listed, &after_send, &picks),
+        "text": text::render(&header, &frames, &listed, &after_send, &picks, &past),
         "images": images,
         "round": n,
         "marks": rows.iter().map(|(mark, _, _)| mark.entry.id.to_hex()).collect::<Vec<_>>(),

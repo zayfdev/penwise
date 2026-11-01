@@ -1,15 +1,17 @@
 //! Freezing a round into history (spec v2 §4): for every frame the round touched, the frame as it looks with
-//! the round's ink becomes a picture where the live frame stood, the live frame moves one column right (taking
-//! everything to its right in its lane with it), its ghost clears, its variants go, and the round's marks
-//! become `done`.
+//! the round's ink becomes a picture where the live frame stood, and so does every variant beside it (patch
+//! applied, that variant's ink on it), in one row, OG first, then the variants by label. The live frame moves
+//! right by the whole row (taking everything to its right in its lane with it), its ghost clears, its variants
+//! go, and the round's marks become `done`. The pictures are also recorded as a generation ([`generation`]).
 //!
 //! It runs in two phases. First every snapshot of every page is taken; a failure there changes nothing, so the
 //! call can simply be retried. Then each page commits one batch (one undo step). A frame that already has its
-//! `Round n — …` picture is skipped, so a retry after a partial commit never freezes a frame twice. The
+//! `Round n — …` picture (variants: `Round n — … — <label>`) is skipped, so a retry after a partial commit never freezes a frame twice. The
 //! snapshot is [`super::frames::frame_snapshot`] without ink plus only the round's strokes ([`ink`]), and the
 //! variants go through [`super::variants::clear_plan`], which spares variants carrying marks newer than the
 //! round.
 
+mod generation;
 mod ink;
 mod lane;
 mod places;
@@ -25,7 +27,7 @@ use penwise_core::item::{
 };
 use penwise_core::marks::{MarkStatus, set_mark_status};
 use penwise_proto::PageId;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::api::{ApiError, AppState, Author};
 use crate::assets;
@@ -35,7 +37,6 @@ use super::variants::clear_plan;
 
 use lane::{place_pictures, shifts};
 use places::live_frames;
-use store::picture_of;
 
 pub(super) use places::groups_beside;
 
@@ -58,12 +59,27 @@ pub(crate) struct Frozen {
 
 /// A frozen frame, ready to be added to the page.
 struct Picture {
+    /// The frame pictured: the lane's live frame (OG) or one of its variants.
     frame: ItemId,
+    /// The lane's live frame; the same as `frame` for the OG picture.
+    live: ItemId,
+    /// Place in the row left of the live frame: 0 for the OG picture, 1.. for the variants by label.
+    slot: usize,
+    /// The variant's own label; `None` for the OG picture.
+    variant: Option<String>,
+    preset: String,
+    route: String,
     id: ItemId,
     asset: String,
     position: [f32; 2],
     size: [f32; 2],
     label: String,
+}
+
+impl Picture {
+    fn is_og(&self) -> bool {
+        self.variant.is_none()
+    }
 }
 
 /// One page's share of a freeze, after its snapshots are taken.
@@ -80,13 +96,14 @@ fn label_of(n: u32, preset: &str, route: &str) -> String {
     format!("Round {n} \u{2014} {preset} {route}")
 }
 
-/// Freezes round `n`: `marks` are the round's marks (any pages) and `newer` the project's marks drawn after the
-/// round was sent, which neither the picture nor the variants clear may touch.
+/// Freezes round `n` of `project`: `marks` are the round's marks (any pages) and `newer` the project's marks
+/// drawn after the round was sent, which neither the picture nor the variants clear may touch.
 ///
 /// # Errors
 /// 503 when a frame cannot be snapshotted (nothing is changed), 5xx on storage failures.
 pub(crate) async fn freeze_round(
     app: &AppState,
+    project: &str,
     n: u32,
     marks: &[&RoundMark],
     newer: &BTreeSet<ItemId>,
@@ -97,21 +114,23 @@ pub(crate) async fn freeze_round(
     }
     let mut plans = Vec::new();
     for (page, marks) in pages {
-        plans.push(prepare_page(app, n, page, &marks).await?);
+        plans.push(prepare_page(app, n, page, &marks, newer).await?);
     }
     let mut frozen = Frozen::default();
     for plan in plans {
-        commit_page(app, plan, newer, &mut frozen).await?;
+        commit_page(app, project, n, plan, newer, &mut frozen).await?;
     }
     Ok(frozen)
 }
 
-/// Takes the snapshots of one page's live frames (skipping the frames already frozen for round `n`).
+/// Takes the snapshots of one page's live frames and their variants (skipping the frames already frozen for
+/// round `n`).
 async fn prepare_page(
     app: &AppState,
     n: u32,
     page: PageId,
     marks: &[&RoundMark],
+    newer: &BTreeSet<ItemId>,
 ) -> Result<PagePlan, ApiError> {
     let view = live_view(app, page).await?;
     let scene = view.replica.scene();
@@ -138,13 +157,9 @@ async fn prepare_page(
             plan.already.insert(frame);
             continue;
         }
-        let strokes: BTreeSet<ItemId> = marks
-            .iter()
-            .filter(|mark| mark.entry.frame == frame)
-            .flat_map(|mark| mark.entry.strokes.iter().copied())
-            .collect();
-        plan.pictures
-            .push(picture_of(app, scene, frame, label, &strokes).await?);
+        plan.pictures.extend(
+            generation::lane_pictures(app, scene, marks, frame, &label, &labels, newer).await?,
+        );
     }
     Ok(plan)
 }
@@ -161,6 +176,8 @@ async fn live_view(app: &AppState, page: PageId) -> Result<crate::storage::PageV
 /// read again, so edits made while the snapshots were taken are respected.
 async fn commit_page(
     app: &AppState,
+    project: &str,
+    n: u32,
     plan: PagePlan,
     newer: &BTreeSet<ItemId>,
     frozen: &mut Frozen,
@@ -182,21 +199,20 @@ async fn commit_page(
         }
     }
     let mut author = Author::new(&app.storage);
-    let pictures: Vec<&Picture> = plan
-        .pictures
-        .iter()
-        .filter(|picture| scene.get(picture.frame).is_some())
-        .collect();
+    let survivors = generation::survivors(scene, plan.pictures);
+    let pictures: Vec<&Picture> = survivors.iter().collect();
     let mut z = lowest_z(scene);
     for (picture, position) in place_pictures(scene, &pictures, &deleted) {
         author
             .item(page, Edit::Add(picture_item(picture, position, z)))
             .await?;
         z = z.saturating_sub(Z_STEP);
-        for edit in set_patch(scene, picture.frame, None)
-            .map_err(|error| ApiError::bad_request(error.to_string()))?
-        {
-            author.item(page, edit).await?;
+        if picture.is_og() {
+            for edit in set_patch(scene, picture.frame, None)
+                .map_err(|error| ApiError::bad_request(error.to_string()))?
+            {
+                author.item(page, edit).await?;
+            }
         }
     }
     for (id, dx) in shifts(scene, &pictures, &deleted) {
@@ -218,21 +234,18 @@ async fn commit_page(
             }
         }
     }
+    // The rows go first: a commit that then fails is retried, and the retry replaces them (same lane, role and
+    // label); the other way round a committed picture could be left without its row.
+    app.storage
+        .record_generations(generation::records(project, n, scene, &pictures))
+        .await?;
     author.commit().await?;
     frozen.marks_done += plan.marks.len();
     frozen.already += plan.already.len();
-    for picture in &plan.pictures {
-        if scene.get(picture.frame).is_none() {
-            continue;
-        }
-        frozen.snapshots.push(json!({
-            "frame": picture.frame.to_hex(),
-            "image": picture.id.to_hex(),
-            "asset": picture.asset,
-            "w": picture.size[0],
-            "h": picture.size[1],
-            "label": picture.label,
-        }));
+    for picture in pictures {
+        frozen
+            .snapshots
+            .push(generation::snapshot_json(scene, picture));
         crate::pictures::store_label(app, picture.id, picture.label.clone()).await;
     }
     Ok(())

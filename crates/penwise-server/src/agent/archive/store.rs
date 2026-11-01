@@ -39,8 +39,16 @@ pub(super) async fn picture_of(
     let inked = ink::composite_strokes(app, scene, frame, strokes, snapshot).await?;
     let asset = store_snapshot(app, inked).await?;
     let size = box_size;
+    let place = super::super::scene::frame_item(scene, frame)
+        .map(|item| (item.preset.as_str().to_owned(), item.route.clone()))
+        .ok_or_else(|| ApiError::not_found("unknown frame"))?;
     Ok(Picture {
         frame,
+        live: frame,
+        slot: 0,
+        variant: None,
+        preset: place.0,
+        route: place.1,
         id: ItemRef::from_parts(app.storage.now_ms(), random_u128()).into(),
         asset,
         position,

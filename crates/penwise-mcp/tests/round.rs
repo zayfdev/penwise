@@ -352,7 +352,8 @@ async fn a_whole_round_costs_the_agent_four_tool_calls() {
     // 4. resolve the round.
     let resolved = rig.mcp.json("resolve", json!({ "round": 1 })).await;
     assert_eq!(resolved["round"]["status"], "resolved", "{resolved}");
-    assert_eq!(resolved["round"]["snapshots"].as_array().unwrap().len(), 1);
+    // The generation: the frame's own picture and one per variant.
+    assert_eq!(resolved["round"]["snapshots"].as_array().unwrap().len(), 4);
     assert_eq!(resolved["round"]["variants_removed"], 3);
 
     assert_eq!(
@@ -361,8 +362,8 @@ async fn a_whole_round_costs_the_agent_four_tool_calls() {
         "look, show, look, resolve"
     );
 
-    // The board afterwards: history picture where the frame stood, the frame one column right, variants gone,
-    // the mark done.
+    // The board afterwards: the generation's pictures where the frame stood (itself first, then the three
+    // variants, a column apart), the frame right of them, variants gone, the mark done.
     let images: Value = reqwest::Client::new()
         .get(rig.url(&format!("/pages/{page}/images")))
         .header("X-Penwise-Token", TOKEN)
@@ -372,13 +373,27 @@ async fn a_whole_round_costs_the_agent_four_tool_calls() {
         .json()
         .await
         .unwrap();
-    let pictures = images["images"].as_array().unwrap();
-    assert_eq!(pictures.len(), 1, "{images}");
+    let mut pictures = images["images"].as_array().unwrap().clone();
+    assert_eq!(pictures.len(), 4, "{images}");
+    pictures.sort_by(|a, b| a["x"].as_f64().partial_cmp(&b["x"].as_f64()).unwrap());
     assert_eq!(pictures[0]["label"], "Round 1 \u{2014} desktop /");
-    assert_eq!(pictures[0]["x"].as_f64(), Some(f64::from(frame_x)));
-    assert_eq!(pictures[0]["y"].as_f64(), Some(f64::from(frame_y)));
-    assert_eq!(pictures[0]["w"].as_f64(), Some(1440.0));
-    assert!(pictures[0]["h"].as_f64().unwrap() >= 900.0);
+    for (index, picture) in (0_u8..).zip(&pictures) {
+        assert_eq!(
+            picture["x"].as_f64(),
+            Some(f64::from(frame_x) + f64::from(index) * 1480.0),
+            "{images}"
+        );
+        assert_eq!(picture["y"].as_f64(), Some(f64::from(frame_y)));
+        assert_eq!(picture["w"].as_f64(), Some(1440.0));
+        assert!(picture["h"].as_f64().unwrap() >= 900.0);
+    }
+    for picture in &pictures[1..] {
+        let label = picture["label"].as_str().unwrap();
+        assert!(
+            label.starts_with("Round 1 \u{2014} desktop / \u{2014} "),
+            "{label}"
+        );
+    }
     assert!(
         rig.tablet
             .pump_until(Duration::from_secs(10), |d| {
@@ -392,8 +407,8 @@ async fn a_whole_round_costs_the_agent_four_tool_calls() {
     let scene = rig.tablet.replica.page(page).unwrap().scene();
     let moved = scene.get(frame).expect("live frame");
     assert!(
-        (moved.transform.e - (frame_x + 1440.0 + 40.0)).abs() < 0.01,
-        "one column right: {} from {frame_x}",
+        (moved.transform.e - (frame_x + 4.0 * (1440.0 + 40.0))).abs() < 0.01,
+        "four columns right: {} from {frame_x}",
         moved.transform.e
     );
     assert!((moved.transform.f - frame_y).abs() < 0.01, "same row");

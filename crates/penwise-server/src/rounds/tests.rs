@@ -8,6 +8,9 @@
     clippy::indexing_slicing
 )]
 
+mod generations;
+mod strip_pages;
+
 use std::path::Path;
 use std::sync::Arc;
 

@@ -54,7 +54,7 @@ An `Item` is `{id, layer, z, transform, kind}`; geometry is always re-derived fr
 
 ## Server storage (`crates/penwise-server/src/storage`)
 
-`penwise.db` (SQLite, WAL), `PRAGMA user_version = 5` (`schema.rs`; step 5 added `rounds`):
+`penwise.db` (SQLite, WAL), `PRAGMA user_version = 6` (`schema.rs`; step 5 added `rounds`, step 6 `generations` and `strip_pages`):
 
 ```
 server_meta(key, value)            devices(id, name, kind, created_ms, last_seen_ms, acked_seq)
@@ -63,6 +63,8 @@ notebooks(...registers + hlcs)     pages(...registers + hlcs)
 items(id, page, kind, layer, z, deleted, body, patch, stamps, added_seq, updated_seq)
 id_alias(legacy, kind, id)         image_labels(item, label)
 rounds(project, n, status, sent_seq, resolved_seq, sent_ms, resolved_ms, looked_ms)   -- design-harness rounds
+generations(project, round, route, preset, role, label, picked, item, asset, w, h)   -- pictures a resolve kept
+strip_pages(seq, project, route, preset, page)   -- sketch pages attached to a screen's strip in the overview
 ```
 
 - One writer thread (`storage/writer.rs`) validates, logs, materializes and commits; reads use separate WAL
@@ -144,6 +146,9 @@ Drawn under the items, identical in the browser, the tablet and the PNG (`BACKGR
 | `POST /projects/<id>/rounds/send {n?}` | closes the open round (`{n, marks}`); 409 if round `n` is no longer open or has no marks |
 | `GET /projects/<id>/rounds` | every round with status and mark counts |
 | `POST /projects/<id>/rounds/<n>/resolve` | freezes the round into history (picture, frame moved right, variants cleared, marks done) |
+| `GET /projects/<id>/history?route=&preset=` | the lane's kept generations, newest first: `{route, preset, generations:[{round, resolved_ms, og:{item, asset, w, h}, variants:[{label, item, asset, w, h, picked}]}]}`. `item` is the Image item on the board, `asset` the id to fetch with `GET /assets/<asset>`. Every picture of every variant group is listed (labels may repeat across groups), and each group's chosen variant has `picked: true`; a variant spared because it was marked after Send is not pictured and so never picked. `route` is required, `preset` defaults to `desktop`; only resolved rounds are listed |
+| `PUT /projects/<id>/strip-pages/<page>` `{route, preset}` | attaches the sketch page to that screen's strip (idempotent; to another strip it moves); 404 unknown project or page, 400 bad preset, empty route, the board page itself or a page outside the project's board notebook |
+| `GET /projects/<id>/strip-pages` | `[{page, route, preset}]` in attach order; pages deleted from the library drop out |
 | `GET /projects/<id>/inbox` | `{"line": "Penwise: round 3 sent — …"}` or `{"line": null}` |
 | `POST /agent/look`, `POST /agent/show`, `POST /agent/resolve` | the MCP tools' server side (`docs/mcp.md`) |
 | `GET /pair/local` | `{token}` only to a loopback peer with a loopback `Host` (the desktop launcher's viewer); else 403 |

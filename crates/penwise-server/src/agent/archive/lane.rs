@@ -1,4 +1,6 @@
 //! The columns of a freeze: how far each moved frame goes and what makes room for it, left to right in its lane.
+//! A lane's generation is one row of columns: the OG picture, then one per variant; the live frame moves right
+//! by the whole row.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -7,7 +9,7 @@ use penwise_core::item::{ItemId, ItemKind, Scene};
 use super::places::lane_items;
 use super::{COLUMN_GAP, Picture};
 
-/// How far each moved frame goes: its own column, plus the columns of the frames to its left in the lane.
+/// How far each moved frame goes: its generation's columns, plus the columns of the frames to its left in the lane.
 /// Returns, per frame in left-to-right order, the shift already applied to it before it moves itself, and the
 /// frame's own distance.
 fn lane_plan(
@@ -15,7 +17,7 @@ fn lane_plan(
     pictures: &[&Picture],
     deleted: &BTreeSet<ItemId>,
 ) -> Vec<(ItemId, f32, f32, Vec<ItemId>)> {
-    let mut ordered: Vec<&&Picture> = pictures.iter().collect();
+    let mut ordered: Vec<&&Picture> = pictures.iter().filter(|picture| picture.is_og()).collect();
     ordered.sort_by(|a, b| {
         let x = |picture: &Picture| {
             scene
@@ -30,7 +32,12 @@ fn lane_plan(
         let Some(ItemKind::Frame(live)) = scene.get(picture.frame).map(|item| &item.kind) else {
             continue;
         };
-        let dx = live.page_size()[0] + COLUMN_GAP;
+        let variants = pictures
+            .iter()
+            .filter(|other| other.live == picture.frame && !other.is_og())
+            .count();
+        #[allow(clippy::cast_precision_loss, reason = "at most a handful of variants")]
+        let dx = (1 + variants) as f32 * (live.page_size()[0] + COLUMN_GAP);
         let before = carried.get(&picture.frame).copied().unwrap_or(0.0);
         let right = lane_items(scene, picture.frame, deleted);
         for id in &right {
@@ -42,7 +49,8 @@ fn lane_plan(
     out
 }
 
-/// Where each history picture goes: the frame's old position, moved by the columns of frames to its left.
+/// Where each history picture goes: the live frame's old position, moved by the columns of frames to its left,
+/// and by its own slot in the row.
 pub(super) fn place_pictures<'a>(
     scene: &Scene,
     pictures: &[&'a Picture],
@@ -55,10 +63,23 @@ pub(super) fn place_pictures<'a>(
     pictures
         .iter()
         .map(|picture| {
-            let shift = before.get(&picture.frame).copied().unwrap_or(0.0);
-            (*picture, [picture.position[0] + shift, picture.position[1]])
+            let shift = before.get(&picture.live).copied().unwrap_or(0.0);
+            #[allow(clippy::cast_precision_loss, reason = "at most a handful of variants")]
+            let column = picture.slot as f32 * column_of(scene, picture.live);
+            (
+                *picture,
+                [picture.position[0] + shift + column, picture.position[1]],
+            )
         })
         .collect()
+}
+
+/// One column of `frame`'s lane: its width and the gap.
+fn column_of(scene: &Scene, frame: ItemId) -> f32 {
+    match scene.get(frame).map(|item| &item.kind) {
+        Some(ItemKind::Frame(live)) => live.page_size()[0] + COLUMN_GAP,
+        _ => 0.0,
+    }
 }
 
 /// Every item that moves right, and by how much: the frames that leave their pictures behind, and everything

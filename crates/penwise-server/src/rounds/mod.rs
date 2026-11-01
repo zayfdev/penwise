@@ -1,13 +1,15 @@
 //! Rounds (design-harness spec v2 §4): `POST /projects/<id>/rounds/send`, `GET /projects/<id>/rounds`,
-//! `GET /projects/<id>/inbox` and `POST /projects/<id>/rounds/<n>/resolve`.
+//! `GET /projects/<id>/inbox`, `GET /projects/<id>/history` and `POST /projects/<id>/rounds/<n>/resolve`.
 //!
 //! A round is one request from the owner: the marks drawn since the last one was sent. The routes sit in the
 //! `/projects` group (token, or a same-machine loopback request, the rule of `/pair/local`), so the tablet, the
 //! PC window, `penwise inbox` and `penwise-mcp` all reach them the same way. Which marks a round holds comes
 //! from the op-log seq that added them ([`ledger`]); resolving freezes the frame into history ([`resolve`]).
 
+mod history;
 mod ledger;
 mod resolve;
+mod strip_pages;
 #[cfg(test)]
 mod tests;
 
@@ -17,7 +19,7 @@ use axum::Json;
 use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use penwise_core::marks::MarkStatus;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -35,6 +37,12 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/projects/{id}/rounds/send", post(send))
         .route("/projects/{id}/rounds/{n}/resolve", post(resolve))
         .route("/projects/{id}/inbox", get(inbox))
+        .route("/projects/{id}/history", get(history::history))
+        .route("/projects/{id}/strip-pages", get(strip_pages::list))
+        .route(
+            "/projects/{id}/strip-pages/{page}",
+            put(strip_pages::attach),
+        )
 }
 
 /// 404 unless `id` is a linked project.

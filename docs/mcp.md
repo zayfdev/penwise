@@ -49,7 +49,7 @@ The owner draws marks on the project's board and taps **Send** (or just tells th
 | `look` | Reads the round: text plus one overview image per frame. |
 | `show` | Puts something on the board: a frame, a ghost, variants, a sketch. |
 | `look` | Reads the owner's pick. |
-| `resolve {round: n}` | Closes round `n` (the number `look` shows): the frame freezes into history and the live frame moves one column right. |
+| `resolve {round: n}` | Closes round `n` (the number `look` shows): the frame and its variants freeze into history and the live frame moves right by the row of pictures. |
 
 A prompt hook can tell the agent a round is waiting: `penwise inbox` prints one line such as
 `Penwise: round 3 sent — 4 marks on Desktop / (call look)` and nothing otherwise (see
@@ -94,6 +94,7 @@ picks:
   handwriting in quotes, the element selector (or `@x,y WxH` for an area mark with no element), `→` the element an
   arrow points at, up to three `file:line` sources (the component first), and up to three key computed styles.
 - `picks:` lists every variant group with the frame the owner chose (`no pick yet` before a choice).
+- A lane that has a past generation gets one more line under its first listed frame: `    history: round 3 picked "A" (2 variants)` (the newest resolved round of that screen; `no pick` when the owner chose none, `(no variants)` when it had none). A variant kept on the board because it carries a mark drawn after Send is not pictured, so even when it was the owner's pick the generation records no pick for it (`no pick`).
 
 `{mark: "<id>"}` returns that one mark's full bundle (JSON: kind with `from`/`to` elements, colour, element with
 `selector`, `role`, `text`, `styles`, `rect`, `source`, OCR text and `text_status`) with its crops (`with_ink`,
@@ -133,9 +134,13 @@ round sends it first, so marks drawn while the freeze runs belong to the next ro
 a time; a second one for the same round finds it done and changes nothing. Closing a round:
 
 1. snapshots every frame the round touched with **only the round's ink** and places that picture where the live
-   frame stood, labelled `Round 3 — desktop /` (marks drawn after the round was sent stay off it);
-2. moves the live frame right by its width plus 40 px, and **every item to its right in the same lane** (the
-   items whose box starts right of the frame and overlaps its rows) by the same distance, so it never lands on
+   frame stood, labelled `Round 3 — desktop /` (marks drawn after the round was sent stay off it), and does the
+   same for **every variant** beside it (its patch applied, only its own round ink), labelled
+   `Round 3 — desktop / — A`, in one row to the right of the OG picture, variants by label; it also keeps them as
+   a generation (`GET /projects/<id>/history`, `docs/pages.md`);
+2. moves the live frame right by the whole row (one column per picture, a column being its width plus 40 px), and
+   **every item to its right in the same lane** (the items whose box starts right of the frame and overlaps its
+   rows) by the same distance, so it never lands on
    the next route's frame; other lanes do not move;
 3. clears the frame's ghost and removes the variant groups beside it, the picked variant included (their marks
    become `done`), except a variant that carries a mark drawn after the round was sent;

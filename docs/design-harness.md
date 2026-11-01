@@ -223,9 +223,15 @@ A **round** is one request to the agent: the marks you drew since the last round
 5. The agent resolves the round (`resolve {round: n}`, or automatically when the last open mark is `done`).
 
 **Resolve** freezes history: the frame with your ink for that round becomes a picture where the frame stood,
-the live frame moves one column to the right and takes everything to its right in its lane along, its ghost
-clears, and the variants beside it go, the picked one too (the live frame now shows it in code). A variant you
-marked after Send stays for the next round. History pictures are ordinary board items: undo, move or delete them.
+and each variant beside it becomes a picture too (with the change applied and the ink you drew on it), in one row:
+the original first, then the variants by label. The live frame moves to the right of that row and takes everything
+to its right in its lane along, its ghost clears, and the variants go, the picked one too (the live frame now shows
+it in code). A variant you marked after Send stays for the next round, unpictured. History pictures are ordinary
+board items: undo, move or delete them.
+
+The server also keeps each resolved round as a **generation**: the original picture, one picture per variant, and
+which variant you had picked. `GET /projects/<id>/history?route=&preset=` lists a screen's generations, newest
+first, and `look` mentions the latest one under the screen (`history: round 3 picked "A" (2 variants)`).
 
 ### Status
 

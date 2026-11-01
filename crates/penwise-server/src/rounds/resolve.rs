@@ -89,7 +89,7 @@ pub(crate) async fn resolve_round(
         .into_iter()
         .map(|mark| mark.entry.id)
         .collect();
-    let frozen = crate::agent::freeze_round(app, n, &marks, &newer).await?;
+    let frozen = crate::agent::freeze_round(app, project, n, &marks, &newer).await?;
     let round = app
         .storage
         .round_op(RoundOp::Resolve {

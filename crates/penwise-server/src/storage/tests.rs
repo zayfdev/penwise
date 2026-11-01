@@ -7,6 +7,7 @@
 )]
 
 mod compaction;
+mod generations;
 mod lifecycle;
 mod lww;
 mod purge;

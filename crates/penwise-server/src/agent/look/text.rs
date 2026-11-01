@@ -2,9 +2,12 @@
 //!
 //! Everything here is pure: the route gathers the facts, this file only spells them.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 use serde_json::Value;
+
+use super::history::Lane;
 
 /// Most characters of handwriting kept on a mark line.
 const MAX_TEXT_CHARS: usize = 80;
@@ -67,6 +70,7 @@ pub(super) fn render(
     marks: &[MarkRow<'_>],
     since_send: &[MarkRow<'_>],
     picks: &[Pick],
+    history: &BTreeMap<Lane, String>,
 ) -> String {
     let mut out = String::new();
     let _ = writeln!(
@@ -83,9 +87,15 @@ pub(super) fn render(
     if frames.is_empty() {
         out.push_str("  (none)\n");
     }
+    let mut told: BTreeSet<Lane> = BTreeSet::new();
     for (index, frame) in frames.iter().enumerate() {
         out.push_str(&frame_line(index, frame));
         out.push('\n');
+        // Once per lane, under the first frame listed for it.
+        let lane = (frame.preset.to_owned(), frame.route.clone());
+        if let Some(line) = history.get(&lane).filter(|_| told.insert(lane.clone())) {
+            let _ = writeln!(out, "    {line}");
+        }
     }
     out.push_str("marks:\n");
     if marks.is_empty() {

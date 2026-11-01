@@ -60,6 +60,11 @@ fn scene(items: Vec<Item>) -> Scene {
 fn picture(frame: u8, x: f32, y: f32) -> Picture {
     Picture {
         frame: id(frame),
+        live: id(frame),
+        slot: 0,
+        variant: None,
+        preset: "desktop".to_owned(),
+        route: format!("/{frame}"),
         id: id(100 + frame),
         asset: "0".repeat(64),
         position: [x, y],
@@ -81,6 +86,96 @@ fn two_routes_on_one_row_the_next_one_makes_room() {
         moved.get(&id(2)),
         Some(&COLUMN),
         "B moves with it, so A does not land on B"
+    );
+}
+
+fn variant_picture(live: u8, frame: u8, slot: usize, x: f32, y: f32) -> Picture {
+    Picture {
+        frame: id(frame),
+        slot,
+        variant: Some(format!("V{slot}")),
+        ..picture(live, x, y)
+    }
+}
+
+#[test]
+fn a_generation_with_variants_is_one_row_and_the_frame_moves_the_whole_row() {
+    // A at 0, its three variants right of it (ids 11-13, to be deleted), B right of them, a phone lane below.
+    let scene = scene(vec![
+        frame_at(1, 0.0, 0.0),
+        frame_at(11, COLUMN, 0.0),
+        frame_at(12, 2.0 * COLUMN, 0.0),
+        frame_at(13, 3.0 * COLUMN, 0.0),
+        frame_at(2, 4.0 * COLUMN, 0.0),
+        frame_at(3, 0.0, 5000.0),
+    ]);
+    let deleted: BTreeSet<ItemId> = [id(11), id(12), id(13)].into();
+    let og = picture(1, 0.0, 0.0);
+    let variants: Vec<Picture> = (1_u8..=3)
+        .map(|slot| variant_picture(1, 10 + slot, usize::from(slot), 0.0, 0.0))
+        .collect();
+    let all: Vec<&Picture> = std::iter::once(&og).chain(&variants).collect();
+    let moved = shifts(&scene, &all, &deleted);
+    assert_eq!(
+        moved.get(&id(1)),
+        Some(&(4.0 * COLUMN)),
+        "four columns for four pictures"
+    );
+    assert_eq!(
+        moved.get(&id(2)),
+        Some(&(4.0 * COLUMN)),
+        "the next route makes room by the same"
+    );
+    assert_eq!(moved.get(&id(3)), None, "another lane stays");
+    assert!(
+        !moved.contains_key(&id(11)),
+        "deleted variants are not moved"
+    );
+    let xs: Vec<f32> = place_pictures(&scene, &all, &deleted)
+        .into_iter()
+        .map(|(_, at)| at[0])
+        .collect();
+    assert_eq!(
+        xs,
+        [0.0, COLUMN, 2.0 * COLUMN, 3.0 * COLUMN],
+        "OG first, then V1..V3, each a column apart"
+    );
+    // Without variants it is the old single column.
+    let alone = shifts(&scene, &[&og], &deleted);
+    assert_eq!(alone.get(&id(1)), Some(&COLUMN));
+}
+
+#[test]
+fn a_variant_gone_by_commit_time_leaves_no_hole_in_the_row() {
+    // Slots 1..3 were given at snapshot time; the middle variant (12) was deleted since.
+    let scene = scene(vec![
+        frame_at(1, 0.0, 0.0),
+        frame_at(11, COLUMN, 0.0),
+        frame_at(13, 3.0 * COLUMN, 0.0),
+        frame_at(2, 4.0 * COLUMN, 0.0),
+    ]);
+    let all = vec![
+        picture(1, 0.0, 0.0),
+        variant_picture(1, 11, 1, 0.0, 0.0),
+        variant_picture(1, 12, 2, 0.0, 0.0),
+        variant_picture(1, 13, 3, 0.0, 0.0),
+    ];
+    let kept = super::generation::survivors(&scene, all);
+    assert_eq!(kept.len(), 3);
+    let slots: Vec<usize> = kept.iter().map(|p| p.slot).collect();
+    assert_eq!(slots, [0, 1, 2], "contiguous");
+    let deleted: BTreeSet<ItemId> = [id(11), id(13)].into();
+    let refs: Vec<&Picture> = kept.iter().collect();
+    let xs: Vec<f32> = place_pictures(&scene, &refs, &deleted)
+        .into_iter()
+        .map(|(_, at)| at[0])
+        .collect();
+    assert_eq!(xs, [0.0, COLUMN, 2.0 * COLUMN]);
+    let moved = shifts(&scene, &refs, &deleted);
+    assert_eq!(
+        moved.get(&id(1)),
+        Some(&(3.0 * COLUMN)),
+        "the live frame lands right of the last picture"
     );
 }
 

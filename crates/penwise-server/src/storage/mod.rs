@@ -10,6 +10,7 @@
 mod apply;
 mod compact;
 mod error;
+mod generations;
 mod legacy_codec;
 pub mod migrate;
 pub(crate) mod random;
@@ -19,6 +20,7 @@ mod rounds;
 mod rows;
 mod schema;
 mod snapshot;
+mod strip_pages;
 mod types;
 mod writer;
 
@@ -32,9 +34,11 @@ use tokio::sync::{broadcast, oneshot};
 
 pub use compact::CompactReport;
 pub use error::{AppendError, Rejected, RestoreError, StorageError};
+pub use generations::{Generation, GenerationRole};
 pub(crate) use rounds::RoundOp;
 pub use rounds::{LedgerRow, Round, RoundStatus};
 pub use schema::SCHEMA_VERSION;
+pub use strip_pages::StripPage;
 pub use types::{
     AliasTarget, Appended, DEVICE_IDLE_DAYS, DeviceInfo, FaultPlan, NowMs, OpFilter, OpsPage,
     PageView, RETENTION_DAYS, Restored, SNAPSHOT_CHUNK_ITEMS, SnapshotStream, Status,
@@ -291,6 +295,61 @@ impl Storage {
         let at_ms = self.now_ms();
         self.call(|reply| writer::Command::Round { op, at_ms, reply })
             .await?
+    }
+
+    /// Records the pictures a resolve froze (replacing rows of the same lane, role and label).
+    ///
+    /// # Errors
+    /// `Closed`, `Sqlite`.
+    pub async fn record_generations(&self, rows: Vec<Generation>) -> Result<(), StorageError> {
+        self.call(|reply| writer::Command::Generations { rows, reply })
+            .await?
+    }
+
+    /// Attaches `page` to the strip of `route` and `preset` in `project` (idempotent; attaching again moves it).
+    ///
+    /// # Errors
+    /// `Closed`, `Sqlite`.
+    pub async fn attach_strip_page(
+        &self,
+        project: String,
+        route: String,
+        preset: String,
+        page: PageId,
+    ) -> Result<(), StorageError> {
+        let row = StripPage {
+            page,
+            route,
+            preset,
+        };
+        self.call(|reply| writer::Command::StripPage {
+            project,
+            row,
+            reply,
+        })
+        .await?
+    }
+
+    /// The pages attached to strips of `project`, in attach order; deleted pages are left out.
+    ///
+    /// # Errors
+    /// `Sqlite`.
+    pub async fn strip_pages(&self, project: String) -> Result<Vec<StripPage>, StorageError> {
+        self.read(move |conn| strip_pages::list(conn, &project))
+            .await
+    }
+
+    /// The kept pictures of resolved rounds of `project`, newest round first, optionally of one lane.
+    ///
+    /// # Errors
+    /// `Sqlite`, `Corrupt`.
+    pub async fn generations(
+        &self,
+        project: String,
+        lane: Option<(String, String)>,
+    ) -> Result<Vec<Generation>, StorageError> {
+        self.read(move |conn| generations::list(conn, &project, lane.as_ref()))
+            .await
     }
 
     /// The live frame and mark items of `page` with their add and update seqs (the round ledger's view of a page).

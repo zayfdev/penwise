@@ -57,10 +57,11 @@ pub fn migrate(path: &Path, options: &MigrateOptions) -> Result<MigrationReport,
                 ..MigrationReport::default()
             });
         }
-        4 => {
+        4 | 5 => {
+            // A v4 database gains steps 5 and 6, a v5 one step 6; the report names the last step applied.
             schema::ensure_current(&mut conn)?;
             return Ok(MigrationReport {
-                applied_step: Some(5),
+                applied_step: Some(6),
                 ..MigrationReport::default()
             });
         }
@@ -88,9 +89,9 @@ fn dry_run(path: &Path, options: &MigrateOptions) -> Result<MigrationReport, Sto
                 ..MigrationReport::default()
             });
         }
-        4 => {
+        version @ (4 | 5) => {
             return Ok(MigrationReport {
-                pending_step: Some(5),
+                pending_steps: (u32::try_from(version).unwrap_or(0) + 1..=6).collect(),
                 dry_run: true,
                 ..MigrationReport::default()
             });

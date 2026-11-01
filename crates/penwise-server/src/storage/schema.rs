@@ -1,4 +1,4 @@
-//! Schema v5 and numbered migrations (design §3.1). Every step runs in one transaction; `user_version` is
+//! Schema v6 and numbered migrations (design §3.1). Every step runs in one transaction; `user_version` is
 //! bumped last. A step, once shipped, is never edited: change the schema with a new step.
 
 use rusqlite::{Connection, OpenFlags, Transaction};
@@ -6,7 +6,7 @@ use rusqlite::{Connection, OpenFlags, Transaction};
 use super::error::StorageError;
 
 /// Schema version this build writes and serves.
-pub const SCHEMA_VERSION: i64 = 5;
+pub const SCHEMA_VERSION: i64 = 6;
 
 /// Step 4: the op-log schema on an empty database (v3 databases arrive here through [`super::migrate`]).
 const V4_DDL: &str = "
@@ -74,6 +74,40 @@ CREATE TABLE rounds (
   resolved_ms INTEGER,
   looked_ms INTEGER,
   PRIMARY KEY (project, n)
+) STRICT;
+";
+
+/// Step 6: kept generations and strip pages (locked-frames contract §2.2 and §2.3). One row per picture a resolve froze: the OG picture
+/// (`role` 'og', `label` empty) and one per variant (`role` 'variant', `label` the variant's), keyed by the
+/// picture (`item`): variant groups may reuse labels, and every picture is kept. A retried resolve replaces the
+/// whole lane's rows of that round (see `generations.rs`). `picked` is true for every variant the owner had
+/// chosen when the round resolved (one per group); `item` is the Image item's 32-hex id, `asset` the asset id.
+/// Server-local, never synced.
+const V6_DDL: &str = "
+CREATE TABLE generations (
+  project TEXT NOT NULL,
+  round INTEGER NOT NULL,
+  route TEXT NOT NULL,
+  preset TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('og', 'variant')),
+  label TEXT NOT NULL,
+  picked INTEGER NOT NULL,
+  item TEXT NOT NULL,
+  asset TEXT NOT NULL,
+  w INTEGER NOT NULL,
+  h INTEGER NOT NULL,
+  PRIMARY KEY (project, round, route, preset, item)
+) STRICT;
+CREATE INDEX generations_lane ON generations(project, route, preset, round);
+-- Sketch pages attached to a screen's strip in the overview (contract §2.3). `seq` is the attach order, which an
+-- upsert keeps; `page` is the 16-byte page id, so a deleted page can be left out of the listing.
+CREATE TABLE strip_pages (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  project TEXT NOT NULL,
+  route TEXT NOT NULL,
+  preset TEXT NOT NULL,
+  page BLOB NOT NULL,
+  UNIQUE (project, page)
 ) STRICT;
 ";
 
@@ -160,13 +194,23 @@ pub fn create_v4(tx: &Transaction<'_>) -> Result<(), StorageError> {
     Ok(())
 }
 
-/// Creates every table of [`SCHEMA_VERSION`] inside `tx` (steps 4 and 5; no version bump).
+/// Creates every table of [`SCHEMA_VERSION`] inside `tx` (steps 4 to 6; no version bump).
 ///
 /// # Errors
 /// `Sqlite`.
 pub fn create_current(tx: &Transaction<'_>) -> Result<(), StorageError> {
     create_v4(tx)?;
     tx.execute_batch(V5_DDL)?;
+    tx.execute_batch(V6_DDL)?;
+    Ok(())
+}
+
+/// Step 6 on a v5 database: adds `generations` and `strip_pages` and bumps `user_version`, in one transaction.
+fn upgrade_v5_to_v6(conn: &mut Connection) -> Result<(), StorageError> {
+    let tx = conn.transaction()?;
+    tx.execute_batch(V6_DDL)?;
+    tx.pragma_update(None, "user_version", 6)?;
+    tx.commit()?;
     Ok(())
 }
 
@@ -179,7 +223,7 @@ fn upgrade_v4_to_v5(conn: &mut Connection) -> Result<(), StorageError> {
     Ok(())
 }
 
-/// Brings a database to [`SCHEMA_VERSION`]: a fresh one gets every step, a v4 one gets step 5. A database at
+/// Brings a database to [`SCHEMA_VERSION`]: a fresh one gets every step, a v4 one gets steps 5 and 6, a v5 one step 6. A database at
 /// version 1–3 is a v3 library that must go through `penwise-server migrate` first.
 ///
 /// # Errors
@@ -196,7 +240,14 @@ pub fn ensure_current(conn: &mut Connection) -> Result<(), StorageError> {
             conn.execute_batch(PURGED_DDL)?;
             conn.execute_batch(PROJECTS_DDL)?;
             conn.execute_batch(AGENT_CHECKPOINTS_DDL)?;
-            upgrade_v4_to_v5(conn)
+            upgrade_v4_to_v5(conn)?;
+            upgrade_v5_to_v6(conn)
+        }
+        5 => {
+            conn.execute_batch(PURGED_DDL)?;
+            conn.execute_batch(PROJECTS_DDL)?;
+            conn.execute_batch(AGENT_CHECKPOINTS_DDL)?;
+            upgrade_v5_to_v6(conn)
         }
         0 => {
             let tx = conn.transaction()?;

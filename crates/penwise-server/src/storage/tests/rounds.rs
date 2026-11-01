@@ -42,7 +42,7 @@ fn a_v4_database_gets_the_rounds_table_and_keeps_its_rows() {
         .pragma_query_value(None, "user_version", |r| r.get(0))
         .expect("version");
     assert_eq!(version, SCHEMA_VERSION);
-    assert_eq!(SCHEMA_VERSION, 5);
+    assert_eq!(SCHEMA_VERSION, 6);
     let columns: Vec<String> = conn
         .prepare("SELECT name FROM pragma_table_info('rounds') ORDER BY cid")
         .expect("columns")
@@ -72,7 +72,7 @@ fn a_v4_database_gets_the_rounds_table_and_keeps_its_rows() {
         .expect("checkpoint survives");
     assert_eq!(seq, 41);
     // Opening again is a no-op.
-    Storage::open(StorageConfig::new(&path)).expect("reopens at v5");
+    Storage::open(StorageConfig::new(&path)).expect("reopens at the current version");
 }
 
 #[tokio::test]
@@ -220,7 +220,7 @@ async fn items_remember_the_seq_of_the_op_that_added_them() {
 }
 
 #[test]
-fn a_dry_run_on_a_v4_database_reports_step_5_pending_and_writes_nothing() {
+fn a_dry_run_on_a_v4_database_reports_step_6_pending_and_writes_nothing() {
     use crate::storage::migrate::{MigrateOptions, migrate};
 
     let dir = penwise_testkit::TempDir::new("v4-dry-run").expect("tempdir");
@@ -239,8 +239,11 @@ fn a_dry_run_on_a_v4_database_reports_step_5_pending_and_writes_nothing() {
     };
     let report = migrate(&path, &options).expect("dry run");
     assert!(report.dry_run && !report.already_current);
-    assert_eq!(report.pending_step, Some(5));
-    assert!(report.to_string().contains("step 5 pending"), "{report}");
+    assert_eq!(report.pending_steps, [5, 6]);
+    assert!(
+        report.to_string().contains("steps 5 and 6 pending"),
+        "{report}"
+    );
     let version = |path: &std::path::Path| -> i64 {
         Connection::open(path)
             .unwrap()
@@ -257,6 +260,6 @@ fn a_dry_run_on_a_v4_database_reports_step_5_pending_and_writes_nothing() {
         },
     )
     .expect("migrate");
-    assert_eq!(applied.applied_step, Some(5));
-    assert_eq!(version(&path), 5);
+    assert_eq!(applied.applied_step, Some(6));
+    assert_eq!(version(&path), 6);
 }

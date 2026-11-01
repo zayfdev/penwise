@@ -153,11 +153,7 @@ pub(crate) fn clear_plan(
         return Ok(None);
     }
     let entries = MarkView::new(scene, &FrameLayouts::new(), true).mark_entries();
-    let kept: BTreeSet<ItemId> = entries
-        .iter()
-        .filter(|entry| protected.contains(&entry.id))
-        .map(|entry| entry.frame)
-        .collect();
+    let kept = frames_with_marks(&entries, protected);
     let doomed: Vec<ItemId> = ids
         .iter()
         .copied()
@@ -183,6 +179,35 @@ pub(crate) fn clear_plan(
         deleted: doomed,
         marks,
     }))
+}
+
+/// Frames that carry a mark in `protected` (drawn after the round was sent): a clear spares them, and a freeze
+/// does not picture them.
+fn frames_with_marks(entries: &[MarkEntry], protected: &BTreeSet<ItemId>) -> BTreeSet<ItemId> {
+    entries
+        .iter()
+        .filter(|entry| protected.contains(&entry.id))
+        .map(|entry| entry.frame)
+        .collect()
+}
+
+/// The frames of `group` that a clear would remove (the ones `clear_plan` deletes), in paint order; the freeze
+/// pictures exactly these.
+pub(crate) fn clearable_frames(
+    scene: &Scene,
+    group: &str,
+    protected: &BTreeSet<ItemId>,
+) -> Vec<ItemId> {
+    let kept = if protected.is_empty() {
+        BTreeSet::new()
+    } else {
+        let entries = MarkView::new(scene, &FrameLayouts::new(), true).mark_entries();
+        frames_with_marks(&entries, protected)
+    };
+    group_frames(scene, group)
+        .into_iter()
+        .filter(|frame| !kept.contains(frame))
+        .collect()
 }
 
 /// `DELETE /variants/<group>` — removes the variant frames, their marks left `done`.

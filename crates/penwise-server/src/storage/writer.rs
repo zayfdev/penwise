@@ -51,6 +51,15 @@ pub(crate) enum Command {
     Compact {
         reply: oneshot::Sender<Result<compact::Step, StorageError>>,
     },
+    StripPage {
+        project: String,
+        row: super::StripPage,
+        reply: oneshot::Sender<Result<(), StorageError>>,
+    },
+    Generations {
+        rows: Vec<super::Generation>,
+        reply: oneshot::Sender<Result<(), StorageError>>,
+    },
     Round {
         op: super::rounds::RoundOp,
         at_ms: u64,
@@ -195,6 +204,16 @@ impl Writer {
                 reply,
             } => {
                 let _ = reply.send(restore::run(self, page, to_seq));
+            }
+            Command::StripPage {
+                project,
+                row,
+                reply,
+            } => {
+                let _ = reply.send(super::strip_pages::attach(&self.conn, &project, &row));
+            }
+            Command::Generations { rows, reply } => {
+                let _ = reply.send(super::generations::record(&mut self.conn, &rows));
             }
             Command::Round { op, at_ms, reply } => {
                 let _ = reply.send(super::rounds::apply(&mut self.conn, &op, at_ms));

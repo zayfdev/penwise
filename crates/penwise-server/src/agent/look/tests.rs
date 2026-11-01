@@ -3,14 +3,18 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
+use std::collections::BTreeMap;
+
 use penwise_core::item::{ItemId, PageKind, Scene};
 use serde_json::json;
 use tiny_skia::Pixmap;
 
 use super::b64;
 use super::digits;
+use super::history::summarize;
 use super::overview::{Numbered, badge_marks};
 use super::text::{FrameLine, Header, MarkRow, Pick, mark_line, render};
+use crate::storage::{Generation, GenerationRole};
 
 fn bundle() -> serde_json::Value {
     json!({
@@ -85,7 +89,7 @@ fn the_text_lists_header_frames_marks_and_picks() {
             ("bold".to_owned(), "b".repeat(32), true),
         ],
     }];
-    let text = render(&header, &frames, &marks, &[], &picks);
+    let text = render(&header, &frames, &marks, &[], &picks, &BTreeMap::new());
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(
         "Penwise: site (prj_site) | board PAGE | round 3 sent | 5 mark(s), 1 open",
@@ -120,7 +124,7 @@ fn an_empty_board_says_so() {
         total: 0,
         open: 0,
     };
-    let text = render(&header, &[], &[], &[], &[]);
+    let text = render(&header, &[], &[], &[], &[], &BTreeMap::new());
     assert!(text.contains("board none yet"), "{text}");
     assert!(text.contains("(none)"));
     assert!(text.contains("(none open)"));
@@ -211,7 +215,7 @@ fn marks_drawn_since_the_send_are_listed_apart_and_numbered_after_the_round() {
         frame: 0,
         bundle: &late,
     }];
-    let text = render(&header, &[], &now, &after, &[]);
+    let text = render(&header, &[], &now, &after, &[], &BTreeMap::new());
     let lines: Vec<&str> = text.lines().collect();
     let at = lines
         .iter()
@@ -222,4 +226,83 @@ fn marks_drawn_since_the_send_are_listed_apart_and_numbered_after_the_round() {
         lines[..at].iter().any(|line| line.starts_with("  1 0123")),
         "the round's mark is listed first"
     );
+}
+
+fn row(round: u32, role: GenerationRole, label: &str, picked: bool) -> Generation {
+    Generation {
+        project: "prj_site".to_owned(),
+        round,
+        route: "/".to_owned(),
+        preset: "desktop".to_owned(),
+        role,
+        label: label.to_owned(),
+        picked,
+        item: "0".repeat(32),
+        asset: "0".repeat(64),
+        w: 1440,
+        h: 900,
+        resolved_ms: 1,
+    }
+}
+
+#[test]
+fn the_history_line_names_the_newest_round_its_pick_and_its_variant_count() {
+    // Newest round first, as the storage lists them.
+    let rows = [
+        row(3, GenerationRole::Og, "", false),
+        row(3, GenerationRole::Variant, "A", true),
+        row(3, GenerationRole::Variant, "B", false),
+        row(2, GenerationRole::Og, "", false),
+        row(2, GenerationRole::Variant, "A", false),
+    ];
+    let lines = summarize(&rows);
+    let lane = ("desktop".to_owned(), "/".to_owned());
+    assert_eq!(
+        lines.get(&lane).map(String::as_str),
+        Some("history: round 3 picked \"A\" (2 variants)")
+    );
+    let unpicked = summarize(&[
+        row(4, GenerationRole::Og, "", false),
+        row(4, GenerationRole::Variant, "A", false),
+    ]);
+    assert_eq!(
+        unpicked.get(&lane).map(String::as_str),
+        Some("history: round 4 no pick (1 variant)")
+    );
+    let bare = summarize(&[row(5, GenerationRole::Og, "", false)]);
+    assert_eq!(
+        bare.get(&lane).map(String::as_str),
+        Some("history: round 5 (no variants)")
+    );
+}
+
+#[test]
+fn look_prints_the_history_line_once_under_the_lanes_first_frame() {
+    let header = Header {
+        project: "site (prj_site)".to_owned(),
+        board: Some("PAGE".to_owned()),
+        round: 4,
+        status: "open",
+        total: 0,
+        open: 0,
+    };
+    let frame = |id: char| FrameLine {
+        id: id.to_string().repeat(32),
+        preset: "desktop",
+        route: "/".to_owned(),
+        label: String::new(),
+        css: [1440, 900],
+        box_size: [1440.0, 3200.0],
+    };
+    let history = summarize(&[
+        row(3, GenerationRole::Og, "", false),
+        row(3, GenerationRole::Variant, "A", true),
+    ]);
+    let text = render(&header, &[frame('a'), frame('b')], &[], &[], &[], &history);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines[3], "    history: round 3 picked \"A\" (1 variant)",
+        "{text}"
+    );
+    assert_eq!(text.matches("history:").count(), 1, "{text}");
 }

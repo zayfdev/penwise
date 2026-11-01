@@ -85,7 +85,7 @@ fn every_historical_shape_migrates_with_counts_preserved() {
             .expect("count");
         assert_eq!(items as usize, page.migrated, "page {}", page.id);
     }
-    assert_eq!(scalar(&path, "PRAGMA user_version"), 5);
+    assert_eq!(scalar(&path, "PRAGMA user_version"), 6);
     assert_eq!(
         scalar(&path, "SELECT COUNT(*) FROM legacy_unmigrated") as u64,
         report.unmigrated
@@ -263,7 +263,7 @@ fn a_fault_after_some_inserts_leaves_the_v3_database_untouched() {
         },
     )
     .expect("retry");
-    assert_eq!(scalar(&path, "PRAGMA user_version"), 5);
+    assert_eq!(scalar(&path, "PRAGMA user_version"), 6);
 }
 
 #[test]
