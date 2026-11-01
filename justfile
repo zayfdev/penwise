@@ -68,6 +68,12 @@ install:
 device-check:
     scripts/device-check.sh
 
+# On-device QA on the connected tablet: real numbers per behaviour, a pass/fail table, JSON report + screenshots in
+# target/device-qa/<timestamp>/. `just device-qa` runs every group; `just device-qa scroll glue` runs those only.
+# Groups: open scroll ink glue lifecycle network reload fixtures round memory. See docs/device-qa.md.
+device-qa *GROUPS:
+    flock /tmp/penwise-device.lock node scripts/device-qa/run.mjs {{GROUPS}}
+
 # libpenwise_ffi.so for Android (Gradle runs the same build automatically) → target/jniLibs/arm64-v8a/.
 ffi:
     ANDROID_NDK_HOME="$ANDROID_HOME/ndk/30.0.16248370" cargo ndk -t arm64-v8a -P 34 -o target/jniLibs build --release -p penwise-ffi
