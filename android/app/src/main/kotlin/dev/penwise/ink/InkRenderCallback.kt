@@ -6,6 +6,7 @@ import android.graphics.Color
 import android.graphics.RectF
 import androidx.core.graphics.withClip
 import androidx.graphics.lowlatency.CanvasFrontBufferedRenderer
+import androidx.graphics.surface.SurfaceControlCompat
 
 /**
  * Front layer: the newest frame of the gesture in flight, drawn through the [viewport] transform (clearing only the
@@ -32,6 +33,10 @@ internal class InkRenderCallback(
 
     @Volatile
     private var cache: SceneRenderCache? = null
+
+    /** Runs on the render thread when a multi-buffered frame is handed to the screen ([RedrawGate.landed]). */
+    @Volatile
+    var onLanded: () -> Unit = {}
 
     /** Shows [scene] (or nothing); the next multi-buffered draw repaints the page from it. */
     fun attach(scene: PageScene?) {
@@ -97,6 +102,12 @@ internal class InkRenderCallback(
     ) {
         dry.drawInto(canvas, cache, style(), viewport.transform, viewport.gesturing, paper())
     }
+
+    override fun onMultiBufferedLayerRenderComplete(
+        frontBufferedLayerSurfaceControl: SurfaceControlCompat,
+        multiBufferedLayerSurfaceControl: SurfaceControlCompat,
+        transaction: SurfaceControlCompat.Transaction,
+    ) = onLanded()
 
     private companion object {
         const val NO_STROKE = -1L

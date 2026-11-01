@@ -51,6 +51,9 @@ class InkSurfaceView
 
         /** The surface is above the window and carries ink only: live pages are drawn by the window below it. */
         private var overFrames = false
+
+        /** One page redraw in flight at a time (see [RedrawGate]). */
+        private val redraws = RedrawGate { renderer?.takeIf { it.isValid() }?.renderMultiBufferedLayer(REDRAW) != null }
         private val viewListener: (ViewTransform) -> Unit = { onViewChanged() }
         private var camera: CameraChoreographer? = null
 
@@ -132,6 +135,8 @@ class InkSurfaceView
                 InkRenderCallback(live, viewport, { pageStyle }, { images }, { post(::redrawPage) }, { !overFrames })
             callback = draw
             draw.attach(current)
+            draw.onLanded = { if (redraws.landed()) post(::redrawPage) }
+            redraws.reset()
             renderer = CanvasFrontBufferedRenderer(this, draw)
             controller = newController(current)
             brushes?.selection?.onCleared = ::cancelStroke
@@ -282,6 +287,8 @@ class InkSurfaceView
             width: Int,
             height: Int,
         ) {
+            // The renderer rebuilt its layers for the new surface: a redraw sent to the old ones will not land.
+            redraws.reset()
             callback?.invalidate()
             redrawPage()
         }
@@ -297,9 +304,7 @@ class InkSurfaceView
             scene?.undo()
         }
 
-        private fun redrawPage() {
-            renderer?.renderMultiBufferedLayer(REDRAW)
-        }
+        private fun redrawPage() = redraws.request()
 
         /** The view moved: repaint the page, and the selection frame (it lives on the front layer in page space). */
         private fun onViewChanged() {

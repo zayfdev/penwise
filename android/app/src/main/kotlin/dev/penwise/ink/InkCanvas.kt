@@ -29,6 +29,10 @@ fun InkCanvas(
             InkSurfaceView(context).apply {
                 bind(scene, brushes, viewport, images, liveOut, pen)
                 setPageStyle(style)
+                // Before the view is attached: the surface's z-order and format are fixed for its life. Switching them
+                // later recreates the surface under the low-latency renderer, which then never draws again (Tab S9:
+                // no ink on a board). The stage composes a new canvas when frames come or go.
+                setFrames(frames)
             }
         },
         update = { view ->
