@@ -40,9 +40,21 @@ internal object PageOps {
     ) {
         entry.spec = spec
         entry.pixels = pixels
+        entry.reflowing = true
         entry.view.viewportMeta = pixels.viewportMeta(spec.cssWidth)
         entry.view.layoutParams = FrameLayout.LayoutParams(pixels.width, pixels.height)
         entry.view.evaluateJavascript(VIEWPORT_JS, null)
+    }
+
+    /** The window changed (a rotation): every page is laid out again for it, keeping its document and scroll. */
+    fun relayout(
+        entries: List<FrameEntry>,
+        pixelsOf: (FrameSpec) -> PagePixels,
+    ) {
+        for (entry in entries) {
+            val pixels = pixelsOf(entry.spec)
+            if (pixels != entry.pixels) resize(entry, entry.spec, pixels)
+        }
     }
 
     /** Loads one frame's page again (the chip's reload); its scroll position comes back through the bridge. */

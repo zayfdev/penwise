@@ -48,6 +48,9 @@ internal class FrameEntry(
 
     override val pxPerCss: Float get() = pixels.pxPerCss
 
+    /** Set by [PageOps.resize] until the page's new zoom has taken ([FrameLayer] clears it). */
+    override var reflowing = false
+
     /** The core's box height: the frame's document, measured or hinted, never less than the preset. */
     override val documentHeight: Float get() = spec.boxHeight.toFloat()
 
@@ -58,6 +61,10 @@ internal class FrameEntry(
 
     override fun stopFling() = view.flingScroll(0, 0)
 
-    /** The live window on the board, from the page's actual scroll and the frame's position now. */
-    fun window(): FrameRect = base.rect(spec, cssX, cssY)
+    /** The document's live height in CSS px: the box, the bridge's last report and the WebView's content height. */
+    private val liveDocument: Float
+        get() = ScrollLink.liveDocument(documentHeight, scroll.docHeight.toFloat(), view.contentHeight.toFloat())
+
+    /** The live window on the board, from the page's actual scroll (held to the document's end) and the frame now. */
+    fun window(): FrameRect = base.rect(spec, cssX, cssY, liveDocument)
 }

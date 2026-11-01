@@ -81,4 +81,39 @@ class ScrollLinkTest {
     private companion object {
         const val EPS = 1e-3f
     }
+
+    private val tablet =
+        FrameSpec("f", "p", "/", "tablet", "http://x/", 0f, 100f, 834, 1194, full = true, boxHeight = 5000)
+
+    @Test
+    fun the_window_is_never_drawn_past_the_documents_live_end() {
+        // Tab S9 portrait, tablet preset: the WebView's offset rounded up to 3806.69 of a 3806 maximum, the window hung
+        // off the screen, Chromium shrank the visual viewport and the offset ran on to 3816.
+        val base = WindowBase(0f, 0f, 3806f, 3806f, moves = true)
+        val live = ScrollLink.liveDocument(5000f, 5000f, 5000f)
+        // Held at the live end, the window stays where the core put it for the real maximum scroll.
+        assertEquals(100f, base.rect(tablet, 0f, 3816.07f, live).y, 0f)
+        assertEquals(100f + 900f - 3806f, base.rect(tablet, 0f, 900f, live).y, 0f)
+    }
+
+    @Test
+    fun a_box_that_has_not_reached_the_app_does_not_pin_the_window() {
+        // boxHeight falls back to the preset height before the server's size arrives: the bridge's and the WebView's
+        // own document height decide, and with none of them known nothing is clamped.
+        val unknown = tablet.copy(boxHeight = 1194)
+        val base = WindowBase(0f, 0f, 0f, 0f, moves = true)
+        val fromBridge = ScrollLink.liveDocument(1194f, 5000f, 0f)
+        assertEquals(100f + 2000f, base.rect(unknown, 0f, 2000f, fromBridge).y, 0f)
+        val fromContent = ScrollLink.liveDocument(1194f, 0f, 5000f)
+        assertEquals(100f + 2000f, base.rect(unknown, 0f, 2000f, fromContent).y, 0f)
+        val nothing = ScrollLink.liveDocument(1194f, 0f, 0f)
+        assertEquals(100f + 2000f, base.rect(unknown, 0f, 2000f, nothing).y, 0f)
+    }
+
+    @Test
+    fun a_document_that_grew_past_the_box_is_followed() {
+        val base = WindowBase(0f, 0f, 0f, 0f, moves = true)
+        val live = ScrollLink.liveDocument(5000f, 5200f, 5400f)
+        assertEquals(100f + 4000f, base.rect(tablet, 0f, 4000f, live).y, 0f)
+    }
 }

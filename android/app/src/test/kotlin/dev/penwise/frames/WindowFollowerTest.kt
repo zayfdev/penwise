@@ -19,6 +19,7 @@ class WindowFollowerTest {
         override var cssX = 0f
         override var cssY = 0f
         override var needsAlign = false
+        override var reflowing = false
         override val documentHeight = 6000f
         var scrolledTo: Int? = null
         var flingStopped = 0
@@ -60,6 +61,18 @@ class WindowFollowerTest {
 
     /** The WebView scrolled to [cssY] CSS px. */
     private fun scrollTo(cssY: Float) = follower.onScroll(target, 0, (cssY * DENSITY).toInt())
+
+    @Test
+    fun a_scroll_while_the_page_is_reflowing_does_not_carry_the_camera() {
+        // A rotation near the end of a long page: the old zoom's device px read with the new pxPerCss.
+        target.cssY = 3000f
+        target.reflowing = true
+        follower.fingerDown()
+        scrollTo(3500f)
+        assertEquals(ViewTransform.IDENTITY, viewport.transform)
+        assertEquals(3000f, target.cssY, 0f)
+        assertEquals(1, placed)
+    }
 
     @Test
     fun a_scroll_by_the_owners_finger_pans_the_camera_with_the_page() {

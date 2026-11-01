@@ -45,6 +45,13 @@ internal class FrameLayer(
     /** The element keys each frame's bound strokes need; a `pw:watch` goes out when this changes. */
     private var watch: Map<String, List<String>> = emptyMap()
     private val settle = Runnable { settled() }
+    private val relayout =
+        Runnable {
+            PageOps.relayout(pages.all(), pages.pixelsOf)
+            sync()
+            scheduleReflowed()
+        }
+    private val reflowed = Runnable { reflowed() }
     private var active = true
 
     /** What the layer tells the screen around it (set by the stage). */
@@ -74,7 +81,14 @@ internal class FrameLayer(
     private val gestures = FrameGestures(touch, ViewConfiguration.get(context).scaledTouchSlop.toFloat())
     private val penHits = FramePenHits(LayerPenHost(lookup, stills, { scene }))
     private val pages: LivePages =
-        LivePages(this, context, ::deliver, { entry, x, y -> onPageScroll(entry, x, y) }) { gestures.release(it) }
+        LivePages(
+            this,
+            context,
+            ::deliver,
+            { entry, x, y -> onPageScroll(entry, x, y) },
+            { gestures.release(it) },
+            ::windowSize,
+        )
     private val lock: LayerLock = LayerLock({ viewport }, { specs }, ::applyFocus, callbacks::lockChanged)
     private val edges: EdgeSwipeRouter =
         EdgeSwipeRouter(
@@ -152,6 +166,7 @@ internal class FrameLayer(
         specs = next
         for (id in plan.close) closeFrame(id)
         pages.update(plan, next)
+        if (plan.resize.isNotEmpty()) scheduleReflowed()
         sync()
         for (entry in pages.all()) PageOps.sendPatch(entry)
         scheduleSettle()
@@ -216,6 +231,8 @@ internal class FrameLayer(
     /** Destroys the WebViews and stops the stills (page leave); a frame that comes back is opened again. */
     fun release() {
         removeCallbacks(settle)
+        removeCallbacks(relayout)
+        removeCallbacks(reflowed)
         // The camera is freed while the layer still knows it.
         lock.release()
         viewport?.observers?.remove(follow)
@@ -299,6 +316,27 @@ internal class FrameLayer(
         if (follower.owes) scheduleSettle()
     }
 
+    private fun scheduleReflowed() {
+        removeCallbacks(reflowed)
+        postDelayed(reflowed, REFLOW_MS)
+    }
+
+    /**
+     * A re-laid-out page has had time to take its new zoom: its scroll offset is read again in the new pixels, without
+     * carrying the camera, and the window is made to cover what is on screen at the next settle.
+     */
+    private fun reflowed() {
+        for (entry in pages.all()) {
+            if (!entry.reflowing) continue
+            entry.reflowing = false
+            entry.cssX = ScrollLink.cssOffset(entry.view.scrollX, entry.pxPerCss)
+            entry.cssY = ScrollLink.cssOffset(entry.view.scrollY, entry.pxPerCss)
+            entry.needsAlign = true
+        }
+        sync()
+        scheduleSettle()
+    }
+
     private fun scheduleSettle() {
         removeCallbacks(settle)
         postDelayed(settle, SETTLE_MS)
@@ -343,9 +381,34 @@ internal class FrameLayer(
 
     private val density: Float get() = resources.displayMetrics.density
 
+    /** The window the pages are laid out for: this layer once it has a size, the display before that. */
+    private fun windowSize(): WindowSize {
+        if (width > 0 && height > 0) return WindowSize(width, height)
+        val metrics = resources.displayMetrics
+        return WindowSize(metrics.widthPixels, metrics.heightPixels)
+    }
+
+    override fun onSizeChanged(
+        w: Int,
+        h: Int,
+        oldw: Int,
+        oldh: Int,
+    ) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        // A rotation: each page is laid out for the new window (its CSS size and scroll stay), then placed again. Not
+        // from inside this layout pass: a child's layout params changed now would be measured only by the next one.
+        if (w != oldw || h != oldh) {
+            removeCallbacks(relayout)
+            post(relayout)
+        }
+    }
+
     private companion object {
         /** The camera must rest this long before the focus rule looks at it again. */
         const val SETTLE_MS = 150L
+
+        /** A re-laid-out page takes its new viewport <meta> and zoom within this long. */
+        const val REFLOW_MS = 700L
 
         /** An edge swipe goes this far inwards. */
         const val EDGE_TRAVEL_DP = 56f

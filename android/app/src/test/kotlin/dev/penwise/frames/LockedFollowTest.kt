@@ -21,6 +21,7 @@ class LockedFollowTest {
         override var cssX = 0f
         override var cssY = 0f
         override var needsAlign = false
+        override val reflowing = false
         override val documentHeight = 6000f
 
         var onScrolled: ((Int) -> Unit)? = null

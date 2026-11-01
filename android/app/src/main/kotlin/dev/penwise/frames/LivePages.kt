@@ -15,6 +15,7 @@ internal class LivePages(
     private val sink: (frameId: String, message: FrameMessage) -> Unit,
     private val onScroll: ScrollListenerFor,
     private val onRelease: (FrameEntry) -> Unit,
+    private val windowSize: () -> WindowSize,
 ) {
     private val slots =
         PageSlots<FrameEntry>({ it.spec.id }, ::open, ::wake, ::park, ::destroy)
@@ -39,10 +40,13 @@ internal class LivePages(
     ) {
         for (id in plan.close) close(id)
         for (spec in plan.load) entry(spec.id)?.let { PageOps.load(it, spec) }
-        val metrics = context.resources.displayMetrics
-        for (spec in plan.resize) entry(spec.id)?.let { PageOps.resize(it, spec, PagePixels.on(spec, metrics)) }
+        for (spec in plan.resize) entry(spec.id)?.let { PageOps.resize(it, spec, pixelsOf(spec)) }
         for (spec in next) entry(spec.id)?.spec = spec
     }
+
+    /** The pixels [spec]'s page has in the window as it is now. */
+    val pixelsOf: (FrameSpec) -> PagePixels =
+        { spec -> PagePixels.on(spec, context.resources.displayMetrics.density, windowSize()) }
 
     /** Destroys every page (page leave). */
     fun destroyAll() = slots.destroyAll()
@@ -68,7 +72,7 @@ internal class LivePages(
     }
 
     private fun open(spec: FrameSpec): FrameEntry {
-        val pixels = PagePixels.on(spec, context.resources.displayMetrics)
+        val pixels = pixelsOf(spec)
         val view = FrameViews.open(context, spec, pixels) { message -> sink(spec.id, message) }
         val entry = FrameEntry(spec, view, pixels)
         view.onScroll = ScrollListener { x, y -> onScroll.scrolled(entry, x, y) }

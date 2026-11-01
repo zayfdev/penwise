@@ -41,6 +41,9 @@ internal interface FollowTarget {
     /** The window should still be made to cover the visible part (a fresh or woken page). */
     var needsAlign: Boolean
 
+    /** The page was re-laid out and its zoom has not taken yet: its scroll offsets mean nothing for now. */
+    val reflowing: Boolean
+
     /** The document height in CSS px, at least the frame's box. */
     val documentHeight: Float
 
@@ -92,6 +95,12 @@ internal class WindowFollower(
         left: Int,
         top: Int,
     ) {
+        if (target.reflowing) {
+            // Device px of the old zoom read with the new pxPerCss: not the owner's scroll, and not the camera's to
+            // carry. The layer reads the offset again once the zoom has taken.
+            place()
+            return
+        }
         val x = ScrollLink.cssOffset(left, target.pxPerCss)
         val y = ScrollLink.cssOffset(top, target.pxPerCss)
         val dx = x - target.cssX

@@ -22,13 +22,20 @@ class WindowBase(
         frame: FrameSpec,
         cssX: Float,
         cssY: Float,
+        documentHeight: Float = 0f,
     ): FrameRect =
         FrameRect(
             frame.x + relX + if (moves) cssX - scrollX else 0f,
-            frame.y + relY + if (moves) cssY - scrollY else 0f,
+            frame.y + relY + if (moves) windowY(cssY, documentHeight, frame) - scrollY else 0f,
             frame.cssWidth.toFloat(),
             frame.cssHeight.toFloat(),
         )
+
+    private fun windowY(
+        cssY: Float,
+        documentHeight: Float,
+        frame: FrameSpec,
+    ) = ScrollLink.windowScroll(cssY, documentHeight, frame.cssHeight.toFloat())
 
     companion object {
         /** Before the core has said anything: the window sits at the frame's own corner. */
@@ -43,6 +50,28 @@ object ScrollLink {
         devicePx: Int,
         pxPerCss: Float,
     ): Float = devicePx / pxPerCss
+
+    /**
+     * The page scroll the live window is drawn at: [cssY] held to the document's live end. The WebView's own offset
+     * rounds up to whole device px and can sit a px or two past the page's real maximum; a window drawn there hangs
+     * off the screen's end, Chromium then shrinks the page's visual viewport and the offset runs further (a loop).
+     * An end that is not known ([documentHeight] no taller than the window) clamps nothing.
+     */
+    fun windowScroll(
+        cssY: Float,
+        documentHeight: Float,
+        windowHeight: Float,
+    ): Float = if (documentHeight <= windowHeight) cssY else cssY.coerceAtMost(documentHeight - windowHeight)
+
+    /**
+     * The document's live height in CSS px: the tallest of the frame's box (it reaches the app late), the bridge's last
+     * report (it comes after the scroll event) and the WebView's own content height (always current).
+     */
+    fun liveDocument(
+        boxHeight: Float,
+        bridgeHeight: Float,
+        contentHeight: Float,
+    ): Float = max(boxHeight, max(bridgeHeight, contentHeight))
 
     /**
      * The camera translation (screen px) along one axis that keeps the content under the finger when the page scrolled
