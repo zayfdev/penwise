@@ -42,7 +42,8 @@ private const val THUMB_HALO = 0x66000000
 /**
  * A hue ring with a saturation/value square inside it, for any colour. [rgb] is the colour shown; dragging the ring
  * changes the hue, dragging the square the saturation and value, and each change goes to [onPick] as `0xRRGGBB`.
- * [onEnd] fires when a drag ends, once per pick. The hue is kept while the colour is a grey (where RGB has none).
+ * [onEnd] fires when a drag ends, once per pick. The hue is kept while the colour is a grey (where RGB has none), and
+ * the ring shows no marker for a colour without a hue.
  */
 @Composable
 internal fun ColourWheel(
@@ -131,7 +132,8 @@ private fun DrawScope.drawWheel(
         box,
         round,
     )
-    thumb(geometry.ringPoint(hsv.hue), RING_THUMB_DP.dp.toPx(), pure)
+    // Black and greys have no hue, so the ring shows no marker for them instead of one parked on red.
+    if (ColourMath.hasHue(hsv)) thumb(geometry.ringPoint(hsv.hue), RING_THUMB_DP.dp.toPx(), pure)
     thumb(geometry.squarePoint(hsv.saturation, hsv.value), SQUARE_THUMB_DP.dp.toPx(), null)
 }
 

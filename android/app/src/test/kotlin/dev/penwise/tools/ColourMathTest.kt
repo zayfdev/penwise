@@ -1,6 +1,7 @@
 package dev.penwise.tools
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -79,5 +80,21 @@ class ColourMathTest {
         val dragged = ColourMath.withHue(colour, 200f)
         assertEquals(0.6f, dragged.saturation, 0f)
         assertEquals(0.8f, dragged.value, 0f)
+    }
+
+    @Test
+    fun black_greys_and_near_black_ink_have_no_hue_to_mark_on_the_ring() {
+        assertFalse(ColourMath.hasHue(ColourMath.fromRgb(Palette.INK_BLACK)))
+        assertFalse(ColourMath.hasHue(ColourMath.fromRgb(Palette.GRAPHITE)))
+        assertFalse(ColourMath.hasHue(ColourMath.fromRgb(0x14141E)))
+        assertFalse(ColourMath.hasHue(ColourMath.fromRgb(0xFFFFFF)))
+    }
+
+    @Test
+    fun real_colours_have_a_hue_to_mark_on_the_ring() {
+        assertTrue(ColourMath.hasHue(ColourMath.fromRgb(Palette.RED)))
+        assertTrue(ColourMath.hasHue(ColourMath.fromRgb(Palette.BLUE)))
+        assertTrue(ColourMath.hasHue(ColourMath.fromRgb(Palette.GREEN)))
+        assertTrue(ColourMath.hasHue(ColourMath.fromRgb(Palette.ORANGE)))
     }
 }

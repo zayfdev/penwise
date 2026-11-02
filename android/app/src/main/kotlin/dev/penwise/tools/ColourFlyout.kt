@@ -134,13 +134,20 @@ private fun RecentDot(
     onClick: () -> Unit,
 ) {
     val colors = ChromeStyle.colors
+    // Dark ink gets a brighter outline so its swatch still shows on the dark panel.
+    val ring =
+        when {
+            selected -> colors.accent
+            Palette.isDarkInk(rgb) -> colors.textMuted
+            else -> colors.tileBorder
+        }
     Box(
         Modifier
             .size(RECENT_DP.dp)
             .semantics { contentDescription = ColourMath.hex(rgb) }
             .clip(CircleShape)
             .background(Color(rgb or OPAQUE))
-            .border(RING_LINE_DP.dp, if (selected) colors.accent else if (Palette.isDarkInk(rgb)) colors.textMuted else colors.tileBorder, CircleShape)
+            .border(RING_LINE_DP.dp, ring, CircleShape)
             .clickable(role = Role.RadioButton, onClick = onClick),
     )
 }

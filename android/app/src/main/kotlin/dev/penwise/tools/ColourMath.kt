@@ -64,7 +64,13 @@ internal object ColourMath {
     fun withHue(
         from: Hsv,
         hue: Float,
-    ): Hsv = if (from.saturation < MIN_VISIBLE || from.value < MIN_VISIBLE) Hsv(hue, 1f, 1f) else from.copy(hue = hue)
+    ): Hsv = if (hasHue(from)) from.copy(hue = hue) else Hsv(hue, 1f, 1f)
+
+    /**
+     * Whether [hsv] shows a hue at all. Black, greys and the nearly black default ink don't: their hue reads as 0, so a
+     * ring marker for them would sit on red and look like red is picked.
+     */
+    fun hasHue(hsv: Hsv): Boolean = hsv.saturation >= MIN_VISIBLE && hsv.value >= MIN_VISIBLE
 
     /** `#RRGGBB`. */
     fun hex(rgb: Int): String = "#%06X".format(rgb and RGB_MASK)
