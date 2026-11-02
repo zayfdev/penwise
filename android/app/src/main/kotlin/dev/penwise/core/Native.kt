@@ -48,4 +48,7 @@ internal object Native {
 
     /** Default `0xAARRGGBB` color of every preset, in `Preset::ALL` order. */
     external fun presetDefaultArgb(): IntArray
+
+    /** What an `0xAARRGGBB` ink means to the agent: `problem`, `idea`, `good` or `none` (core `marks::colour`). */
+    external fun colourMeaning(argb: Int): String
 }

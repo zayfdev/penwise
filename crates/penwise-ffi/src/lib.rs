@@ -209,3 +209,18 @@ pub extern "system" fn Java_dev_penwise_core_Native_presetDefaultArgb<'local>(
     })
     .resolve::<ThrowRuntimeExAndDefault>()
 }
+
+/// What the ink `argb` (`0xAARRGGBB` as an Android colour int) means to the agent: `"problem"`, `"idea"`, `"good"` or
+/// `"none"`. The tablet's colour flyout shows it, so it reads the same rule the server applies and never repeats it.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_penwise_core_Native_colourMeaning<'local>(
+    mut env: EnvUnowned<'local>,
+    _this: JObject<'local>,
+    argb: jint,
+) -> JObject<'local> {
+    env.with_env(|env| -> Result<_, FfiError> {
+        let name = penwise_core::marks::colour_meaning(argb.cast_unsigned()).as_str();
+        Ok(JObject::from(env.new_string(name)?))
+    })
+    .resolve::<ThrowRuntimeExAndDefault>()
+}

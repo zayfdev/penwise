@@ -90,7 +90,7 @@ picks:
 - `frames:` lists the board's frames (id, preset, route, label, size, and the box on the board: the whole document
   for a full-length frame). `f1`, `f2` tag the marks.
 - One line per mark: its number, id, frame tag, status, kind guess (`circle`, `arrow`, `cross`, `wavy`, `box_new`,
-  `strike`, `underline`, `free`), colour meaning (`red/problem`, `blue/idea`, `green/good`, else `ink`), the
+  `strike`, `underline`, `free`), colour meaning (`red/problem`, `blue/idea`, `green/good`, else `ink`: only the three pinned colours carry a meaning), the
   handwriting in quotes, the element selector (or `@x,y WxH` for an area mark with no element), `→` the element an
   arrow points at, up to three `file:line` sources (the component first), and up to three key computed styles.
 - `picks:` lists every variant group with the frame the owner chose (`no pick yet` before a choice).

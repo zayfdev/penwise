@@ -181,6 +181,9 @@ Colours carry meaning:
 - **Blue ink** — an idea.
 - **Green ink** — good, keep.
 
+Only those three pinned colours (the red, blue and green buttons in the colour flyout) carry a meaning. Any other
+colour, from the wheel or the recents, is a plain note that the agent reads like handwriting.
+
 ### Choose bound or area
 
 The **Element / Area** button in the mini bar sets how new marks attach:

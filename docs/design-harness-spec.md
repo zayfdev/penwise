@@ -111,6 +111,11 @@ sequenceDiagram
 | **Green** ink | Good, keep |
 | Anything else, handwriting | Read freely by the agent |
 
+Only the three pinned colours carry a meaning: ink within 15 degrees of hue of the tablet's pinned red `#D62F2F`,
+blue `#1F5FD6` or green `#2E9E4F` (and a real colour: saturation 0.40 or more, value 0.35 or more). Orange, yellow,
+purple, cyan and every other colour, and black, grey and white, are plain notes. The meaning is computed from the
+ink's ARGB when the mark is read (`penwise-core` `marks::colour`); it is not stored with the mark.
+
 Recognition is a hint, not a rule: the server classifies each mark (`kind`, `confidence`) with simple geometry
 and the agent sees both the hint and the image.
 

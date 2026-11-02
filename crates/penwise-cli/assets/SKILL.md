@@ -48,7 +48,8 @@ not the canvas: report files and lines you changed there.
 | Line through text | Change this text; handwriting nearby is the new text |
 | Anything else, handwriting | Read freely |
 
-Colours: **red** = problem, **blue** = idea, **green** = good, keep. The kind is a hint with a confidence,
+Colours: **red** = problem, **blue** = idea, **green** = good, keep; only those three exact pinned colours mean
+anything, every other ink colour is a plain note. The kind is a hint with a confidence,
 not a rule: read the handwriting and the image too. A `reopened` mark means the owner is asking again.
 
 ## Board model

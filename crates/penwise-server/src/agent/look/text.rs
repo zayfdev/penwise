@@ -183,7 +183,7 @@ pub(super) fn mark_line(index: usize, frame: usize, bundle: &Value) -> String {
     line
 }
 
-/// `red/problem`, `blue/idea`, `green/good`, else plain ink.
+/// `red/problem`, `blue/idea`, `green/good` (the three pinned colours), else plain ink.
 fn colour_name(meaning: &str) -> &'static str {
     match meaning {
         "problem" => "red/problem",

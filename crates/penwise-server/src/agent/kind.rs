@@ -31,7 +31,8 @@ pub(crate) fn shape(strokes: &[&StrokeItem], rect: Option<[f32; 4]>) -> Shape {
     }
 }
 
-/// What the ink colour means: `problem` (red), `idea` (blue), `good` (green), else `none`.
+/// What the ink colour means: `problem` (the pinned red), `idea` (the pinned blue), `good` (the pinned green), else
+/// `none` (a plain note). Computed from the ARGB on every read, never stored.
 pub(crate) fn colour(argb: u32) -> &'static str {
     colour_meaning(argb).as_str()
 }
