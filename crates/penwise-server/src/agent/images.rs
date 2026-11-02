@@ -200,20 +200,55 @@ fn clip_rect(doc: [f32; 4]) -> Result<[i32; 4], AgentError> {
     Ok(rect)
 }
 
-/// One screenshot of `rect` (document px) as a pixmap.
+/// One screenshot of `rect` (document px) as a pixmap of exactly `rect`'s size.
+///
+/// Chromium drops a `captureBeyondViewport` clip's offset when the clip starts left of or above the document
+/// (it returns the top of the page), so only the part at `x, y ≥ 0` is captured and it is placed at its offset
+/// in a transparent pixmap: a crop of a mark near the frame's left edge stays where the mark is.
 async fn screenshot(
     inspect: &Inspect,
     view: &FrameView,
     rect: [i32; 4],
 ) -> Result<Pixmap, AgentError> {
+    let inside = inside_document(rect);
     let clip = Clip::new(
-        f64::from(rect[0]),
-        f64::from(rect[1]),
-        f64::from(rect[2]),
-        f64::from(rect[3]),
+        f64::from(inside[0]),
+        f64::from(inside[1]),
+        f64::from(inside[2]),
+        f64::from(inside[3]),
     );
     let png = inspect.snapshot(&view.page, Some(clip)).await?;
-    Pixmap::decode_png(&png).map_err(|error| AgentError::Internal(format!("crop decode: {error}")))
+    let shot = Pixmap::decode_png(&png)
+        .map_err(|error| AgentError::Internal(format!("crop decode: {error}")))?;
+    if inside == rect {
+        return Ok(shot);
+    }
+    let (Ok(width), Ok(height)) = (u32::try_from(rect[2]), u32::try_from(rect[3])) else {
+        return Err(AgentError::Internal("empty crop".to_owned()));
+    };
+    let mut canvas =
+        Pixmap::new(width, height).ok_or_else(|| AgentError::Internal("empty crop".to_owned()))?;
+    canvas.draw_pixmap(
+        inside[0] - rect[0],
+        inside[1] - rect[1],
+        shot.as_ref(),
+        &tiny_skia::PixmapPaint::default(),
+        tiny_skia::Transform::identity(),
+        None,
+    );
+    Ok(canvas)
+}
+
+/// The part of `rect` (`[x, y, w, h]`, document px) at `x, y ≥ 0`; at least 1 px each way.
+fn inside_document(rect: [i32; 4]) -> [i32; 4] {
+    let left = rect[0].max(0);
+    let top = rect[1].max(0);
+    [
+        left,
+        top,
+        (rect[0] + rect[2] - left).max(1),
+        (rect[1] + rect[3] - top).max(1),
+    ]
 }
 
 /// `shot` (document rect `rect`) with the mark's ink composited where core places it.

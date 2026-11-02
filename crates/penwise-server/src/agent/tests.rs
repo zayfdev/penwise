@@ -493,6 +493,79 @@ async fn frames_open_creates_the_review_page_side_by_side_and_snapshots_png() {
     assert!(height >= 900, "never shorter than the viewport: {height}");
 }
 
+/// Regression (dogfood 2026-11-02): a mark near the frame's left edge, far down a full-length page. Its crop
+/// starts left of the document (x < 0), and Chromium's `captureBeyondViewport` dropped the clip's offset for
+/// such a clip, returning the top of the page; the overview of every mark showed the strokes on the hero.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_mark_at_the_left_edge_far_down_is_cropped_where_it_is() {
+    if !chromium() {
+        eprintln!("skipping: no chromium at /usr/bin/chromium (set PENWISE_CHROMIUM)");
+        return;
+    }
+    let (mut rig, base) = fixture().await;
+    let page = rig.fixed_page().await;
+    let frame = create_frame(&base, page, 0.0, 0.0).await;
+    // Area ink is in document coordinates: a loop at x 10..70, about 3000 px down, inside the blank `#tall`.
+    let binding = Binding::new(
+        frame,
+        BindingMode::Area,
+        penwise_core::item::FramePreset::Phone,
+        None,
+        String::new(),
+        [0.0, 0.0],
+    )
+    .expect("binding");
+    let stroke = rig.item_id();
+    let mark = rig.item_id();
+    let mut item = bound_stroke(stroke, 1, binding);
+    if let ItemKind::Stroke(ink) = &mut item.kind {
+        for sample in &mut ink.samples {
+            sample.y += 3000.0;
+        }
+    }
+    rig.edit(page, Edit::Add(item)).await;
+    rig.edit(
+        page,
+        Edit::Add(
+            MarkItem {
+                frame,
+                preset: penwise_core::item::FramePreset::Phone,
+                status: MarkStatus::New,
+                state: String::new(),
+                strokes: vec![stroke],
+            }
+            .item(mark, 2),
+        ),
+    )
+    .await;
+
+    let body = json(&format!("{base}/marks?project=prj_harness")).await;
+    let bundle = &body["marks"][0];
+    let top = bundle["rect"][1].as_f64().expect("rect y");
+    assert!(top > 2900.0, "the mark sits far down: {bundle}");
+    let path = bundle["images"]["without_ink"].as_str().expect("crop url");
+    let png = reqwest::get(format!("{base}{path}"))
+        .await
+        .expect("crop")
+        .bytes()
+        .await
+        .expect("bytes");
+    let crop = tiny_skia::Pixmap::decode_png(&png).expect("png");
+    // Around y 3000 the page is blank white; the dark heading and buttons are only at the top of the page.
+    let dark = crop
+        .pixels()
+        .iter()
+        .filter(|pixel| {
+            pixel.alpha() == 255
+                && u32::from(pixel.red()) + u32::from(pixel.green()) + u32::from(pixel.blue()) < 384
+        })
+        .count();
+    assert_eq!(
+        dark, 0,
+        "the crop shows the page where the mark is, not the top of the page"
+    );
+}
+
 /* ------------------------------------------------------------------ ghosts and variants (M4, P4) */
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
