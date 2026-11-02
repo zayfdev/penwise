@@ -41,3 +41,7 @@ variable fonts from https://github.com/google/fonts, `ofl/geist` and `ofl/geistm
 https://github.com/vercel/geist-font). Copyright 2024 The Geist Project Authors, licensed under the SIL Open Font
 License 1.1. The licence texts ship in the app at `android/app/src/main/assets/licenses/geist-OFL.txt` and
 `geist-mono-OFL.txt`.
+
+The same two files are the PC viewer's fonts, served from its own bundle (no CDN): `web/src/fonts/Geist.ttf` and
+`GeistMono.ttf` (byte-identical copies of the Android files), with the licence texts beside them in
+`web/src/fonts/geist-OFL.txt` and `geist-mono-OFL.txt`.
