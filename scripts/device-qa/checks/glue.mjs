@@ -4,6 +4,7 @@ import { darkPixels, findShift, verticalShift } from '../png.mjs';
 import { drawStroke, scrollToTop, settle, shot, swipePage } from '../gestures.mjs';
 import * as adb from '../adb.mjs';
 import { ROUTE, openMain } from './open.mjs';
+import glueSkew from './glue-skew.mjs';
 import glueSteps from './glue-steps.mjs';
 
 /** Draws a stroke, scrolls the page by a slow finger swipe, and measures stroke shift vs page shift. */
@@ -61,4 +62,5 @@ export default async function glue(ctx) {
   if (!ctx.frame) await openMain(ctx);
   await glueMeasure(ctx, 'finger scroll');
   await glueSteps(ctx);
+  await glueSkew(ctx);
 }

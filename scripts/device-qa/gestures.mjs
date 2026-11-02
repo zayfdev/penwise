@@ -100,8 +100,12 @@ export async function dragOnStill(ctx, route, { frac = 0.15 } = {}) {
 let out_t0 = 0;
 export async function drawStroke(ctx, { n = 0, wait = true, server = true, line = null } = {}) {
   const s = ctx.screen;
-  const y0 = s.live.h * (0.42 + 0.06 * (n % 5));
-  // `line` [x1, y1, x2, y2] (screen px) draws that segment instead of the n-th default one.
+  // `line` [x1, y1, x2, y2] (screen px) draws that segment instead of the n-th default one. Such strokes do not take
+  // a default slot, so the default strokes keep cycling through the five places (a portrait glue stroke must not land
+  // on a landscape one: same slot, same document point).
+  if (line) ctx.lineStrokes = (ctx.lineStrokes ?? 0) + 1;
+  const slot = n - (line ? 0 : ctx.lineStrokes ?? 0);
+  const y0 = s.live.h * (0.42 + 0.06 * (((slot % 5) + 5) % 5));
   const [x1, y1, x2, y2] = line ?? [s.w * 0.3, y0, s.w * 0.6, y0 + s.live.h * 0.08];
   const marksBefore = server ? (await roundState()).marks : (ctx.offlineMarks ?? 0);
   const before = await shot(ctx, `stroke-${ctx.strokeNo}-before`);
