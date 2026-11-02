@@ -81,6 +81,7 @@ source file over the limit. Generated code (`wasm-bindgen` output) is excluded a
 ## Dependencies
 
 - Licenses: MIT, Apache-2.0, BSD, ISC, Zlib only (enforced by `cargo deny` / license checks). No tldraw.
+- Exception: font files bundled in an app may also be SIL OFL 1.1, with the licence text shipped next to them and listed in `THIRD_PARTY_NOTICES.md` (owner approved 2026-11-02).
 - Add a dependency only when it replaces meaningful code; note the reason in the PR.
 
 ## Commits
