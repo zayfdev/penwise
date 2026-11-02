@@ -710,8 +710,9 @@
       // Change detection works on the DOCUMENT rect (viewport rect + scroll): core stores document rects, so a
       // fixed element (constant viewport rect) or a scroll-anchored one must be resent after a scroll. The
       // message still carries the viewport rect.
+      // Rounded to a hundredth of a px: a fractional scroll leaves float noise in `rect + scroll` that is no move.
       var text = JSON.stringify(
-        rect ? [rect[0] + pos.x, rect[1] + pos.y, rect[2], rect[3]] : null
+        rect ? [hundredths(rect[0] + pos.x), hundredths(rect[1] + pos.y), hundredths(rect[2]), hundredths(rect[3])] : null
       );
       if (lastRects[key] !== text) {
         lastRects[key] = text;
@@ -746,6 +747,10 @@
     };
     takeCause(layout);
     send(layout);
+  }
+
+  function hundredths(value) {
+    return Math.round(value * 100) / 100;
   }
 
   var scheduleLayout = scheduler(layoutNow);
