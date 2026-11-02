@@ -55,6 +55,16 @@ class InkSurfaceView
         /** The surface is above the window and carries ink only: live pages are drawn by the window below it. */
         private var overFrames = false
 
+        /** The committed ink drawn in the window above the pages (frames only); the surface keeps the pen's stroke. */
+        private var dryInk: DryInkView? = null
+
+        /** The committed ink is in the window: read on the render thread. */
+        @Volatile
+        private var inWindow = false
+
+        /** Committed strokes on their way from the front layer to the window ([FrontHandover]). */
+        private val handoff = FrontHandover(this, { callback?.frontLayer }) { renderer?.cancel() }
+
         /** One page redraw in flight at a time (see [RedrawGate]). */
         private val redraws = RedrawGate { renderer?.takeIf { it.isValid() }?.renderMultiBufferedLayer(REDRAW) != null }
         private val viewListener: (ViewTransform) -> Unit = { onViewChanged() }
@@ -104,6 +114,7 @@ class InkSurfaceView
             callback?.attach(next)
             controller = newController(next)
             if (isAttachedToWindow) next.onChanged = ::redrawPage
+            dryInk?.bind(next, images, viewport)
             redrawPage()
         }
 
@@ -118,6 +129,7 @@ class InkSurfaceView
             frames?.cancel()
             frames = host
             frameBindings.delegate = host as? FrameBinder
+            dryInk = (host as? DryInkHost)?.dryInk?.also { it.bind(scene, images, viewport) }
             setOverlay(host != null)
         }
 
@@ -136,8 +148,11 @@ class InkSurfaceView
             requestUnbufferedDispatch(InputDevice.SOURCE_CLASS_POINTER)
             predictor = MotionEventPredictor.newInstance(this)
             val draw =
-                InkRenderCallback(live, viewport, { pageStyle }, { images }, { post(::redrawPage) }, { !overFrames })
+                InkRenderCallback(live, viewport, { pageStyle }, { images }, { post(::redrawPage) }, { !overFrames }) {
+                    inWindow
+                }
             callback = draw
+            draw.handover = handoff
             draw.attach(current)
             draw.onLanded = { if (redraws.landed()) post(::redrawPage) }
             redraws.reset()
@@ -152,6 +167,7 @@ class InkSurfaceView
             current.onChanged = ::redrawPage
             images?.onChanged = {
                 callback?.invalidate()
+                dryInk?.reset()
                 redrawPage()
             }
         }
@@ -252,13 +268,17 @@ class InkSurfaceView
 
         /** Switches the surface between the opaque page (no frames) and an ink-only overlay above the window. */
         private fun setOverlay(over: Boolean) {
+            inWindow = over && dryInk != null
             if (over == overFrames) return
             overFrames = over
+            // The surface's own committed-ink cache saw none of the changes the window read meanwhile.
+            scene?.let { callback?.attach(it) }
             // Above the window is the only place the ink can be while WebViews live in the window; TRANSLUCENT keeps
             // the punch-out from being an opaque black sheet between the ink and the pages.
             setZOrderOnTop(over)
             holder.setFormat(if (over) PixelFormat.TRANSLUCENT else PixelFormat.OPAQUE)
-            redrawPage()
+            // Also when the window takes over the committed ink: this layer is then cleared once.
+            pacer.request()
         }
 
         private fun penNear(now: Long): Boolean = now < pen.nearUntil
@@ -273,15 +293,25 @@ class InkSurfaceView
         override fun performClick(): Boolean = super.performClick()
 
         override fun requestFrontFrame() {
+            handoff.frontDrawn()
             renderer?.renderFrontBufferedLayer(Unit)
         }
 
         override fun commitStroke() {
-            renderer?.commit()
+            val ink = dryInk.takeIf { inWindow }
+            if (ink == null || !handoff.handOver(ink)) renderer?.commit()
         }
 
         override fun cancelStroke() {
-            renderer?.cancel()
+            // A hand-over on its way clears the front buffer once it lands; clearing it now would show a frame
+            // without the committed stroke.
+            if (handoff.pending) {
+                handoff.abandoned()
+            } else {
+                // The renderer hides and clears the layer itself, also one a hand-over had hidden.
+                renderer?.cancel()
+                handoff.reset()
+            }
         }
 
         override fun surfaceCreated(holder: SurfaceHolder) = Unit
@@ -295,6 +325,7 @@ class InkSurfaceView
         ) {
             // The renderer rebuilt its layers for the new surface: a redraw sent to the old ones will not land.
             redraws.reset()
+            handoff.reset()
             callback?.invalidate()
             redrawPage()
         }
@@ -316,11 +347,15 @@ class InkSurfaceView
         private val choreographer = Choreographer.getInstance()
         private val pacer = RedrawPacer({ frame -> choreographer.postFrameCallback { frame() } }, redraws::request)
 
-        private fun redrawPage() = pacer.request()
+        private fun redrawPage() {
+            val ink = dryInk
+            if (inWindow && ink != null) ink.sceneChanged() else pacer.request()
+        }
 
         /** The view moved: repaint the page, and the selection frame (it lives on the front layer in page space). */
         private fun onViewChanged() {
-            redrawPage()
+            // The window's ink follows the camera by itself, in the window's own frame.
+            if (!inWindow) redrawPage()
             if ((brushes?.selection?.count ?: 0) > 0) requestFrontFrame()
         }
 

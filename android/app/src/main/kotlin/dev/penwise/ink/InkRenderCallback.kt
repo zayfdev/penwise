@@ -22,6 +22,8 @@ internal class InkRenderCallback(
     images: () -> PageImages? = { null },
     onSettled: () -> Unit = {},
     private val paper: () -> Boolean = { true },
+    /** The committed ink is drawn in the window ([DryInkView]): the multi-buffered layer stays empty. */
+    private val inkInWindow: () -> Boolean = { false },
 ) : CanvasFrontBufferedRenderer.Callback<Unit> {
     private val frontPainter = GeometryPainter(images, StampBuffer.HARDWARE_RING)
     private val dry = DryLayer(GeometryPainter(images), images, onSettled)
@@ -37,6 +39,18 @@ internal class InkRenderCallback(
     /** Runs on the render thread when a multi-buffered frame is handed to the screen ([RedrawGate.landed]). */
     @Volatile
     var onLanded: () -> Unit = {}
+
+    /** The front-buffered layer, once it has drawn: the hand-over to the window hides it ([FrontHandover]). */
+    @Volatile
+    var frontLayer: SurfaceControlCompat? = null
+        private set
+
+    /** The hand-over to the window's ink, whose hidden front layer the next stroke's first frame shows again. */
+    @Volatile
+    var handover: FrontHandover? = null
+
+    /** The front frame being drawn starts a stroke on a layer a hand-over hid: show it with this frame. */
+    private var showWithFrame = false
 
     /** Shows [scene] (or nothing); the next multi-buffered draw repaints the page from it. */
     fun attach(scene: PageScene?) {
@@ -60,6 +74,7 @@ internal class InkRenderCallback(
         val view = viewport.transform
         if (frame.strokeId != drawnStrokeId || view != drawnView) {
             canvas.drawColor(Color.TRANSPARENT, BlendMode.CLEAR)
+            if (frame.strokeId != drawnStrokeId && handover?.showWithFrame() == true) showWithFrame = true
             drawnStrokeId = frame.strokeId
             drawnView = view
             drawnPaint = null
@@ -100,7 +115,23 @@ internal class InkRenderCallback(
         bufferHeight: Int,
         params: Collection<Unit>,
     ) {
+        if (inkInWindow()) {
+            // The window draws the committed ink; this layer only has to be empty.
+            canvas.drawColor(Color.TRANSPARENT, BlendMode.CLEAR)
+            return
+        }
         dry.drawInto(canvas, cache, style(), viewport.transform, viewport.gesturing, paper())
+    }
+
+    override fun onFrontBufferedLayerRenderComplete(
+        frontBufferedLayerSurfaceControl: SurfaceControlCompat,
+        transaction: SurfaceControlCompat.Transaction,
+    ) {
+        frontLayer = frontBufferedLayerSurfaceControl
+        if (showWithFrame) {
+            showWithFrame = false
+            transaction.setVisibility(frontBufferedLayerSurfaceControl, true)
+        }
     }
 
     override fun onMultiBufferedLayerRenderComplete(

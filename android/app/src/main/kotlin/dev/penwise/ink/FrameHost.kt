@@ -23,3 +23,8 @@ interface FrameHost {
     /** Abandons the gesture in flight (the pen came down); the page gets a cancel, so no stray click. */
     fun cancel()
 }
+
+/** A frame host that draws the committed ink in the window, above its pages ([DryInkView]). */
+internal interface DryInkHost {
+    val dryInk: DryInkView
+}

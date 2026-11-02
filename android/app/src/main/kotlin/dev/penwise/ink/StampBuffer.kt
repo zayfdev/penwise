@@ -11,7 +11,8 @@ import kotlin.math.roundToInt
  *
  * A hardware canvas records `drawBitmap` and reads the pixels when it replays, after the draw call returned, so a
  * bitmap just drawn must not be rewritten for the next frame: [bitmaps] of them are used in turn (a painter on a
- * software canvas, which reads at once, needs one).
+ * software canvas, which reads at once, needs one). [RECORDED] (0) gives every stroke a bitmap of its own, for a
+ * display list that keeps all of them and replays them every frame.
  */
 internal class StampBuffer(
     bitmaps: Int = 1,
@@ -19,7 +20,8 @@ internal class StampBuffer(
     private var coverage = FloatArray(0)
     private var bytes = ByteArray(0)
     private var paper = FloatArray(0)
-    private val ring = arrayOfNulls<Bitmap>(bitmaps)
+    private val ring = arrayOfNulls<Bitmap>(bitmaps.coerceAtLeast(1))
+    private val fresh = bitmaps == RECORDED
     private var next = 0
 
     /** Pixel position of the last bitmap's top-left corner. */
@@ -60,6 +62,7 @@ internal class StampBuffer(
         w: Int,
         h: Int,
     ): Bitmap {
+        if (fresh) return createBitmap(w, h, Bitmap.Config.ALPHA_8)
         val slot = next
         next = (next + 1) % ring.size
         val existing = ring[slot]
@@ -73,6 +76,9 @@ internal class StampBuffer(
     companion object {
         /** Bitmaps a painter on the hardware front buffer rotates through: drawn, queued and being rewritten. */
         const val HARDWARE_RING = 3
+
+        /** A new bitmap for every stroke: a recorded display list holds on to each one. */
+        const val RECORDED = 0
         private const val BYTE_MAX = 255f
     }
 }

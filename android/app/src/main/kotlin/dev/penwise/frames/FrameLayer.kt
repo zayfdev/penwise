@@ -8,6 +8,8 @@ import android.widget.FrameLayout
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.findViewTreeLifecycleOwner
+import dev.penwise.ink.DryInkHost
+import dev.penwise.ink.DryInkView
 import dev.penwise.ink.FrameBinder
 import dev.penwise.ink.FrameHost
 import dev.penwise.ink.PageScene
@@ -28,13 +30,15 @@ import dev.penwise.ink.ViewportState
  *
  * The parts: [FrameLookup] (where the frames are), [LivePages] (the WebViews), [FrameStills], [FrameGestures] and
  * [FramePenHits] (touch and pen), [WindowFollower] (the scroll link) and [LayerInbox] (the bridge's messages). This
- * class wires them to the camera; [LayerLock] decides who is live.
+ * class wires them to the camera; [LayerLock] decides who is live. The committed ink is drawn above the pages by
+ * [DryInkView], in the same window frame as the page it sits on.
  */
 internal class FrameLayer(
     context: Context,
 ) : FrameLayout(context),
     FrameHost,
-    FrameBinder {
+    FrameBinder,
+    DryInkHost {
     private var specs: List<FrameSpec> = emptyList()
     private var viewport: ViewportState? = null
     private val follow: (ViewTransform) -> Unit = {
@@ -108,8 +112,12 @@ internal class FrameLayer(
             }
         }
 
+    /** The committed ink, above the stills and the live page (raised so the WebViews added later stay below it). */
+    override val dryInk = DryInkView(context).apply { translationZ = INK_Z }
+
     init {
         addView(stills.view, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        addView(dryInk, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
     }
 
     /** The PC server the stills and pen-down hits of non-live frames come from; null while none is known. */
@@ -412,5 +420,8 @@ internal class FrameLayer(
 
         /** An edge swipe goes this far inwards. */
         const val EDGE_TRAVEL_DP = 56f
+
+        /** Above every page view (z 0), so the ink is drawn after them in the same window frame. */
+        const val INK_Z = 1f
     }
 }
