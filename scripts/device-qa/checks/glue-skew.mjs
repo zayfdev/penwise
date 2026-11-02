@@ -112,7 +112,7 @@ const stats = (rows) => ({
 
 /**
  * A horizontal stroke right of the other checks' strokes, then drags and flings both ways while the screen records.
- * Reported as a known gap: the ink is presented on its own surface, apart from the window frame that holds the page.
+ * Over frames the committed ink is drawn in the window, in the same frame as the page ([DryInkView]).
  */
 export default async function glueSkew(ctx) {
   const g = 'glue';
@@ -144,10 +144,10 @@ export default async function glueSkew(ctx) {
     ['fling', moving.filter((r) => Math.abs(r.v) >= FLING_PX)],
   ]) {
     const s = stats(list);
-    ctx.report.gap(g, name(kind), list.length > 0 && s.max <= MAX_SKEW, {
+    ctx.report.check(g, name(kind), list.length > 0 && s.max <= MAX_SKEW, {
       measured: `${s.over} of ${s.frames} recorded frames off by more than ${MAX_SKEW} px; worst ${s.max} px, mean ${s.mean} px`,
       threshold: `|ink shift - page shift| <= ${MAX_SKEW} px in every moving frame`,
-      evidence: `per-frame rows in ${dir}/skew.json; the ink is presented on the SurfaceView's own layer, the page in the window frame, so either can reach the screen a frame before the other`,
+      evidence: `per-frame rows in ${dir}/skew.json`,
     });
   }
   await scrollToTop(ctx, ROUTE);

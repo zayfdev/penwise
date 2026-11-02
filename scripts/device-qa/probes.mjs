@@ -1,19 +1,28 @@
 // Renderer and crash probes: SurfaceFlinger layer frame counts, BufferPool stalls, crash buffer, FATAL lines.
 import { pid, run, sh } from './adb.mjs';
 
-/** Frame counter of the app's MultiBufferedLayer (the low-latency ink renderer); null when there is none. */
+/** The highest `frame=` seen per layer of the renderer: a hidden layer has no such line, so the counter remembers. */
+const layerFrames = new Map();
+
+/**
+ * A counter of the frames the low-latency renderer presented: the frame numbers of its MultiBufferedLayer (the
+ * committed ink off the board's frames) and its FrontBufferedLayer (the pen's stroke), each the highest seen so far.
+ * Over frames the window draws the committed ink and hides the front layer after a stroke until it shows it again,
+ * cleared (`FrontHandover`, about half a second later); the count then includes the stroke's frames. Null when the
+ * app has no such layer.
+ */
 export async function inkFrames() {
   const p = await pid();
   if (!p) return null;
   const dump = await sh('dumpsys SurfaceFlinger', { timeout: 30000 });
   const hex = Number(p).toString(16);
   const owned = new Set();
-  for (const m of dump.matchAll(/MultiBufferedLayer#(\d+) pid=([0-9a-f]+)/g)) if (m[2] === hex) owned.add(m[1]);
-  let best = null;
-  for (const m of dump.matchAll(/Layer \[(\d+)\] MultiBufferedLayer#\d+\s*\n\s*visible reason=.*?frame=(\d+)/g)) {
-    if (owned.has(m[1])) best = Math.max(best ?? 0, Number(m[2]));
+  for (const m of dump.matchAll(/(?:Multi|Front)BufferedLayer#(\d+)[^\n]*? pid=([0-9a-f]+)/g)) if (m[2] === hex) owned.add(m[1]);
+  for (const m of dump.matchAll(/Layer \[(\d+)\] (?:Multi|Front)BufferedLayer#\d+\s*\n\s*visible reason=.*?frame=(\d+)/g)) {
+    if (owned.has(m[1])) layerFrames.set(`${hex}:${m[1]}`, Math.max(layerFrames.get(`${hex}:${m[1]}`) ?? 0, Number(m[2])));
   }
-  return best;
+  const mine = [...layerFrames].filter(([key]) => key.startsWith(`${hex}:`));
+  return mine.length ? mine.reduce((sum, [, n]) => sum + n, 0) : null;
 }
 
 export async function waitInkFramesAbove(base, timeoutMs = 4000) {
