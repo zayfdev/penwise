@@ -98,10 +98,11 @@ export async function dragOnStill(ctx, route, { frac = 0.15 } = {}) {
  * mark count, and the pixels that changed. `n` varies the position so strokes do not stack.
  */
 let out_t0 = 0;
-export async function drawStroke(ctx, { n = 0, wait = true, server = true } = {}) {
+export async function drawStroke(ctx, { n = 0, wait = true, server = true, line = null } = {}) {
   const s = ctx.screen;
   const y0 = s.live.h * (0.42 + 0.06 * (n % 5));
-  const [x1, y1, x2, y2] = [s.w * 0.3, y0, s.w * 0.6, y0 + s.live.h * 0.08];
+  // `line` [x1, y1, x2, y2] (screen px) draws that segment instead of the n-th default one.
+  const [x1, y1, x2, y2] = line ?? [s.w * 0.3, y0, s.w * 0.6, y0 + s.live.h * 0.08];
   const marksBefore = server ? (await roundState()).marks : (ctx.offlineMarks ?? 0);
   const before = await shot(ctx, `stroke-${ctx.strokeNo}-before`);
   const framesBefore = await inkFrames();

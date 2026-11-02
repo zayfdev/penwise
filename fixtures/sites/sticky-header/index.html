@@ -12,6 +12,8 @@
   header h1 { margin: 0; font-size: 24px; }
   main { height: 4920px; padding: 24px; }
   section { height: 600px; margin-bottom: 24px; padding: 16px; background: #eef; border: 2px solid #99c; }
+  /* A column that pins under the header while its section scrolls past (device-qa glue: marks bound to it stay put). */
+  #pin { position: sticky; top: 120px; width: 400px; height: 120px; background: #ffd; border: 1px solid #cc9; }
   #marker { position: absolute; top: 3000px; left: 300px; width: 200px; height: 100px; background: #fa0; }
 </style>
 </head>
@@ -19,7 +21,7 @@
 <header><h1 id="brand">Sticky header</h1></header>
 <main>
   <section id="s1"><h2>One</h2><p>Content.</p></section>
-  <section id="s2"><h2>Two</h2><p>Content.</p></section>
+  <section id="s2"><div id="pin">pinned column</div><h2>Two</h2><p>Content.</p></section>
   <section id="s3"><h2>Three</h2><p>Content.</p></section>
   <section id="s4"><h2>Four</h2><p>Content.</p></section>
   <section id="s5"><h2>Five</h2><p>Content.</p></section>
