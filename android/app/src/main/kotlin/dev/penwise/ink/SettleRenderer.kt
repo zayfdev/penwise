@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.BlendMode
 import android.graphics.Canvas
 import android.graphics.Color
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.graphics.createBitmap
 import java.util.concurrent.Executors
@@ -19,6 +20,12 @@ internal class SettleRequest(
     val items: Map<ItemKey, ItemRender>,
     /** Draw the paper, or the ink alone on a transparent bitmap. */
     val paper: Boolean,
+    /**
+     * Uptime ms the render waits for before it starts. While the page scrolls, renders follow one another; each new
+     * bitmap is a full-screen texture upload on the ink layer's thread, so they are spaced out rather than made back
+     * to back (`BufferPool: Waiting for buffer`).
+     */
+    val notBefore: Long = 0L,
 )
 
 /** A finished render: [bitmap] shows the page under [view] as of the snapshot it was requested with. */
@@ -72,6 +79,7 @@ internal class SettleRenderer(
         request: SettleRequest,
         current: () -> Boolean,
     ): SettleResult? {
+        if (!waitUntil(request.notBefore, current)) return null
         val bitmap = acquire(request.width, request.height)
         val surface = Canvas(bitmap)
         val view = request.view
@@ -99,6 +107,26 @@ internal class SettleRenderer(
         return SettleResult(bitmap, view)
     }
 
+    /** Sleeps until uptime [time]; false when the render was superseded or the thread stopped meanwhile. */
+    private fun waitUntil(
+        time: Long,
+        current: () -> Boolean,
+    ): Boolean {
+        while (current()) {
+            val left = time - SystemClock.uptimeMillis()
+            if (left <= 0L) return true
+            try {
+                Thread.sleep(left.coerceAtMost(WAIT_STEP_MS))
+            } catch (
+                @Suppress("SwallowedException") stopped: InterruptedException,
+            ) {
+                Thread.currentThread().interrupt()
+                return false
+            }
+        }
+        return false
+    }
+
     /** A render that threw (out of memory, malformed item): logged once; the page keeps showing the scaled bitmap. */
     private fun failed(error: Throwable) {
         if (reported) return
@@ -119,5 +147,8 @@ internal class SettleRenderer(
 
     private companion object {
         const val TAG = "PenwiseSettle"
+
+        /** A waiting render looks this often whether it was superseded. */
+        const val WAIT_STEP_MS = 8L
     }
 }

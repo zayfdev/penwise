@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.BlendMode
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.os.SystemClock
 import androidx.core.graphics.createBitmap
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -37,6 +38,9 @@ internal class DryLayer(
     /** The bitmap has been handed to a `drawBitmap` (so it may still be read by a replay) and must not be painted. */
     private var exposed = false
     private var rendered: ViewTransform? = null
+
+    /** Uptime ms the last background render was swapped in; the next starts [SETTLE_GAP_MS] later at the soonest. */
+    private var landedAt = 0L
 
     /** The scene changed while the bitmap showed another view: it no longer holds all of it. */
     private var pendingFull = false
@@ -179,6 +183,7 @@ internal class DryLayer(
             pagePainter.paint(Canvas(done.bitmap), cache, style, done.view, RenderPlan.Region(patch), false, paper)
         }
         install(done.bitmap)
+        landedAt = SystemClock.uptimeMillis()
         rendered = done.view
         pendingFull = false
         return true
@@ -214,6 +219,7 @@ internal class DryLayer(
                 cache?.paintOrder ?: emptyList(),
                 cache?.snapshotItems() ?: emptyMap(),
                 paper,
+                landedAt + SETTLE_GAP_MS,
             ),
         )
     }
@@ -228,5 +234,13 @@ internal class DryLayer(
             install(createBitmap(width, height, Bitmap.Config.ARGB_8888))
         }
         return resized
+    }
+
+    private companion object {
+        /**
+         * Background renders at least this far apart (about 8 a second while the page scrolls): each one swapped in
+         * is a new full-screen bitmap to upload, and back to back they made the ink layer wait for buffers.
+         */
+        const val SETTLE_GAP_MS = 120L
     }
 }
