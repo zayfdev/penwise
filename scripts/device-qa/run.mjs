@@ -43,6 +43,9 @@ try {
   if (!(await adb.sh('echo ok').catch(() => ''))) throw new Error('no adb device');
   if (!(await waitServer(5000))) throw new Error('penwise server not reachable on :7420');
   await saveState();
+  // A running app keeps the pen's colour and tool from the last session; the checks read ink as dark pixels, so start
+  // from the app's defaults (the lifecycle group restarts it later anyway).
+  await adb.forceStop();
   const pkg = await adb.sh(`dumpsys package ${adb.PKG}`);
   report.meta.device = (await adb.sh('getprop ro.product.model')).trim();
   report.meta.appVersion = /versionName=(\S+)/.exec(pkg)?.[1];

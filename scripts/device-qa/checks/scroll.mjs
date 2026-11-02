@@ -10,11 +10,14 @@ export async function scrollToBottom(ctx, route, maxSteps = 30) {
   await logbook.drain();
   const sampler = new Sampler(route, 70).start();
   let last = -1;
+  let still = 0;
   let steps = 0;
   for (; steps < maxSteps; steps++) {
     await swipePage(ctx.screen, { down: true, frac: 0.55 });
     const y = await settle(route);
-    if (y === last) break;
+    process.stderr.write(`    scroll step ${steps}: scrollY ${y}\n`);
+    still = y === last ? still + 1 : 0;
+    if (still >= 2) break; // one swipe the page ignored is not the bottom; two in a row is
     last = y;
   }
   const samples = await sampler.stop();

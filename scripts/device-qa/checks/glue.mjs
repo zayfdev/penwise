@@ -6,6 +6,8 @@ import * as adb from '../adb.mjs';
 import { ROUTE, openMain } from './open.mjs';
 
 /** Draws a stroke, scrolls the page by a slow finger swipe, and measures stroke shift vs page shift. */
+const MIN_STROKE_PX = 500;
+
 export async function glueMeasure(ctx, label) {
   const g = 'glue';
   await scrollToTop(ctx, ROUTE);
@@ -37,6 +39,15 @@ export async function glueMeasure(ctx, label) {
   const diff = found.dy - pageShift.dy;
   ctx.report.check(g, `${label}: page scrolled`, Math.abs(css) >= 100, { measured: `${css.toFixed(1)} css px (${expected.toFixed(1)} screen px)`, threshold: '>= 100 css px' });
   ctx.report.check(g, `${label}: stroke found after scroll`, found.score >= 0.5, { measured: `${(found.score * 100).toFixed(0)}% of ${points.length} px`, threshold: '>= 50%' });
+  if (points.length < MIN_STROKE_PX) {
+    // A handful of stroke pixels cannot give a trustworthy shift: neither pass nor fail.
+    ctx.report.add(g, `${label}: stroke moves with the page`, 'error', {
+      measured: `only ${points.length} stroke px found, diff ${diff}`,
+      threshold: `>= ${MIN_STROKE_PX} stroke px`,
+      evidence: `inconclusive; see stroke-*-after.png to check the stroke was drawn at all`,
+    });
+    return { found, pageShift, expected };
+  }
   ctx.report.check(g, `${label}: stroke moves with the page`, found.score >= 0.5 && Math.abs(diff) <= 4, {
     measured: `stroke ${found.dy} px, page ${pageShift.dy} px (scrollY ${expected.toFixed(1)}), diff ${diff}`,
     threshold: '|diff| <= 4 px',
