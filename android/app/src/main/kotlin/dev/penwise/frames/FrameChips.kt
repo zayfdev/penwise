@@ -19,7 +19,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
@@ -28,14 +27,11 @@ import androidx.compose.ui.unit.sp
 import dev.penwise.R
 import dev.penwise.ink.ViewTransform
 import dev.penwise.ink.ViewportState
-import dev.penwise.tools.ToolButton
-import dev.penwise.tools.ToolChip
-import dev.penwise.tools.ToolIcons
+import dev.penwise.tools.DockIcons
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
-private const val CHIP_BACKGROUND = 0xF2FFFFFF
-private const val CHIP_RADIUS_DP = 10
+private const val CHIP_RADIUS_DP = 14
 private const val CHIP_INSET_PX = 6
 private const val CHIP_PAD_DP = 3
 private const val CHIP_GAP_DP = 2
@@ -103,7 +99,7 @@ internal fun FrameChips(
         val placement = FrameGeometry.place(box, transform, density)
         val x = placement.left.roundToInt() + CHIP_INSET_PX
         val y = placement.top.roundToInt() + CHIP_INSET_PX
-        PinnedChromeWindow(x, y, LocalChromeAvoid.current.toolbar) {
+        PinnedChromeWindow(x, y, LocalChromeAvoid.current.of(ChromeSlot.DOCK, ChromeSlot.SWITCHER)) {
             key(spec.id) {
                 FrameChip(spec, FrameChipState.of(spec, ghosts[spec.id] ?: true), layer, actions, onEditRoute = {
                     editingRoute = spec.id
@@ -133,9 +129,12 @@ private fun FrameChip(
     onEditRoute: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val colors = ChromeStyle.colors
+    val shape = RoundedCornerShape(CHIP_RADIUS_DP.dp)
     Column(
         modifier
-            .background(Color(CHIP_BACKGROUND), RoundedCornerShape(CHIP_RADIUS_DP.dp))
+            .background(colors.panel, shape)
+            .border(ChromeStyle.HAIRLINE_DP.dp, colors.hairline, shape)
             .padding(CHIP_PAD_DP.dp),
         verticalArrangement = Arrangement.spacedBy(CHIP_GAP_DP.dp),
     ) {
@@ -143,20 +142,19 @@ private fun FrameChip(
             horizontalArrangement = Arrangement.spacedBy(CHIP_GAP_DP.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            ToolChip(
+            ChromeTextButton(
                 label = spec.preset,
                 selected = false,
                 onClick = { actions.onPreset(spec.id, FramePreset.nextFrom(spec.preset).key) },
             )
-            ToolButton(
-                icon = ToolIcons.Sync,
+            ChromeIconButton(
+                icon = DockIcons.Sync,
                 label = stringResource(R.string.frame_reload),
-                selected = false,
                 onClick = { layer.reload(spec.id) },
             )
-            ToolChip(label = spec.route, selected = false, onClick = onEditRoute)
+            ChromeTextButton(label = spec.route, selected = false, onClick = onEditRoute)
             if (state.ghost) {
-                ToolChip(
+                ChromeTextButton(
                     label = stringResource(R.string.frame_ghost),
                     selected = state.ghostOn,
                     onClick = { actions.onGhost(spec.id, !state.ghostOn) },

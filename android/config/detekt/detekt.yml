@@ -15,6 +15,8 @@ complexity:
         '**/SyncCore.kt',
         '**/Glyph.kt',
         '**/frames/FrameLayer.kt',
+        # The tool state: one small method per tool choice (pen, marker, eraser, lasso, shape, colour, size).
+        '**/tools/ToolState.kt',
       ]
   # Axis/bounds checks naturally chain several comparisons; keep a ceiling but above detekt's default of 3.
   ComplexCondition:

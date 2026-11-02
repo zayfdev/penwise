@@ -4,10 +4,8 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.IntOffset
@@ -63,8 +61,9 @@ internal object ChromePlacement {
     }
 
     /**
-     * [spot] moved below [avoid] (another chrome window's rect) when the [popup] placed there would overlap it, so the
-     * frame chip and the toolbar never cover each other: side by side when the screen is wide enough, stacked when not.
+     * [spot] moved clear of [avoid] (another chrome window's rect) when the [popup] placed there would overlap it, so
+     * the frame chip and the dock never cover each other: side by side when the screen is wide enough, stacked when
+     * not. Stacked means below a window in the upper half of the screen and above one in the lower half.
      */
     fun clearOf(
         spot: ChromeSpot,
@@ -79,8 +78,38 @@ internal object ChromePlacement {
             spot.x < avoid.right + margin && spot.x + popup.width + margin > avoid.left &&
                 spot.y < avoid.bottom + margin && spot.y + popup.height + margin > avoid.top
         if (!overlaps) return spot
-        val maxY = (window.height - insets.bottom - margin - popup.height).coerceAtLeast(insets.top + margin)
+        val minY = insets.top + margin
+        val maxY = (window.height - insets.bottom - margin - popup.height).coerceAtLeast(minY)
+        if (avoid.center.y > window.height / 2) {
+            return ChromeSpot(spot.x, (avoid.top - margin - popup.height).coerceIn(minY, maxY))
+        }
         return ChromeSpot(spot.x, (avoid.bottom + margin).coerceAtMost(maxY))
+    }
+
+    /**
+     * [spot] moved sideways clear of every rect in [avoid] that the [popup] placed there would overlap: to the far side
+     * of the rect on the side the popup's centre is on, then back inside the safe area. The window keeps its size, so
+     * its buttons never change places; only the whole window shifts.
+     */
+    fun clearBeside(
+        spot: ChromeSpot,
+        popup: IntSize,
+        avoid: List<IntRect>,
+        margin: Int,
+        window: IntSize,
+        insets: ChromeInsets,
+    ): ChromeSpot {
+        var x = spot.x
+        for (rect in avoid) {
+            val overlaps =
+                x < rect.right + margin && x + popup.width + margin > rect.left &&
+                    spot.y < rect.bottom + margin && spot.y + popup.height + margin > rect.top
+            if (!overlaps) continue
+            val rightOf = x + popup.width / 2 >= rect.center.x
+            x = if (rightOf) rect.right + margin else rect.left - margin - popup.width
+        }
+        val maxX = (window.width - insets.right - margin - popup.width).coerceAtLeast(insets.left + margin)
+        return ChromeSpot(x.coerceIn(insets.left + margin, maxX), spot.y)
     }
 
     /**
@@ -119,12 +148,13 @@ private val ChromeProperties =
 internal fun ChromeWindow(
     corner: ChromeCorner,
     report: ((IntRect) -> Unit)? = null,
+    avoid: List<IntRect> = emptyList(),
     content: @Composable () -> Unit,
 ) {
     val insets = rememberChromeInsets()
     val margin = with(LocalDensity.current) { MARGIN_DP.dp.roundToPx() }
     val provider =
-        remember(corner, insets, margin) {
+        remember(corner, insets, margin, avoid) {
             object : PopupPositionProvider {
                 override fun calculatePosition(
                     anchorBounds: IntRect,
@@ -132,7 +162,9 @@ internal fun ChromeWindow(
                     layoutDirection: LayoutDirection,
                     popupContentSize: IntSize,
                 ): IntOffset {
-                    val spot = ChromePlacement.corner(corner, windowSize, popupContentSize, margin, insets)
+                    val placed = ChromePlacement.corner(corner, windowSize, popupContentSize, margin, insets)
+                    val spot =
+                        ChromePlacement.clearBeside(placed, popupContentSize, avoid, margin, windowSize, insets)
                     report?.invoke(IntRect(IntOffset(spot.x, spot.y), popupContentSize))
                     return IntOffset(spot.x, spot.y)
                 }
@@ -146,7 +178,7 @@ internal fun ChromeWindow(
 internal fun PinnedChromeWindow(
     x: Int,
     y: Int,
-    avoid: IntRect? = null,
+    avoid: List<IntRect> = emptyList(),
     content: @Composable () -> Unit,
 ) {
     val insets = rememberChromeInsets()
@@ -162,7 +194,9 @@ internal fun PinnedChromeWindow(
                 ): IntOffset {
                     val pinned = ChromePlacement.pinned(x, y, windowSize, popupContentSize, margin, insets)
                     val spot =
-                        ChromePlacement.clearOf(pinned, popupContentSize, avoid, margin, windowSize, insets)
+                        avoid.fold(pinned) { at, rect ->
+                            ChromePlacement.clearOf(at, popupContentSize, rect, margin, windowSize, insets)
+                        }
                     return IntOffset(spot.x, spot.y)
                 }
             }
@@ -183,9 +217,26 @@ private fun rememberChromeInsets(): ChromeInsets {
     )
 }
 
-/** Where the toolbar window sits, so the frame chip can keep clear of it. */
+/** The chrome windows that others keep clear of. */
+internal enum class ChromeSlot { DOCK, SWITCHER, OVERVIEW }
+
+/** Where the chrome windows sit, so the frame chip and the dock can keep clear of them. */
 internal class ChromeAvoid {
-    var toolbar: IntRect? by mutableStateOf(null)
+    private val rects = mutableStateMapOf<ChromeSlot, IntRect>()
+
+    fun report(
+        slot: ChromeSlot,
+        rect: IntRect,
+    ) {
+        if (rects[slot] != rect) rects[slot] = rect
+    }
+
+    fun clear(slot: ChromeSlot) {
+        rects.remove(slot)
+    }
+
+    /** The rects of [slots] that are on screen now. */
+    fun of(vararg slots: ChromeSlot): List<IntRect> = slots.mapNotNull { rects[it] }
 }
 
 private val sharedAvoid = ChromeAvoid()

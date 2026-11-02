@@ -1,6 +1,7 @@
 package dev.penwise.frames
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,14 +23,10 @@ import androidx.compose.ui.unit.sp
 import dev.penwise.R
 import dev.penwise.tools.Palette
 
-private const val PANEL_COLOR = 0xF2FFFFFF
-private const val PANEL_RADIUS_DP = 14
 private const val PANEL_PAD_DP = 8
 private const val GAP_DP = 4
 private const val TITLE_SP = 12
-private const val TITLE_COLOR = 0xFF202124
 private const val TEXT_SP = 11
-private const val TEXT_COLOR = 0xFF6A6D75
 private const val SWATCH_DP = 10
 private const val MEANING_WIDTH_DP = 260
 
@@ -64,15 +61,18 @@ private val COLOURS =
  */
 @Composable
 internal fun MarksGuide(modifier: Modifier = Modifier) {
+    val colors = ChromeStyle.colors
+    val shape = RoundedCornerShape(ChromeStyle.PANEL_RADIUS_DP.dp)
     Column(
         modifier
-            .background(Color(PANEL_COLOR), RoundedCornerShape(PANEL_RADIUS_DP.dp))
+            .background(colors.panel, shape)
+            .border(ChromeStyle.HAIRLINE_DP.dp, colors.hairline, shape)
             .padding(PANEL_PAD_DP.dp),
         verticalArrangement = Arrangement.spacedBy(GAP_DP.dp),
     ) {
         BasicText(
             stringResource(R.string.marks_guide_title),
-            style = TextStyle(fontSize = TITLE_SP.sp, color = Color(TITLE_COLOR)),
+            style = TextStyle(fontSize = TITLE_SP.sp, color = colors.text, fontFamily = ChromeStyle.font),
         )
         for (entry in MARKS) GuideRow(entry)
         for (entry in COLOURS) GuideRow(entry)
@@ -81,6 +81,7 @@ internal fun MarksGuide(modifier: Modifier = Modifier) {
 
 @Composable
 private fun GuideRow(entry: GuideEntry) {
+    val colors = ChromeStyle.colors
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(GAP_DP.dp * 2),
@@ -90,11 +91,11 @@ private fun GuideRow(entry: GuideEntry) {
         }
         BasicText(
             stringResource(entry.label),
-            style = TextStyle(fontSize = TEXT_SP.sp, color = Color(TITLE_COLOR)),
+            style = TextStyle(fontSize = TEXT_SP.sp, color = colors.text, fontFamily = ChromeStyle.font),
         )
         BasicText(
             stringResource(entry.meaning),
-            style = TextStyle(fontSize = TEXT_SP.sp, color = Color(TEXT_COLOR)),
+            style = TextStyle(fontSize = TEXT_SP.sp, color = colors.textMuted, fontFamily = ChromeStyle.font),
             modifier = Modifier.width(MEANING_WIDTH_DP.dp),
         )
     }

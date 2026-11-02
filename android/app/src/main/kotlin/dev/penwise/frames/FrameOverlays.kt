@@ -8,7 +8,6 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import dev.penwise.R
-import dev.penwise.tools.ToolChip
 
 private const val GAP_DP = 8
 private const val DISABLED_ALPHA = 0.4f
@@ -46,17 +45,13 @@ internal fun FrameOverlays(
             horizontalArrangement = Arrangement.spacedBy(GAP_DP.dp),
         ) {
             model.chip?.let { target ->
-                ToolChip(
-                    label = stringResource(R.string.agent_open, target.label),
-                    selected = true,
-                    onClick = model.onChipTap,
-                )
-                ToolChip(label = DISMISS, selected = false, onClick = model.onChipDismiss)
+                ChromeChip(label = stringResource(R.string.agent_open, target.label), onClick = model.onChipTap)
+                ChromeChip(label = DISMISS, onClick = model.onChipDismiss)
             }
             if (model.showSend) {
-                ToolChip(
+                ChromeChip(
                     label = stringResource(R.string.round_send),
-                    selected = false,
+                    primary = true,
                     onClick = if (model.canSend) model.onSend else ({}),
                     modifier = if (model.canSend) Modifier else Modifier.alpha(DISABLED_ALPHA),
                 )

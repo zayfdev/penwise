@@ -88,7 +88,12 @@ internal fun HistoryViewer(
                     "Round ${view.generation.round} · ${HistorySwitcher.of(
                         view,
                     ).items.firstOrNull { it.id == view.shown }?.label.orEmpty()}",
-                    style = TextStyle(color = ChromeStyle.text, fontSize = TEXT_SP.sp, fontFamily = ChromeStyle.font),
+                    style =
+                        TextStyle(
+                            color = ChromeStyle.dark.text,
+                            fontSize = TEXT_SP.sp,
+                            fontFamily = ChromeStyle.font,
+                        ),
                     modifier = Modifier.align(Alignment.TopStart),
                 )
                 if (canGoNow) ViewerButton("Back to now", actions.onBackToNow, Modifier.align(Alignment.TopEnd))
@@ -168,14 +173,14 @@ private fun ViewerButton(
     Box(
         modifier
             .clip(shape)
-            .background(ChromeStyle.panel)
-            .border(ChromeStyle.HAIRLINE_DP.dp, ChromeStyle.hairline, shape)
+            .background(ChromeStyle.dark.panel)
+            .border(ChromeStyle.HAIRLINE_DP.dp, ChromeStyle.dark.hairline, shape)
             .clickable(role = Role.Button, onClick = onClick)
             .padding(horizontal = MARGIN_DP.dp, vertical = BUTTON_PAD_DP.dp),
     ) {
         BasicText(
             label,
-            style = TextStyle(color = ChromeStyle.text, fontSize = TEXT_SP.sp, fontFamily = ChromeStyle.font),
+            style = TextStyle(color = ChromeStyle.dark.text, fontSize = TEXT_SP.sp, fontFamily = ChromeStyle.font),
         )
     }
 }

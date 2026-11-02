@@ -12,7 +12,10 @@ import dev.penwise.ink.Selection
 import dev.penwise.ink.ShapeMode
 
 /** Selected brush, color and size; observed by the toolbar, read by the canvas at pen-down. */
-class ToolState : BrushSource {
+class ToolState internal constructor(
+    /** The colours picked from the wheel lately; the app passes one that is saved. */
+    internal val recents: RecentColours = RecentColours(),
+) : BrushSource {
     var presetIndex by mutableIntStateOf(0)
         private set
 
@@ -24,11 +27,50 @@ class ToolState : BrushSource {
         private set
 
     fun selectPreset(index: Int) {
-        if (index in InkPresets.names.indices) presetIndex = index
+        if (index !in InkPresets.names.indices) return
+        presetIndex = index
+        if (index != markerIndex) penIndex = index
+    }
+
+    /** The last pen picked that was not the marker: the Pen button goes back to it. */
+    var penIndex by mutableIntStateOf(0)
+        private set
+
+    private val markerIndex: Int by lazy { InkPresets.names.indexOf(MARKER) }
+
+    /** True while the marker brush is the selected one. */
+    val markerSelected: Boolean get() = presetIndex == markerIndex
+
+    /** True while the pen writes: no eraser, no lasso, no shape tool. */
+    val drawing: Boolean get() = !eraserMode && !lassoMode && shapeMode == null
+
+    /** Back to writing with the last pen. */
+    fun selectPen() {
+        selectPreset(penIndex)
+        draw()
+    }
+
+    /** Writing with the marker brush. */
+    fun selectMarker() {
+        selectPreset(markerIndex)
+        draw()
     }
 
     fun selectSwatch(rgb: Int?) {
-        swatchRgb = rgb
+        swatchRgb = rgb?.let { it and RGB_MASK }
+    }
+
+    /** Remembers the current wheel colour as a recent pick; called when a wheel gesture ends. */
+    internal fun commitColour() {
+        swatchRgb?.let(recents::remember)
+    }
+
+    /** Back to drawing: leaves the eraser, the shapes and the lasso (picking a pen means to write with it). */
+    fun draw() {
+        eraserMode = false
+        lassoMode = false
+        shapeMode = null
+        selection.clear()
     }
 
     fun changeSize(scale: Float) {
@@ -115,6 +157,7 @@ class ToolState : BrushSource {
     }
 
     companion object {
+        private const val MARKER = "marker"
         const val SIZE_MIN = 0.5f
         const val SIZE_MAX = 3f
         private const val ERASER_MIN_PX = 8f

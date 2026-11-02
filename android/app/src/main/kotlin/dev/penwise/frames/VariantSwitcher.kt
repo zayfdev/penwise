@@ -44,8 +44,8 @@ internal fun VariantSwitcher(
     val panel = RoundedCornerShape(ChromeStyle.PANEL_RADIUS_DP.dp)
     Row(
         modifier
-            .background(ChromeStyle.panel, panel)
-            .border(ChromeStyle.HAIRLINE_DP.dp, ChromeStyle.hairline, panel)
+            .background(ChromeStyle.colors.panel, panel)
+            .border(ChromeStyle.HAIRLINE_DP.dp, ChromeStyle.colors.hairline, panel)
             .padding(BAR_PAD_DP.dp),
         horizontalArrangement = Arrangement.spacedBy(GAP_DP.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -79,9 +79,18 @@ private fun SwitcherButton(
     Box(
         Modifier
             .clip(shape)
-            .background(if (selected) ChromeStyle.buttonSelected else ChromeStyle.panel)
-            .then(if (outlined) Modifier.border(ChromeStyle.HAIRLINE_DP.dp, ChromeStyle.hairline, shape) else Modifier)
-            .clickable(role = Role.Button, onClick = onClick)
+            .background(if (selected) ChromeStyle.colors.buttonSelected else ChromeStyle.colors.panel)
+            .then(
+                if (outlined) {
+                    Modifier.border(
+                        ChromeStyle.HAIRLINE_DP.dp,
+                        ChromeStyle.colors.hairline,
+                        shape,
+                    )
+                } else {
+                    Modifier
+                },
+            ).clickable(role = Role.Button, onClick = onClick)
             .padding(horizontal = BUTTON_PAD_H_DP.dp, vertical = BUTTON_PAD_V_DP.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -89,7 +98,7 @@ private fun SwitcherButton(
             text = label,
             style =
                 TextStyle(
-                    color = if (selected) ChromeStyle.text else ChromeStyle.textMuted,
+                    color = if (selected) ChromeStyle.colors.text else ChromeStyle.colors.textMuted,
                     fontSize = TEXT_SP.sp,
                     fontFamily = ChromeStyle.font,
                 ),

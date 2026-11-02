@@ -10,6 +10,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ColorFilter
@@ -20,8 +21,10 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import dev.penwise.R
 import dev.penwise.frames.ChromeCorner
+import dev.penwise.frames.ChromeSlot
 import dev.penwise.frames.ChromeStyle
 import dev.penwise.frames.ChromeWindow
+import dev.penwise.frames.LocalChromeAvoid
 
 private const val ICON_DP = 24
 private const val PAD_DP = 10
@@ -32,19 +35,22 @@ internal fun OverviewButton(
     visible: Boolean,
     onClick: () -> Unit,
 ) {
+    val avoid = LocalChromeAvoid.current
+    DisposableEffect(visible) { onDispose { avoid.clear(ChromeSlot.OVERVIEW) } }
     if (!visible) return
     val shape = RoundedCornerShape(ChromeStyle.BUTTON_RADIUS_DP.dp)
     val label = stringResource(R.string.overview_open)
-    ChromeWindow(ChromeCorner.BOTTOM_START) {
+    val colors = ChromeStyle.colors
+    ChromeWindow(ChromeCorner.BOTTOM_START, report = { avoid.report(ChromeSlot.OVERVIEW, it) }) {
         Image(
             imageVector = Icons.Filled.GridView,
             contentDescription = null,
-            colorFilter = ColorFilter.tint(ChromeStyle.text),
+            colorFilter = ColorFilter.tint(colors.text),
             modifier =
                 Modifier
                     .clip(shape)
-                    .background(ChromeStyle.panel)
-                    .border(ChromeStyle.HAIRLINE_DP.dp, ChromeStyle.hairline, shape)
+                    .background(colors.panel)
+                    .border(ChromeStyle.HAIRLINE_DP.dp, colors.hairline, shape)
                     .semantics { contentDescription = label }
                     .clickable(role = Role.Button, onClick = onClick)
                     .padding(PAD_DP.dp)

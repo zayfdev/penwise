@@ -4,25 +4,15 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.util.LruCache
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -32,46 +22,27 @@ import dev.penwise.ink.GeometryPainter
 import kotlin.math.sin
 
 /**
- * A brush button whose icon is the brush itself: a short S-curve drawn by the ink engine at the brush's own
- * width, dynamics and texture, so a fineliner looks thin and a highlighter looks wet before you pick it.
+ * A brush's preview: a short S-curve drawn by the ink engine at the brush's own width, dynamics and texture, so a
+ * fineliner looks thin and a highlighter looks wet before you pick it. [argb] is the preview colour (the flyout draws
+ * it in the chrome's text colour, so it reads on the panel).
  */
 @Composable
-fun BrushIcon(
+internal fun BrushPreview(
     preset: Int,
     argb: Int,
-    label: String,
-    selected: Boolean,
-    onClick: () -> Unit,
     modifier: Modifier = Modifier,
     size: Dp = 40.dp,
 ) {
     val density = LocalDensity.current
     val bitmap = remember(preset, argb, size, density) { brushBitmap(preset, argb, size, density) }
-    var tip by remember { mutableStateOf(false) }
-    Box(
-        modifier =
-            modifier
-                .size(size)
-                .background(
-                    if (selected) Color(SELECTED_FILL) else Color(IDLE_FILL),
-                    RoundedCornerShape(10.dp),
-                ).combinedClickable(role = Role.Button, onLongClick = { tip = true }, onClick = onClick)
-                .semantics { contentDescription = label },
-    ) {
-        if (tip) Tooltip(label) { tip = false }
-        if (bitmap != null) {
-            Image(
-                bitmap = bitmap,
-                contentDescription = null,
-                modifier = Modifier.size(size).padding(PREVIEW_PAD_DP.dp),
-            )
-        }
+    if (bitmap != null) {
+        Image(bitmap = bitmap, contentDescription = null, modifier = modifier.size(size).padding(PREVIEW_PAD_DP.dp))
+    } else {
+        Box(modifier.size(size))
     }
 }
 
 private const val PREVIEW_PAD_DP = 5
-private const val SELECTED_FILL = 0x1A2F4FD0
-private const val IDLE_FILL = 0x0A000000
 private const val PREVIEW_SIDE_PX = 96
 private const val SAMPLE_COUNT = 24
 private const val ICON_SEED = 7_654_321L

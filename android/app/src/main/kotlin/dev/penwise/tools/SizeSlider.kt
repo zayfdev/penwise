@@ -4,27 +4,27 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.drag
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import dev.penwise.frames.ChromeStyle
 
-private const val SLIDER_WIDTH_DP = 160
-private const val SLIDER_HEIGHT_DP = 32
-private const val TRACK_DP = 4
-private const val THUMB_DP = 9
-private const val TRACK_COLOR = 0xFFBDBDBD
-private const val THUMB_COLOR = 0xFF202124
+private const val SLIDER_HEIGHT_DP = 28
+private const val TRACK_DP = 6
+private const val THUMB_DP = 12
 
 /** Maps a touch x within [width] px (thumb-inset by [inset]) to a value in [range]. */
-private fun sliderValue(
+internal fun sliderValue(
     x: Float,
     width: Float,
     inset: Float,
@@ -34,7 +34,7 @@ private fun sliderValue(
     return range.start + fraction * (range.endInclusive - range.start)
 }
 
-/** Minimal horizontal slider (foundation only). */
+/** Minimal horizontal slider (foundation only): a rounded track, its filled part and a round thumb. */
 @Composable
 internal fun SizeSlider(
     value: Float,
@@ -44,9 +44,11 @@ internal fun SizeSlider(
     modifier: Modifier = Modifier,
 ) {
     val currentOnChange by rememberUpdatedState(onChange)
+    val colors = ChromeStyle.colors
     Canvas(
         modifier
-            .size(SLIDER_WIDTH_DP.dp, SLIDER_HEIGHT_DP.dp)
+            .fillMaxWidth()
+            .height(SLIDER_HEIGHT_DP.dp)
             .semantics { contentDescription = label }
             .pointerInput(range) {
                 val inset = THUMB_DP.dp.toPx()
@@ -62,9 +64,13 @@ internal fun SizeSlider(
             },
     ) {
         val inset = THUMB_DP.dp.toPx()
-        val y = size.height / 2
+        val track = TRACK_DP.dp.toPx()
+        val top = (size.height - track) / 2
         val fraction = (value - range.start) / (range.endInclusive - range.start)
-        drawLine(Color(TRACK_COLOR), Offset(inset, y), Offset(size.width - inset, y), TRACK_DP.dp.toPx())
-        drawCircle(Color(THUMB_COLOR), inset, Offset(inset + fraction * (size.width - 2 * inset), y))
+        val thumbX = inset + fraction * (size.width - 2 * inset)
+        val round = CornerRadius(track / 2)
+        drawRoundRect(colors.track, Offset(0f, top), Size(size.width, track), round)
+        drawRoundRect(colors.accent, Offset(0f, top), Size(thumbX, track), round)
+        drawCircle(colors.text, inset, Offset(thumbX, size.height / 2))
     }
 }

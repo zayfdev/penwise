@@ -19,7 +19,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -41,15 +40,14 @@ private const val CHIP_BACKGROUND = 0x14000000
 private const val SELECTED_BACKGROUND = 0x1A2F4FD0
 private const val CHIP_PADDING_DP = 7
 private const val ICON_SIZE_DP = 22
-private const val CHIP_LABEL_SP = 10
 private const val TIP_BACKGROUND = 0xE6202124
 private const val TIP_TEXT_SP = 13
 private const val TIP_MS = 1_600L
 private const val TIP_GAP_PX = 12
 
 /**
- * A tappable icon with an optional selected state. [label] is the screen-reader name and the long-press tooltip;
- * [caption] additionally prints it under the icon (used in the drawer, where there is room).
+ * A tappable icon with an optional selected state. [label] is the screen-reader name and the long-press tooltip.
+ *
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -59,8 +57,6 @@ fun ToolButton(
     selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    caption: Boolean = false,
-    rotation: Float = 0f,
 ) {
     var tip by remember { mutableStateOf(false) }
     val tint = Color(if (selected) SELECTED_TINT else ICON_TINT)
@@ -78,15 +74,14 @@ fun ToolButton(
                 imageVector = icon,
                 contentDescription = label,
                 colorFilter = ColorFilter.tint(tint),
-                modifier = Modifier.size(ICON_SIZE_DP.dp).rotate(rotation),
+                modifier = Modifier.size(ICON_SIZE_DP.dp),
             )
-            if (caption) BasicText(label, style = TextStyle(color = tint, fontSize = CHIP_LABEL_SP.sp))
         }
         if (tip) Tooltip(label) { tip = false }
     }
 }
 
-/** Plain-text tooltip under the anchor that goes away on its own. */
+/** Plain-text tooltip under the anchor (above it when there is no room below) that goes away on its own. */
 @Composable
 internal fun Tooltip(
     text: String,
@@ -110,7 +105,9 @@ internal fun Tooltip(
                             0,
                             windowSize.width - popupContentSize.width,
                         )
-                    return IntOffset(x, anchorBounds.bottom + TIP_GAP_PX)
+                    val below = anchorBounds.bottom + TIP_GAP_PX
+                    val fits = below + popupContentSize.height <= windowSize.height
+                    return IntOffset(x, if (fits) below else anchorBounds.top - TIP_GAP_PX - popupContentSize.height)
                 }
             },
         onDismissRequest = onDismiss,

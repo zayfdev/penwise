@@ -1,6 +1,7 @@
 package dev.penwise.ink
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
@@ -29,17 +30,15 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import dev.penwise.frames.ChromeStyle
 import dev.penwise.tools.ToolChip
 
-private const val STRIP_COLOR = 0xF2FFFFFF
-private const val STRIP_RADIUS_DP = 14
 private const val CHIP_GAP_DP = 4
 private const val CHIP_RADIUS_DP = 8
 private const val MAX_CHIP_WIDTH_DP = 150
 private const val TITLE_SIZE_SP = 13
 private const val GLYPH_SIZE_SP = 13
 private const val MUTED = 0xFF7A7A82.toInt()
-private const val INK = 0xFF23252A.toInt()
 private const val PANEL_COLOR = 0xFF23252A.toInt()
 private const val PANEL_TEXT = 0xFFE8EAEE.toInt()
 private const val PANEL_PAD_DP = 16
@@ -60,10 +59,13 @@ fun PageStrip(
     var editing by remember { mutableStateOf<PageMeta?>(null) }
     var deleting by remember { mutableStateOf<PageMeta?>(null) }
 
+    val colors = ChromeStyle.colors
+    val shape = RoundedCornerShape(ChromeStyle.PANEL_RADIUS_DP.dp)
     Row(
         modifier =
             modifier
-                .background(Color(STRIP_COLOR), RoundedCornerShape(STRIP_RADIUS_DP.dp))
+                .background(colors.panel, shape)
+                .border(ChromeStyle.HAIRLINE_DP.dp, colors.hairline, shape)
                 .padding(CHIP_GAP_DP.dp)
                 .horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(CHIP_GAP_DP.dp),
@@ -137,29 +139,36 @@ private fun PageChip(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
 ) {
+    val colors = ChromeStyle.colors
     Row(
         modifier =
             Modifier
                 .widthIn(max = MAX_CHIP_WIDTH_DP.dp)
-                .background(Color(WHITE_PANEL), RoundedCornerShape(CHIP_RADIUS_DP.dp))
-                .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+                .background(
+                    if (active) colors.tileSelectedFill else colors.tileFill,
+                    RoundedCornerShape(CHIP_RADIUS_DP.dp),
+                ).combinedClickable(onClick = onClick, onLongClick = onLongClick)
                 .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        BasicText(page.glyph, style = TextStyle(fontSize = GLYPH_SIZE_SP.sp, color = Color(MUTED)))
+        BasicText(
+            page.glyph,
+            style = TextStyle(fontSize = GLYPH_SIZE_SP.sp, color = colors.textMuted, fontFamily = ChromeStyle.font),
+        )
         Spacer(Modifier.width(5.dp))
         BasicText(
             page.title,
             style =
                 TextStyle(
                     fontSize = TITLE_SIZE_SP.sp,
-                    color = Color(if (active) ACTIVE_INK else INK),
+                    color = colors.text,
+                    fontFamily = ChromeStyle.font,
                 ),
             maxLines = 1,
         )
         if (active) {
             Spacer(Modifier.width(5.dp))
-            BasicText("•", style = TextStyle(fontSize = TITLE_SIZE_SP.sp, color = Color(ACTIVE_INK)))
+            BasicText("•", style = TextStyle(fontSize = TITLE_SIZE_SP.sp, color = colors.text))
         }
     }
 }
@@ -171,23 +180,24 @@ private fun Chip(
     active: Boolean,
     onClick: () -> Unit,
 ) {
+    val colors = ChromeStyle.colors
     BasicText(
         label,
         style =
             TextStyle(
                 fontSize = if (glyph) 16.sp else TITLE_SIZE_SP.sp,
-                color = Color(if (active) ACTIVE_INK else INK),
+                color = colors.text,
+                fontFamily = ChromeStyle.font,
             ),
         modifier =
             Modifier
-                .background(Color(WHITE_PANEL), RoundedCornerShape(CHIP_RADIUS_DP.dp))
-                .clickable(onClick = onClick)
+                .background(
+                    if (active) colors.tileSelectedFill else colors.tileFill,
+                    RoundedCornerShape(CHIP_RADIUS_DP.dp),
+                ).clickable(onClick = onClick)
                 .padding(horizontal = 8.dp, vertical = 6.dp),
     )
 }
-
-private const val WHITE_PANEL = 0xFFFFFFFF.toInt()
-private const val ACTIVE_INK = 0xFF3C5BC4.toInt()
 
 /** Title plus template picker for a new page. */
 @Composable

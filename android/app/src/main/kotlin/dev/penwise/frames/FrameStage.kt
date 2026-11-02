@@ -29,10 +29,6 @@ import dev.penwise.ink.PenActivity
 import dev.penwise.ink.ViewportState
 import kotlinx.coroutines.flow.Flow
 
-private const val READOUT_SP = 11
-private const val READOUT_COLOR = 0xFF37474F
-private const val READOUT_MARGIN_DP = 12
-
 /** What the frame stage shows and the calls that change it; one value so [FrameStage]'s signature stays short. */
 internal class FrameStageModel(
     val specs: List<FrameSpec>,
@@ -109,7 +105,6 @@ internal fun FrameStage(
     LaunchedEffect(layer, model.live.windows) {
         model.live.windows.collect { layer.setWindow(it.frameId, it.window, it.scrollX, it.scrollY) }
     }
-    var scroll by remember { mutableStateOf<FrameScroll?>(null) }
     var locked by remember { mutableStateOf(layer.lockedFrame) }
     // Each frame's current state recipe: a mark drawn in another one is dimmed and offers a replay.
     val states = remember { mutableStateOf<Map<String, String>>(emptyMap()) }
@@ -123,7 +118,7 @@ internal fun FrameStage(
             factory = { layer },
             update = {
                 it.bind(viewport)
-                it.wire(model, states, onScroll = { reported -> scroll = reported }, onLocked = { id -> locked = id })
+                it.wire(model, states, onScroll = {}, onLocked = { id -> locked = id })
             },
             modifier = Modifier.fillMaxSize(),
         )
@@ -138,7 +133,9 @@ internal fun FrameStage(
         )
         // Its own window: the ink surface is above this one while frames exist (contract §3.5).
         SwitcherState.of(model.specs, locked)?.let { switcher ->
-            ChromeWindow(ChromeCorner.BOTTOM_CENTER) {
+            val avoid = LocalChromeAvoid.current
+            DisposableEffect(Unit) { onDispose { avoid.clear(ChromeSlot.SWITCHER) } }
+            ChromeWindow(ChromeCorner.TOP_CENTER, report = { avoid.report(ChromeSlot.SWITCHER, it) }) {
                 VariantSwitcher(switcher, onSelect = layer::lockFrame, onUseThis = model.actions.lock.onChoose)
             }
         }
@@ -150,34 +147,7 @@ internal fun FrameStage(
             states = states.value,
             onStatus = model.actions.onMarkStatus,
         )
-        FrameReadout(
-            scroll = scroll,
-            modifier =
-                Modifier
-                    .align(Alignment.BottomStart)
-                    .safeDrawingPadding()
-                    .padding(READOUT_MARGIN_DP.dp),
-        )
     }
-}
-
-/** Readout of what the page under the ink last reported (M2 moves area marks with it). */
-@Composable
-private fun FrameReadout(
-    scroll: FrameScroll?,
-    modifier: Modifier = Modifier,
-) {
-    val text =
-        if (scroll == null) {
-            "frame: loading"
-        } else {
-            "frame: scroll ${scroll.x}, ${scroll.y} · doc ${scroll.docWidth}×${scroll.docHeight}"
-        }
-    BasicText(
-        text = text,
-        style = TextStyle(fontSize = READOUT_SP.sp, color = Color(READOUT_COLOR)),
-        modifier = modifier,
-    )
 }
 
 /** Gives the layer the frames, the server and the callbacks of the stage, on every recomposition. */

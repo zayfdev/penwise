@@ -206,7 +206,7 @@ private fun Strips(
                 .getOrNull(pager.currentPage)
                 ?.title
                 .orEmpty(),
-            style = TextStyle(color = ChromeStyle.text, fontSize = TITLE_SP.sp, fontFamily = ChromeStyle.font),
+            style = TextStyle(color = ChromeStyle.dark.text, fontSize = TITLE_SP.sp, fontFamily = ChromeStyle.font),
             modifier = Modifier.align(Alignment.TopStart),
         )
         OverviewButton("Close", actions.onDismiss, Modifier.align(Alignment.TopEnd))
@@ -227,7 +227,16 @@ private fun StripDots(
             Box(
                 Modifier
                     .size(DOT_DP.dp)
-                    .background(if (index == current) ChromeStyle.text else ChromeStyle.hairline, CircleShape),
+                    .background(
+                        if (index ==
+                            current
+                        ) {
+                            ChromeStyle.dark.text
+                        } else {
+                            ChromeStyle.dark.hairline
+                        },
+                        CircleShape,
+                    ),
             )
         }
     }
@@ -243,14 +252,14 @@ private fun OverviewButton(
     Box(
         modifier
             .clip(shape)
-            .background(ChromeStyle.panel)
-            .border(ChromeStyle.HAIRLINE_DP.dp, ChromeStyle.hairline, shape)
+            .background(ChromeStyle.dark.panel)
+            .border(ChromeStyle.HAIRLINE_DP.dp, ChromeStyle.dark.hairline, shape)
             .clickable(role = Role.Button, onClick = onClick)
             .padding(horizontal = BUTTON_PAD_H_DP.dp, vertical = BUTTON_PAD_V_DP.dp),
     ) {
         BasicText(
             label,
-            style = TextStyle(color = ChromeStyle.text, fontSize = BUTTON_SP.sp, fontFamily = ChromeStyle.font),
+            style = TextStyle(color = ChromeStyle.dark.text, fontSize = BUTTON_SP.sp, fontFamily = ChromeStyle.font),
         )
     }
 }

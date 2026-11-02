@@ -22,6 +22,7 @@ import dev.penwise.sync.Outcome
 import dev.penwise.sync.SyncEngine
 import dev.penwise.sync.SyncListener
 import dev.penwise.sync.SyncStatus
+import dev.penwise.tools.RecentColours
 import dev.penwise.tools.ToolState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asCoroutineDispatcher
@@ -52,7 +53,7 @@ private const val RETIRE_DELAY_MS = 1_000L
 class PageViewModel(
     application: Application,
 ) : AndroidViewModel(application) {
-    val tools = ToolState()
+    val tools = ToolState(RecentColours.persisted(application))
 
     private val settings = SyncSettings(application)
     private val random = SecureRandom()

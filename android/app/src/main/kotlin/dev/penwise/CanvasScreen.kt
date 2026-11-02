@@ -1,10 +1,6 @@
 package dev.penwise
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -28,6 +24,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import dev.penwise.frames.AddFrameDialog
 import dev.penwise.frames.ChromeCorner
+import dev.penwise.frames.ChromeSlot
 import dev.penwise.frames.ChromeWindow
 import dev.penwise.frames.DesignProject
 import dev.penwise.frames.EdgeStrips
@@ -45,21 +42,26 @@ import dev.penwise.ink.PageViewModel
 import dev.penwise.sync.Ids
 import dev.penwise.sync.SyncStatus
 import dev.penwise.tools.ConfirmDialog
-import dev.penwise.tools.MiniBar
-import dev.penwise.tools.Toolbar
+import dev.penwise.tools.Dock
+import dev.penwise.tools.DockCommands
+import dev.penwise.tools.MoreActions
+import dev.penwise.tools.MoreCommands
+import dev.penwise.tools.SyncLink
+import dev.penwise.tools.rememberDockFlyouts
 import kotlin.math.roundToInt
 
 private const val CHROME_MARGIN_DP = 12
 private const val PERCENT = 100
 
 /**
- * An open page: the canvas fills the screen and the only chrome is the [MiniBar]; the full tools and the page strip
- * are a drawer under it ([drawerOpen]). The pen touching the page closes the drawer. "Clear page" confirms for the
- * page it was opened on (its id survives recreation); if another page is showing by then it does nothing.
+ * An open page: the canvas fills the screen and the only chrome is the [Dock]; the pen, shape and colour panels and the
+ * page panel (page actions, page strip) are flyouts above it ([drawerOpen] is the page panel). The pen touching the
+ * page closes them. "Clear page" confirms for the page it was opened on (its id survives recreation); if another page
+ * is showing by then it does nothing.
  *
  * The page's frames (synced items) are live pages under the ink. With frames the paper and the pages are window views
- * below the surface, so the ink draws over them; each frame carries its own controls at its top edge, and the drawer
- * adds one at the centre of the view.
+ * below the surface, so the ink draws over them; each frame carries its own controls at its top edge, and the
+ * page panel adds one at the centre of the view.
  */
 @Composable
 fun CanvasScreen(
@@ -94,6 +96,9 @@ fun CanvasScreen(
                 onHome = onHome,
             )
         }
+    val flyouts = rememberDockFlyouts(drawerOpen, onDrawerOpenChange)
+    // Back closes an open flyout before it leaves the page (always, even right after pen input).
+    BackHandler(enabled = flyouts.open != null) { flyouts.handleBack() }
     val stage = rememberFrameStageModel(page, open)
     val overlay = rememberFrameOverlay(page)
     Box(modifier = Modifier.fillMaxSize().onSizeChanged { canvasSize = it }) {
@@ -112,31 +117,27 @@ fun CanvasScreen(
                 liveOut = page.liveOut,
                 pen = page.pen,
                 frames = frames,
-                onPenDown = { onDrawerOpenChange(false) },
+                onPenDown = flyouts::close,
                 onPenInput = rememberPenAwake(),
                 modifier = Modifier.fillMaxSize(),
             )
         }
         FrameOverlays(overlay)
         GestureExclusionStrips()
-        // The toolbar is its own window: the ink surface is above this one while frames exist (contract §3.5).
+        // The dock is its own window: the ink surface is above this one while frames exist (contract §3.5).
         val avoid = LocalChromeAvoid.current
-        ChromeWindow(ChromeCorner.TOP_CENTER, report = { if (avoid.toolbar != it) avoid.toolbar = it }) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(CHROME_MARGIN_DP.dp),
+        ChromeWindow(
+            ChromeCorner.BOTTOM_CENTER,
+            report = { avoid.report(ChromeSlot.DOCK, it) },
+            avoid = avoid.of(ChromeSlot.OVERVIEW),
+        ) {
+            Dock(
+                state = page.tools,
+                flyouts = flyouts,
+                commands = DockCommands(onUndo = page::undo, onRedo = page::redo, onSync = onSync),
+                link = SyncLink(syncStatus, pending),
             ) {
-                MiniBar(
-                    state = page.tools,
-                    expanded = drawerOpen,
-                    onToggle = { onDrawerOpenChange(!drawerOpen) },
-                    onUndo = page::undo,
-                    onRedo = page::redo,
-                    syncStatus = syncStatus,
-                    pending = pending,
-                    onSync = onSync,
-                )
-                CanvasDrawer(pages, page, drawerOpen, showDone, actions)
+                PageFlyout(pages, page, showDone, actions)
             }
         }
         OverviewHost(page, pages)
@@ -145,7 +146,7 @@ fun CanvasScreen(
     if (showAddFrame) NewFrameDialog(projects, page, canvasSize) { showAddFrame = false }
 }
 
-/** The canvas chrome's callbacks, one value so the drawer takes few parameters. */
+/** The canvas chrome's callbacks, one value so the page flyout takes few parameters. */
 private class CanvasActions(
     val onClear: () -> Unit,
     val onAddFrame: () -> Unit,
@@ -153,46 +154,38 @@ private class CanvasActions(
     val onHome: () -> Unit,
 )
 
-/** The drawer under the mini bar: the full tool panel and the page strip, sliding in while [drawerOpen]. */
+/** The page flyout above the dock: the page actions, the page strip and the marks guide. */
 @Composable
-private fun CanvasDrawer(
+private fun PageFlyout(
     pages: PageList,
     page: PageViewModel,
-    drawerOpen: Boolean,
     showDone: Boolean,
     actions: CanvasActions,
 ) {
     val zoom by page.viewport.zoom.collectAsState()
-    AnimatedVisibility(
-        visible = drawerOpen,
-        enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
-        exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut(),
+    val commands =
+        MoreCommands(
+            onClear = actions.onClear,
+            onSync = actions.onSync,
+            onHome = actions.onHome,
+            onAddFrame = actions.onAddFrame,
+            onFit = page.viewport::reset,
+            onShowDone = { page.frameSession.setShowDone(!showDone) },
+        )
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(CHROME_MARGIN_DP.dp),
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(CHROME_MARGIN_DP.dp),
-        ) {
-            Toolbar(
-                state = page.tools,
-                zoomPercent = (zoom * PERCENT).roundToInt(),
-                showDone = showDone,
-                onShowDone = { page.frameSession.setShowDone(!showDone) },
-                onFit = page.viewport::reset,
-                onClear = actions.onClear,
-                onSync = actions.onSync,
-                onHome = actions.onHome,
-                onAddFrame = actions.onAddFrame,
-            )
-            PageStrip(
-                pages = pages,
-                activeId = pages.active,
-                onSelect = page::selectPage,
-                onNew = { title, template -> page.catalog.newPage(title, template) },
-                onRename = page.catalog::renamePage,
-                onDelete = page.catalog::deletePage,
-            )
-            MarksGuide()
-        }
+        MoreActions(commands, (zoom * PERCENT).roundToInt(), showDone)
+        PageStrip(
+            pages = pages,
+            activeId = pages.active,
+            onSelect = page::selectPage,
+            onNew = { title, template -> page.catalog.newPage(title, template) },
+            onRename = page.catalog::renamePage,
+            onDelete = page.catalog::deletePage,
+        )
+        MarksGuide()
     }
 }
 

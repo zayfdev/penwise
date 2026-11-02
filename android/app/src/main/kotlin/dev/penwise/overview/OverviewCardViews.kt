@@ -51,7 +51,7 @@ internal class CardSize(
     val height: Dp,
 )
 
-private fun titleStyle(color: Color = ChromeStyle.textMuted) =
+private fun titleStyle(color: Color = ChromeStyle.dark.textMuted) =
     TextStyle(color = color, fontSize = TITLE_SP.sp, fontFamily = ChromeStyle.font)
 
 /** A card with its small title above it; a tap enters it. [onBounds] reports the card's box for the zoom. */
@@ -73,7 +73,7 @@ internal fun CardView(
                 .onGloballyPositioned { onBounds(it.boundsInRoot()) }
                 .clip(shape)
                 .background(OverviewLook.cardFill)
-                .border(ChromeStyle.HAIRLINE_DP.dp, ChromeStyle.hairline, shape)
+                .border(ChromeStyle.HAIRLINE_DP.dp, ChromeStyle.dark.hairline, shape)
                 .clickable(role = Role.Button, onClick = onTap),
         ) {
             CardPicture(card.image, bitmap)
@@ -120,11 +120,11 @@ private fun CheckBadge(modifier: Modifier = Modifier) {
     Box(
         modifier
             .size(BADGE_DP.dp)
-            .background(ChromeStyle.panel, CircleShape)
-            .border(ChromeStyle.HAIRLINE_DP.dp, ChromeStyle.accent, CircleShape),
+            .background(ChromeStyle.dark.panel, CircleShape)
+            .border(ChromeStyle.HAIRLINE_DP.dp, ChromeStyle.dark.accent, CircleShape),
         contentAlignment = Alignment.Center,
     ) {
-        BasicText("✓", style = titleStyle(ChromeStyle.text))
+        BasicText("✓", style = titleStyle(ChromeStyle.dark.text))
     }
 }
 
@@ -145,11 +145,11 @@ internal fun DeckPile(
                     .offset(y = (depth * PILE_STEP_DP).dp)
                     .height((PILE_HEIGHT_DP - PILE_LAYERS * PILE_STEP_DP).dp)
                     .background(OverviewLook.cardFill, shape)
-                    .border(ChromeStyle.HAIRLINE_DP.dp, ChromeStyle.hairline, shape),
+                    .border(ChromeStyle.HAIRLINE_DP.dp, ChromeStyle.dark.hairline, shape),
             )
         }
         Box(Modifier.fillMaxWidth().height((PILE_HEIGHT_DP - PILE_LAYERS * PILE_STEP_DP).dp), Alignment.Center) {
-            BasicText(summary, style = titleStyle(ChromeStyle.text))
+            BasicText(summary, style = titleStyle(ChromeStyle.dark.text))
         }
     }
 }
@@ -162,7 +162,7 @@ internal fun DeckHeader(
 ) {
     BasicText(
         "$summary  ▴",
-        style = titleStyle(ChromeStyle.text),
+        style = titleStyle(ChromeStyle.dark.text),
         modifier = Modifier.clickable(role = Role.Button, onClick = onTap).padding(vertical = TITLE_GAP_DP.dp),
     )
 }
@@ -183,13 +183,13 @@ internal fun PlusCard(
             Modifier
                 .size(size.width, size.height)
                 .clip(shape)
-                .border(ChromeStyle.HAIRLINE_DP.dp, ChromeStyle.hairline, shape)
+                .border(ChromeStyle.HAIRLINE_DP.dp, ChromeStyle.dark.hairline, shape)
                 .clickable(role = Role.Button, onClick = onToggle),
             contentAlignment = Alignment.Center,
         ) {
             BasicText(
                 "+",
-                style = TextStyle(color = ChromeStyle.text, fontSize = PLUS_SP.sp, fontFamily = ChromeStyle.font),
+                style = TextStyle(color = ChromeStyle.dark.text, fontSize = PLUS_SP.sp, fontFamily = ChromeStyle.font),
             )
         }
         if (open) {
@@ -198,15 +198,15 @@ internal fun PlusCard(
                     Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(ChromeStyle.BUTTON_RADIUS_DP.dp))
-                        .background(ChromeStyle.panel)
+                        .background(ChromeStyle.dark.panel)
                         .border(
                             ChromeStyle.HAIRLINE_DP.dp,
-                            ChromeStyle.hairline,
+                            ChromeStyle.dark.hairline,
                             RoundedCornerShape(ChromeStyle.BUTTON_RADIUS_DP.dp),
                         ).clickable(role = Role.Button) { onPick(entry) }
                         .padding(PLUS_PAD_DP.dp),
                 ) {
-                    BasicText(PlusMenu.label(entry), style = titleStyle(ChromeStyle.text))
+                    BasicText(PlusMenu.label(entry), style = titleStyle(ChromeStyle.dark.text))
                 }
             }
         }
