@@ -116,10 +116,13 @@ fun PageStrip(
 
     deleting?.let { page ->
         PanelDialog(onDismiss = { deleting = null }) {
-            BasicText("\"${page.title}\"", style = TextStyle(fontSize = 15.sp, color = Color(PANEL_TEXT)))
+            BasicText(
+                "\"${page.title}\"",
+                style = TextStyle(fontFamily = ChromeStyle.font, fontSize = 15.sp, color = Color(PANEL_TEXT)),
+            )
             BasicText(
                 "The page and its strokes are removed. This cannot be undone.",
-                style = TextStyle(fontSize = 12.sp, color = Color(MUTED)),
+                style = TextStyle(fontFamily = ChromeStyle.font, fontSize = 12.sp, color = Color(MUTED)),
             )
             DialogButtons {
                 ToolChip("Delete", selected = true, onClick = {
@@ -168,7 +171,10 @@ private fun PageChip(
         )
         if (active) {
             Spacer(Modifier.width(5.dp))
-            BasicText("•", style = TextStyle(fontSize = TITLE_SIZE_SP.sp, color = colors.text))
+            BasicText(
+                "•",
+                style = TextStyle(fontFamily = ChromeStyle.font, fontSize = TITLE_SIZE_SP.sp, color = colors.text),
+            )
         }
     }
 }
@@ -209,12 +215,15 @@ private fun NewPageDialog(
     var title by remember { mutableStateOf("") }
     var template by remember { mutableStateOf(PageTemplate.Blank) }
     PanelDialog(onDismiss = onDismiss) {
-        BasicText("New page", style = TextStyle(fontSize = 15.sp, color = Color(PANEL_TEXT)))
+        BasicText(
+            "New page",
+            style = TextStyle(fontFamily = ChromeStyle.font, fontSize = 15.sp, color = Color(PANEL_TEXT)),
+        )
         BasicTextField(
             value = title,
             onValueChange = { title = it },
             singleLine = true,
-            textStyle = TextStyle(fontSize = 14.sp, color = Color.White),
+            textStyle = TextStyle(fontFamily = ChromeStyle.font, fontSize = 14.sp, color = Color.White),
             modifier =
                 Modifier
                     .fillMaxWidth()
@@ -222,7 +231,10 @@ private fun NewPageDialog(
                     .padding(horizontal = 10.dp, vertical = 9.dp),
             decorationBox = { inner ->
                 if (title.isEmpty()) {
-                    BasicText(suggested, style = TextStyle(fontSize = 14.sp, color = Color(MUTED)))
+                    BasicText(
+                        suggested,
+                        style = TextStyle(fontFamily = ChromeStyle.font, fontSize = 14.sp, color = Color(MUTED)),
+                    )
                 }
                 inner()
             },
@@ -238,12 +250,18 @@ private fun NewPageDialog(
             ) {
                 BasicText(
                     if (template == option) "●" else "○",
-                    style = TextStyle(fontSize = 13.sp, color = Color(PANEL_TEXT)),
+                    style = TextStyle(fontFamily = ChromeStyle.font, fontSize = 13.sp, color = Color(PANEL_TEXT)),
                 )
                 Spacer(Modifier.width(8.dp))
-                BasicText(option.label, style = TextStyle(fontSize = 14.sp, color = Color(PANEL_TEXT)))
+                BasicText(
+                    option.label,
+                    style = TextStyle(fontFamily = ChromeStyle.font, fontSize = 14.sp, color = Color(PANEL_TEXT)),
+                )
                 Spacer(Modifier.width(8.dp))
-                BasicText(option.hint, style = TextStyle(fontSize = 11.sp, color = Color(MUTED)))
+                BasicText(
+                    option.hint,
+                    style = TextStyle(fontFamily = ChromeStyle.font, fontSize = 11.sp, color = Color(MUTED)),
+                )
             }
         }
         DialogButtons {
@@ -264,12 +282,12 @@ private fun EditPageDialog(
 ) {
     var title by remember { mutableStateOf(page.title) }
     PanelDialog(onDismiss = onDismiss) {
-        BasicText("Page", style = TextStyle(fontSize = 15.sp, color = Color(PANEL_TEXT)))
+        BasicText("Page", style = TextStyle(fontFamily = ChromeStyle.font, fontSize = 15.sp, color = Color(PANEL_TEXT)))
         BasicTextField(
             value = title,
             onValueChange = { title = it },
             singleLine = true,
-            textStyle = TextStyle(fontSize = 14.sp, color = Color.White),
+            textStyle = TextStyle(fontFamily = ChromeStyle.font, fontSize = 14.sp, color = Color.White),
             modifier =
                 Modifier
                     .fillMaxWidth()
@@ -279,7 +297,7 @@ private fun EditPageDialog(
         if (!canDelete) {
             BasicText(
                 "The last page cannot be deleted.",
-                style = TextStyle(fontSize = 11.sp, color = Color(MUTED)),
+                style = TextStyle(fontFamily = ChromeStyle.font, fontSize = 11.sp, color = Color(MUTED)),
             )
         }
         DialogButtons {

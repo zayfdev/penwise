@@ -15,6 +15,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.penwise.frames.ChromeStyle
 
 private const val CHIP_RADIUS_DP = 8
 private const val CHIP_PAD_H_DP = 10
@@ -42,7 +43,12 @@ internal fun ToolChip(
     ) {
         BasicText(
             text = label,
-            style = TextStyle(color = if (selected) Color.White else Color.Black, fontSize = CHIP_TEXT_SP.sp),
+            style =
+                TextStyle(
+                    fontFamily = ChromeStyle.font,
+                    color = if (selected) Color.White else Color.Black,
+                    fontSize = CHIP_TEXT_SP.sp,
+                ),
         )
     }
 }

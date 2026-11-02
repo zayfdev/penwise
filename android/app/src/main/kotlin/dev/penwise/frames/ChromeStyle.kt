@@ -5,7 +5,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontVariation
+import androidx.compose.ui.text.font.FontWeight
+import dev.penwise.R
 
 /**
  * One set of chrome colours (locked-frames contract §3.4, graphite): opaque panels with a hairline, no blur. The dark
@@ -44,7 +48,7 @@ internal class ChromePalette(
 )
 
 /**
- * The look of the floating chrome. Every colour, radius and the font family live here, so a later pick of fonts or
+ * The look of the floating chrome. Every colour, radius and the font families live here, so a later pick of fonts or
  * palette swaps in one place. The colours follow the system light/dark setting.
  */
 internal object ChromeStyle {
@@ -108,9 +112,17 @@ internal object ChromeStyle {
     const val BUTTON_RADIUS_DP = 12
     const val HAIRLINE_DP = 1
 
-    /** The system sans until the fonts are chosen. */
-    val font: FontFamily = FontFamily.SansSerif
+    /** Geist, the chrome's sans (SIL OFL 1.1; see THIRD_PARTY_NOTICES.md). */
+    val font: FontFamily = geist(R.font.geist)
 
-    /** The system monospace for readouts (a size, a hex code) until the fonts are chosen. */
-    val mono: FontFamily = FontFamily.Monospace
+    /** Geist Mono for readouts (a size, a hex code). */
+    val mono: FontFamily = geist(R.font.geist_mono)
+
+    /** One variable font file serves the three weights the chrome uses (regular, medium, semibold). */
+    private fun geist(res: Int): FontFamily =
+        FontFamily(
+            listOf(FontWeight.Normal, FontWeight.Medium, FontWeight.SemiBold).map { weight ->
+                Font(res, weight, variationSettings = FontVariation.Settings(FontVariation.weight(weight.weight)))
+            },
+        )
 }

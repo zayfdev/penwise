@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import dev.penwise.R
+import dev.penwise.frames.ChromeStyle
 import dev.penwise.ink.PageViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -149,7 +150,7 @@ private fun Banner(
                     .background(Color(ERROR_COLOR), RoundedCornerShape(GAP_DP.dp))
                     .then(if (onDismiss != null) Modifier.clickable(onClick = onDismiss) else Modifier)
                     .padding(GAP_DP.dp),
-            style = TextStyle(fontSize = BODY_SP.sp, color = Color.White),
+            style = TextStyle(fontFamily = ChromeStyle.font, fontSize = BODY_SP.sp, color = Color.White),
         )
     }
 }
@@ -167,8 +168,14 @@ private fun NoticeDialog(
                 .padding(PAD_DP.dp),
             verticalArrangement = Arrangement.spacedBy(GAP_DP.dp),
         ) {
-            BasicText(title, style = TextStyle(fontSize = TITLE_SP.sp, color = Color(TEXT_COLOR)))
-            BasicText(body, style = TextStyle(fontSize = BODY_SP.sp, color = Color(TEXT_COLOR)))
+            BasicText(
+                title,
+                style = TextStyle(fontFamily = ChromeStyle.font, fontSize = TITLE_SP.sp, color = Color(TEXT_COLOR)),
+            )
+            BasicText(
+                body,
+                style = TextStyle(fontFamily = ChromeStyle.font, fontSize = BODY_SP.sp, color = Color(TEXT_COLOR)),
+            )
             Row(horizontalArrangement = Arrangement.spacedBy(GAP_DP.dp)) { buttons() }
         }
     }

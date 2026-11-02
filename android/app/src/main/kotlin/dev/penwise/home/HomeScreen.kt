@@ -32,6 +32,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import dev.penwise.frames.ChromeStyle
 import dev.penwise.ink.PageBook
 import dev.penwise.ink.PageList
 import dev.penwise.ink.PageMeta
@@ -44,14 +45,14 @@ private const val BACKGROUND = 0xFFF4F5F7.toInt()
 private const val CARD = 0xFFFFFFFF.toInt()
 private const val INK = 0xFF1E2024.toInt()
 private const val MUTED = 0xFF7C7F86.toInt()
-private const val ACCENT = 0xFF2F4FD0.toInt()
-private const val PANEL = 0xFF23252A.toInt()
-private const val PANEL_TEXT = 0xFFE8EAEE.toInt()
-private const val PANEL_MUTED = 0xFF9AA0AA.toInt()
-private const val FIELD = 0xFF16181C.toInt()
-private const val RADIUS_DP = 14
+internal const val ACCENT = 0xFF2F4FD0.toInt()
+internal const val PANEL = 0xFF23252A.toInt()
+internal const val PANEL_TEXT = 0xFFE8EAEE.toInt()
+internal const val PANEL_MUTED = 0xFF9AA0AA.toInt()
+internal const val FIELD = 0xFF16181C.toInt()
+internal const val RADIUS_DP = 14
 private const val SUBTLE_FILL = 0x0D000000
-private const val ACCENT_FILL = 0x142F4FD0
+internal const val ACCENT_FILL = 0x142F4FD0
 private const val PAD_DP = 20
 
 /** Everything the home screen can ask the app to do. */
@@ -219,11 +220,17 @@ private fun Header(
         Column(Modifier.weight(1f)) {
             BasicText(
                 "Penwise",
-                style = TextStyle(fontSize = 26.sp, fontWeight = FontWeight.SemiBold, color = Color(INK)),
+                style =
+                    TextStyle(
+                        fontFamily = ChromeStyle.font,
+                        fontSize = 26.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color(INK),
+                    ),
             )
             BasicText(
                 "$notebookCount notebooks · $pageCount pages",
-                style = TextStyle(fontSize = 13.sp, color = Color(MUTED)),
+                style = TextStyle(fontFamily = ChromeStyle.font, fontSize = 13.sp, color = Color(MUTED)),
             )
         }
         ToolButton(ToolIcons.Add, label = "New notebook", selected = false, onClick = onNewNotebook)
@@ -245,12 +252,18 @@ private fun NotebookSection(
         Row(verticalAlignment = Alignment.CenterVertically) {
             BasicText(
                 book.title,
-                style = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.Medium, color = Color(INK)),
+                style =
+                    TextStyle(
+                        fontFamily = ChromeStyle.font,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color(INK),
+                    ),
             )
             Spacer(Modifier.width(8.dp))
             BasicText(
                 "${book.pages.size}",
-                style = TextStyle(fontSize = 12.sp, color = Color(MUTED)),
+                style = TextStyle(fontFamily = ChromeStyle.font, fontSize = 12.sp, color = Color(MUTED)),
             )
             Spacer(Modifier.weight(1f))
             ToolButton(ToolIcons.Rename, label = "Rename notebook", selected = false, onClick = onEditNotebook)
@@ -296,7 +309,10 @@ private fun PageCard(
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            BasicText(page.glyph, style = TextStyle(fontSize = 15.sp, color = Color(MUTED)))
+            BasicText(
+                page.glyph,
+                style = TextStyle(fontFamily = ChromeStyle.font, fontSize = 15.sp, color = Color(MUTED)),
+            )
             Spacer(Modifier.weight(1f))
             Box(
                 Modifier
@@ -309,12 +325,18 @@ private fun PageCard(
         }
         BasicText(
             page.title,
-            style = TextStyle(fontSize = 14.sp, color = Color(INK), fontWeight = FontWeight.Medium),
+            style =
+                TextStyle(
+                    fontFamily = ChromeStyle.font,
+                    fontSize = 14.sp,
+                    color = Color(INK),
+                    fontWeight = FontWeight.Medium,
+                ),
             maxLines = 1,
         )
         BasicText(
             describe(page),
-            style = TextStyle(fontSize = 11.sp, color = Color(MUTED)),
+            style = TextStyle(fontFamily = ChromeStyle.font, fontSize = 11.sp, color = Color(MUTED)),
             maxLines = 1,
         )
     }
@@ -338,125 +360,6 @@ private fun EmptyRow(text: String) {
             .background(Color(SUBTLE_FILL), RoundedCornerShape(RADIUS_DP.dp))
             .padding(18.dp),
     ) {
-        BasicText(text, style = TextStyle(fontSize = 13.sp, color = Color(MUTED)))
-    }
-}
-
-@Composable
-private fun TextButtonRow(
-    label: String,
-    onClick: () -> Unit,
-) {
-    Box(
-        Modifier
-            .background(Color(ACCENT_FILL), RoundedCornerShape(RADIUS_DP.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-    ) {
-        BasicText(label, style = TextStyle(fontSize = 14.sp, color = Color(ACCENT)))
-    }
-}
-
-/** Small dark dialog with one field and up to three actions. */
-@Composable
-private fun PromptDialog(
-    title: String,
-    label: String,
-    initial: String,
-    confirm: String,
-    onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit,
-    extra: Pair<String, () -> Unit>? = null,
-) {
-    var text by remember { mutableStateOf(initial) }
-    Dialog(onDismissRequest = onDismiss) {
-        Column(
-            Modifier
-                .background(Color(PANEL), RoundedCornerShape(12.dp))
-                .padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            BasicText(title, style = TextStyle(fontSize = 16.sp, color = Color(PANEL_TEXT)))
-            BasicText(label, style = TextStyle(fontSize = 11.sp, color = Color(PANEL_MUTED)))
-            BasicTextField(
-                value = text,
-                onValueChange = { text = it },
-                singleLine = true,
-                textStyle = TextStyle(fontSize = 15.sp, color = Color.White),
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .background(Color(FIELD), RoundedCornerShape(8.dp))
-                        .padding(horizontal = 10.dp, vertical = 9.dp),
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                PanelButton(confirm, primary = true) { onConfirm(text.trim()) }
-                PanelButton("Cancel", primary = false, onClick = onDismiss)
-                extra?.let { (label, action) ->
-                    PanelButton(label, primary = false, onClick = action)
-                }
-            }
-        }
-    }
-}
-
-/** New page dialog: title plus the four templates. */
-@Composable
-fun NewPageDialog(
-    suggested: String,
-    onDismiss: () -> Unit,
-    onCreate: (String, PageTemplate) -> Unit,
-) {
-    var title by remember { mutableStateOf("") }
-    var template by remember { mutableStateOf(PageTemplate.Blank) }
-    Dialog(onDismissRequest = onDismiss) {
-        Column(
-            Modifier
-                .background(Color(PANEL), RoundedCornerShape(12.dp))
-                .padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            BasicText("New page", style = TextStyle(fontSize = 16.sp, color = Color(PANEL_TEXT)))
-            BasicTextField(
-                value = title,
-                onValueChange = { title = it },
-                singleLine = true,
-                textStyle = TextStyle(fontSize = 15.sp, color = Color.White),
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .background(Color(FIELD), RoundedCornerShape(8.dp))
-                        .padding(horizontal = 10.dp, vertical = 9.dp),
-                decorationBox = { inner ->
-                    if (title.isEmpty()) {
-                        BasicText(suggested, style = TextStyle(fontSize = 15.sp, color = Color(PANEL_MUTED)))
-                    }
-                    inner()
-                },
-            )
-            PageTemplate.entries.forEach { option ->
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .clickable { template = option }
-                            .padding(vertical = 2.dp),
-                ) {
-                    BasicText(
-                        if (template == option) "●" else "○",
-                        style = TextStyle(fontSize = 13.sp, color = Color(PANEL_TEXT)),
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    BasicText(option.label, style = TextStyle(fontSize = 14.sp, color = Color(PANEL_TEXT)))
-                    Spacer(Modifier.width(8.dp))
-                    BasicText(option.hint, style = TextStyle(fontSize = 11.sp, color = Color(PANEL_MUTED)))
-                }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                PanelButton("Create", primary = true) { onCreate(title.ifBlank { suggested }, template) }
-                PanelButton("Cancel", primary = false, onClick = onDismiss)
-            }
-        }
+        BasicText(text, style = TextStyle(fontFamily = ChromeStyle.font, fontSize = 13.sp, color = Color(MUTED)))
     }
 }

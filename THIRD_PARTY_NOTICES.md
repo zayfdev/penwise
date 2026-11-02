@@ -33,3 +33,11 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## Geist and Geist Mono
+
+Bundled as the Android chrome fonts in `android/app/src/main/res/font/geist.ttf` and `geist_mono.ttf` (unmodified
+variable fonts from https://github.com/google/fonts, `ofl/geist` and `ofl/geistmono`; upstream
+https://github.com/vercel/geist-font). Copyright 2024 The Geist Project Authors, licensed under the SIL Open Font
+License 1.1. The licence texts ship in the app at `android/app/src/main/assets/licenses/geist-OFL.txt` and
+`geist-mono-OFL.txt`.

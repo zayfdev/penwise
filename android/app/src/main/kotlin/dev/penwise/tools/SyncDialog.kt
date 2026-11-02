@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import dev.penwise.R
+import dev.penwise.frames.ChromeStyle
 import dev.penwise.sync.DeadLetter
 
 private const val FIELD_WIDTH_DP = 320
@@ -70,7 +71,12 @@ fun SyncDialog(
         ) {
             androidx.compose.foundation.text.BasicText(
                 status,
-                style = TextStyle(fontSize = TEXT_SIZE_SP.sp, color = Color(LABEL_COLOR)),
+                style =
+                    TextStyle(
+                        fontFamily = ChromeStyle.font,
+                        fontSize = TEXT_SIZE_SP.sp,
+                        color = Color(LABEL_COLOR),
+                    ),
             )
             if (deadLetters.isNotEmpty()) {
                 DeadLetterList(deadLetters, onExportDeadLetters, onClearDeadLetters)
@@ -94,13 +100,13 @@ private fun Field(
     Column(verticalArrangement = Arrangement.spacedBy(SMALL_GAP_DP.dp)) {
         androidx.compose.foundation.text.BasicText(
             label,
-            style = TextStyle(fontSize = LABEL_SIZE_SP.sp, color = Color(LABEL_COLOR)),
+            style = TextStyle(fontFamily = ChromeStyle.font, fontSize = LABEL_SIZE_SP.sp, color = Color(LABEL_COLOR)),
         )
         BasicTextField(
             value = value,
             onValueChange = onChange,
             singleLine = true,
-            textStyle = TextStyle(fontSize = TEXT_SIZE_SP.sp, color = Color.White),
+            textStyle = TextStyle(fontFamily = ChromeStyle.font, fontSize = TEXT_SIZE_SP.sp, color = Color.White),
             modifier =
                 Modifier
                     .width(FIELD_WIDTH_DP.dp)
@@ -121,7 +127,7 @@ private fun DeadLetterList(
     Column(verticalArrangement = Arrangement.spacedBy(SMALL_GAP_DP.dp)) {
         androidx.compose.foundation.text.BasicText(
             stringResource(R.string.sync_dead_letters_title),
-            style = TextStyle(fontSize = LABEL_SIZE_SP.sp, color = Color(LABEL_COLOR)),
+            style = TextStyle(fontFamily = ChromeStyle.font, fontSize = LABEL_SIZE_SP.sp, color = Color(LABEL_COLOR)),
         )
         Column(
             Modifier
@@ -136,7 +142,7 @@ private fun DeadLetterList(
                         letter.reasonName,
                         "${letter.sizeBytes} B",
                     ),
-                    style = TextStyle(fontSize = TEXT_SIZE_SP.sp, color = Color.White),
+                    style = TextStyle(fontFamily = ChromeStyle.font, fontSize = TEXT_SIZE_SP.sp, color = Color.White),
                 )
             }
         }

@@ -17,6 +17,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import dev.penwise.frames.ChromeStyle
 
 private const val PANEL = 0xFF23252A.toInt()
 private const val PANEL_TEXT = 0xFFE8EAEE.toInt()
@@ -44,8 +45,14 @@ fun ConfirmDialog(
                 .padding(18.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            BasicText(title, style = TextStyle(fontSize = 16.sp, color = Color(PANEL_TEXT)))
-            BasicText(message, style = TextStyle(fontSize = 13.sp, color = Color(PANEL_MUTED)))
+            BasicText(
+                title,
+                style = TextStyle(fontFamily = ChromeStyle.font, fontSize = 16.sp, color = Color(PANEL_TEXT)),
+            )
+            BasicText(
+                message,
+                style = TextStyle(fontFamily = ChromeStyle.font, fontSize = 13.sp, color = Color(PANEL_MUTED)),
+            )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 PanelButton(confirm, primary = true, danger = destructive, onClick = onConfirm)
                 PanelButton("Cancel", primary = false, onClick = onDismiss)
@@ -76,7 +83,12 @@ fun PanelButton(
     ) {
         BasicText(
             label,
-            style = TextStyle(fontSize = 14.sp, color = if (primary) Color.White else Color(PANEL_TEXT)),
+            style =
+                TextStyle(
+                    fontFamily = ChromeStyle.font,
+                    fontSize = 14.sp,
+                    color = if (primary) Color.White else Color(PANEL_TEXT),
+                ),
         )
     }
 }

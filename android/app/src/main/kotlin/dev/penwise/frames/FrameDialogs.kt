@@ -71,7 +71,7 @@ internal fun AddFrameDialog(
             if (projects.isEmpty()) {
                 BasicText(
                     stringResource(R.string.frame_no_projects),
-                    style = TextStyle(fontSize = TEXT_SP.sp, color = Color(PANEL_MUTED)),
+                    style = TextStyle(fontFamily = ChromeStyle.font, fontSize = TEXT_SP.sp, color = Color(PANEL_MUTED)),
                 )
             } else {
                 Label(stringResource(R.string.frame_project))
@@ -166,7 +166,7 @@ private fun RouteField(
         value = value,
         onValueChange = onChange,
         singleLine = true,
-        textStyle = TextStyle(fontSize = TEXT_SP.sp, color = Color.White),
+        textStyle = TextStyle(fontFamily = ChromeStyle.font, fontSize = TEXT_SP.sp, color = Color.White),
         modifier =
             Modifier
                 .fillMaxWidth()
@@ -177,10 +177,13 @@ private fun RouteField(
 
 @Composable
 private fun Title(text: String) {
-    BasicText(text, style = TextStyle(fontSize = TITLE_SP.sp, color = Color(PANEL_TEXT)))
+    BasicText(text, style = TextStyle(fontFamily = ChromeStyle.font, fontSize = TITLE_SP.sp, color = Color(PANEL_TEXT)))
 }
 
 @Composable
 private fun Label(text: String) {
-    BasicText(text, style = TextStyle(fontSize = LABEL_SP.sp, color = Color(PANEL_MUTED)))
+    BasicText(
+        text,
+        style = TextStyle(fontFamily = ChromeStyle.font, fontSize = LABEL_SP.sp, color = Color(PANEL_MUTED)),
+    )
 }

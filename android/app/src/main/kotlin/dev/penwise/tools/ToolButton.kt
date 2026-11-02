@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
+import dev.penwise.frames.ChromeStyle
 import kotlinx.coroutines.delay
 
 private const val ICON_TINT = 0xFF23252A
@@ -119,7 +120,10 @@ internal fun Tooltip(
                     RoundedCornerShape(6.dp),
                 ).padding(horizontal = 10.dp, vertical = 6.dp),
         ) {
-            BasicText(text, style = TextStyle(color = Color.White, fontSize = TIP_TEXT_SP.sp))
+            BasicText(
+                text,
+                style = TextStyle(fontFamily = ChromeStyle.font, color = Color.White, fontSize = TIP_TEXT_SP.sp),
+            )
         }
     }
 }
