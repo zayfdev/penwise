@@ -270,14 +270,15 @@ Run in the project folder:
 - **State replay fails** (selector changed): mark shown greyed with "state not reproducible".
 - **Patch errors** (bad selector): ghost reports which ops failed; nothing else changes.
 - **Cross-origin content** (iframes, external fonts) stays as-is; external iframes can't be inspected.
-- **Fixed elements:** bound marks follow them (rect from the bridge); area marks scroll with the document.
-- **Sticky elements:** a bound mark stays where it was drawn on the page; the bridge reports a sticky element where
-  the flow puts it, without its pinning, so a column that pins while its section scrolls past does not drag its marks
-  along (owner, 2026-11-02). Moving with the element made the marks ride down the page and break away from the marks
-  next to them.
-- **CSS transitions and animations** (reveal-on-scroll slides) move a bound element without a DOM change or scroll:
-  the bridge re-reads the layout while one runs on a watched element and when it ends, so its marks come to rest
-  where it does.
+- **Scrolling never moves a mark** (owner rule, 2026-11-02: ink and site "move in together in sync and never being
+  swayed / sliding around misplaced"). A mark lives at its document position. Binding exists only to carry it
+  through real layout changes: a variant patch, a reload with another layout, a viewport width change, content
+  inserted or removed above, a resize. The bridge therefore reports a bound element's **layout box**, not its visual
+  box: transforms on the element and its ancestors (reveal slides, parallax, scroll-driven animations, JS
+  transforms) are taken out, and so is a sticky box's pinning. Pure translations come off the measured rect exactly;
+  under a scale or rotation the box comes from the offset chain. The layout is read again when a transition of a
+  layout property (size, margins, offsets) or an animation ends; transform and opacity transitions are ignored.
+- **Fixed elements:** bound marks follow them (they keep their viewport rect); area marks scroll with the document.
 - **Owner rotates the tablet or changes the canvas zoom:** frames keep preset size; only canvas zoom changes.
 
 ## 10. Milestones

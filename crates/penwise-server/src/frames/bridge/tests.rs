@@ -1296,30 +1296,82 @@ async fn a_sticky_element_is_reported_where_the_flow_puts_it() {
     server.shutdown().await;
 }
 
-/// A reveal-on-scroll block slides into place with a CSS transition, which moves its box without a DOM change, a
-/// resize or a scroll. The bridge reports where it comes to rest; before, the core kept the rect measured as the
-/// class was added and marks bound to it sat up to the slide's distance low (8 css px measured on the tablet).
+/// Adds `html` before `#tall`, scrolled to the top, and returns the core's document rect for the element `selector`
+/// inside it once the bridge watches it, plus its key.
+async fn watch_new(
+    inspect: &Inspect,
+    page: &Page,
+    html: &str,
+    selector: &str,
+) -> (String, Vec<f64>) {
+    let html = serde_json::to_string(html).expect("html json");
+    inspect
+        .eval(
+            page,
+            &format!(
+                "window.scrollTo(0, 0); var holder = document.createElement('div'); holder.innerHTML = {html}; \
+                 while (holder.firstChild) document.getElementById('tall').before(holder.firstChild); 1"
+            ),
+        )
+        .await
+        .expect("insert");
+    let key = hit_key(inspect, page, selector).await;
+    inspect
+        .eval(page, "window.scrollTo(0, 0); 1")
+        .await
+        .expect("top");
+    watch(inspect, page, std::slice::from_ref(&key)).await;
+    wait_layout(inspect, page, |message| rect_of(message, &key).is_some()).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let rect = core_doc_rect(inspect, page, &key).await.expect("rect");
+    (key, rect)
+}
+
+/// The document top of `selector`'s layout box, measured by the test with every transform switched off.
+async fn untransformed_top(inspect: &Inspect, page: &Page, selector: &str, ancestors: &str) -> f64 {
+    let selector = serde_json::to_string(selector).expect("selector json");
+    let ancestors = serde_json::to_string(ancestors).expect("ancestors json");
+    inspect
+        .eval(
+            page,
+            &format!(
+                "(function () {{ var all = [document.querySelector({selector})].concat( \
+                   Array.prototype.slice.call(document.querySelectorAll({ancestors}))); \
+                 var kept = all.map(function (e) {{ var t = [e.style.transition, e.style.transform]; \
+                   e.style.transition = 'none'; e.style.transform = 'none'; return t; }}); \
+                 var top = document.querySelector({selector}).getBoundingClientRect().top + window.scrollY; \
+                 all.forEach(function (e, i) {{ e.style.transform = kept[i][1]; }}); \
+                 document.body.offsetWidth; \
+                 all.forEach(function (e, i) {{ e.style.transition = kept[i][0]; }}); return top; }})()"
+            ),
+        )
+        .await
+        .expect("layout top")
+        .as_f64()
+        .expect("layout top")
+}
+
+/// A reveal-on-scroll block starts slid down and slides up into place with a CSS transform transition. The mark
+/// bound to it lives at the block's layout position the whole time: before, during and after the slide (owner,
+/// 2026-11-02: scrolling never moves a mark). Before, the core first held the slid-down rect and the mark slid.
 #[tokio::test]
-async fn a_watched_element_is_reported_where_a_transition_leaves_it() {
+async fn a_transform_reveal_never_moves_a_watched_rect() {
     if !chromium_installed() {
-        tracing::warn!("chromium is not installed; bridge transition test skipped");
+        tracing::warn!("chromium is not installed; bridge reveal test skipped");
         return;
     }
     let server = project().await;
     let (inspect, page) = open(&server).await;
-    inspect
-        .eval(
-            &page,
-            "window.scrollTo(0, 0); var b = document.createElement('div'); b.id = 'pw-slide'; \
-             b.textContent = 'slides up'; \
-             b.style.cssText = 'height:60px;background:#dfd;transition:transform 300ms linear,opacity 300ms linear;\
-             transform:translateY(30px);opacity:0'; document.getElementById('tall').before(b); 1",
-        )
-        .await
-        .expect("slide block");
-    let key = hit_key(&inspect, &page, "#pw-slide").await;
-    watch(&inspect, &page, std::slice::from_ref(&key)).await;
-    wait_layout(&inspect, &page, |message| rect_of(message, &key).is_some()).await;
+    let html = "<div id='pw-slide' style='height:60px;background:#dfd;\
+                transition:transform 400ms linear,opacity 400ms linear;transform:translateY(30px);opacity:0'>\
+                slides up</div>";
+    let (key, first) = watch_new(&inspect, &page, html, "#pw-slide").await;
+    let layout = untransformed_top(&inspect, &page, "#pw-slide", "#pw-none").await;
+    assert!(
+        (first[1] - layout).abs() < 0.5,
+        "slid down: held {} for the layout top {layout}",
+        first[1]
+    );
 
     inspect
         .eval(
@@ -1328,21 +1380,107 @@ async fn a_watched_element_is_reported_where_a_transition_leaves_it() {
         )
         .await
         .expect("reveal");
-    tokio::time::sleep(Duration::from_millis(900)).await;
-    let rest = inspect
+    for wait in [150, 700] {
+        tokio::time::sleep(Duration::from_millis(wait)).await;
+        let held = core_doc_rect(&inspect, &page, &key).await.expect("rect");
+        assert!(
+            (held[1] - layout).abs() < 0.5,
+            "after {wait} ms: held {} for {layout}",
+            held[1]
+        );
+    }
+
+    page.close().await;
+    inspect.shutdown().await;
+    server.shutdown().await;
+}
+
+/// A parallax block that page script moves with `transform` on every scroll keeps its mark at its layout position.
+/// Under a scaled ancestor (not a pure translation) the layout box comes from the offset chain instead.
+#[tokio::test]
+async fn parallax_and_scaled_ancestors_never_move_a_watched_rect() {
+    if !chromium_installed() {
+        tracing::warn!("chromium is not installed; bridge parallax test skipped");
+        return;
+    }
+    let server = project().await;
+    let (inspect, page) = open(&server).await;
+    let html = "<div id='pw-zoom' style='transform:scale(0.8) translateY(40px);transform-origin:0 0'>\
+                <div id='pw-par' style='height:80px;margin-top:20px;background:#fdd'>parallax</div></div>";
+    let (key, first) = watch_new(&inspect, &page, html, "#pw-par").await;
+    inspect
         .eval(
             &page,
-            "document.getElementById('pw-slide').getBoundingClientRect().top + window.scrollY",
+            "window.addEventListener('scroll', function () { \
+               document.getElementById('pw-par').style.transform = 'translateY(' + window.scrollY * 0.4 + 'px)'; \
+             }, { passive: true }); 1",
         )
         .await
-        .expect("rest top")
-        .as_f64()
-        .expect("rest top");
-    let held = core_doc_rect(&inspect, &page, &key).await.expect("rect");
+        .expect("parallax");
+    let layout = untransformed_top(&inspect, &page, "#pw-par", "#pw-zoom").await;
     assert!(
-        (held[1] - rest).abs() < 0.5,
-        "the core holds the resting top {rest}, got {}",
-        held[1]
+        (first[1] - layout).abs() < 1.0,
+        "under the scale: held {} for {layout}",
+        first[1]
+    );
+    for y in [150, 400] {
+        let before = layout_count(&inspect, &page).await;
+        inspect
+            .eval(&page, &format!("window.scrollTo(0, {y}); 1"))
+            .await
+            .expect("scroll");
+        wait_layout_since(&inspect, &page, before, |message| {
+            message["scroll"][1]
+                .as_f64()
+                .is_some_and(|s| (s - f64::from(y)).abs() < 1.0)
+        })
+        .await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let held = core_doc_rect(&inspect, &page, &key).await.expect("rect");
+        assert!(
+            (held[1] - layout).abs() < 1.0,
+            "scrolled to {y}: held {} for {layout}",
+            held[1]
+        );
+    }
+
+    page.close().await;
+    inspect.shutdown().await;
+    server.shutdown().await;
+}
+
+/// Binding still carries a mark through a real layout change: content inserted above moves the element down, and
+/// the core follows it.
+#[tokio::test]
+async fn content_inserted_above_moves_a_watched_rect() {
+    if !chromium_installed() {
+        tracing::warn!("chromium is not installed; bridge layout-change test skipped");
+        return;
+    }
+    let server = project().await;
+    let (inspect, page) = open(&server).await;
+    let html = "<div id='pw-target' style='height:40px;background:#ddf'>target</div>";
+    let (key, first) = watch_new(&inspect, &page, html, "#pw-target").await;
+    inspect
+        .eval(
+            &page,
+            "var gap = document.createElement('div'); gap.style.height = '50px'; \
+             document.getElementById('pw-target').before(gap); 1",
+        )
+        .await
+        .expect("insert above");
+    let moved = wait_layout(&inspect, &page, |message| {
+        rect_of(message, &key).is_some_and(|rect| {
+            rect[1] + message["scroll"][1].as_f64().unwrap_or(0.0) > first[1] + 49.0
+        })
+    })
+    .await;
+    let rect = rect_of(&moved, &key).expect("moved rect");
+    let doc = rect[1] + moved["scroll"][1].as_f64().expect("scroll");
+    assert!(
+        (doc - first[1] - 50.0).abs() < 0.5,
+        "moved by the 50 px inserted above: {} -> {doc}",
+        first[1]
     );
 
     page.close().await;

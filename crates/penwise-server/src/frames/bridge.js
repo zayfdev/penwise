@@ -26,9 +26,9 @@
  * rects whose value changed, plus every other field in full. A key removed from `pw:watch` is simply absent, so
  * `null` always means "the element was there and is gone". Keys are `v1|<data-pw-src>|<fingerprint>`:
  * tag, id, stable classes and the nth-of-type path from the nearest ancestor with an id. A rect (and a `pw:hit`
- * rect) is where the page's flow puts the element: a sticky box's pinning is taken out, so a mark bound inside a
- * sticky column stays where it was drawn on the page; fixed elements keep their viewport rect. The layout is read
- * again while a CSS transition or animation moves a watched element, and when it ends.
+ * rect) is the element's layout box: transforms on it and its ancestors and a sticky box's pinning are taken out,
+ * so nothing a scroll drives (a reveal slide, parallax, a pinned column) moves a mark; fixed elements keep their
+ * viewport rect. The layout is read again when a transition of a layout property or an animation ends.
  *
  * The state recipe is a `;`-joined list of `click:<selector>` steps: clicks that toggled `aria-expanded`, a
  * `details`/`dialog` open state, or a state class on the target or the element it controls with `aria-controls`.
@@ -565,13 +565,93 @@
     return [dx, dy];
   }
 
-  // The element's viewport rect where the page's flow puts it. A mark stays where it was drawn on the page: a sticky
-  // column that pins while its section scrolls past must not drag the marks on it along (owner, 2026-11-02). Fixed
-  // elements are not in the flow and keep their viewport rect, so marks on them stay on them.
+  // The pure 2D translation [dx, dy] a box's computed style applies (`transform` and `translate`), or null when it
+  // does more than translate (scale, rotate, skew, depth, a percentage the computed style keeps).
+  function translationOf(style) {
+    var x = 0;
+    var y = 0;
+    var values = null;
+    var transform = style.transform;
+    if (transform && transform !== "none") {
+      var flat = /^matrix\(([^)]*)\)$/.exec(transform);
+      var deep = /^matrix3d\(([^)]*)\)$/.exec(transform);
+      if (flat) {
+        values = flat[1].split(",").map(Number);
+        if (values[0] !== 1 || values[1] !== 0 || values[2] !== 0 || values[3] !== 1) return null;
+        x += values[4];
+        y += values[5];
+      } else if (deep) {
+        values = deep[1].split(",").map(Number);
+        for (var i = 0; i < 16; i += 1) {
+          if (i === 12 || i === 13) continue;
+          if (values[i] !== (i % 5 === 0 ? 1 : 0)) return null;
+        }
+        x += values[12];
+        y += values[13];
+      } else {
+        return null;
+      }
+    }
+    if ((style.scale && style.scale !== "none") || (style.rotate && style.rotate !== "none")) return null;
+    var translate = style.translate;
+    if (translate && translate !== "none") {
+      var parts = translate.split(" ");
+      if (!/^-?[\d.e+-]+px$/.test(parts[0]) || (parts[1] && !/^-?[\d.e+-]+px$/.test(parts[1]))) return null;
+      if (parts[2] && parseFloat(parts[2]) !== 0) return null;
+      x += parseFloat(parts[0]);
+      y += parts[1] ? parseFloat(parts[1]) : 0;
+    }
+    return [x, y];
+  }
+
+  // The layout box from the offset chain (integer CSS px, no transforms at all): the fallback for an element under
+  // a scale or rotation. Null for an element without one (SVG, `display: contents`).
+  function offsetBox(element) {
+    if (typeof element.offsetTop !== "number") return null;
+    var x = 0;
+    var y = 0;
+    var fixed = false;
+    for (var node = element; node; node = node.offsetParent) {
+      x += node.offsetLeft;
+      y += node.offsetTop;
+      if (!node.offsetParent && window.getComputedStyle(node).position === "fixed") fixed = true;
+    }
+    if (!fixed && !element.offsetParent && window.getComputedStyle(element).position !== "fixed") return null;
+    // Scrolled boxes inside the page (a carousel, an inner list) move what they hold; only the page's own scroll
+    // comes off as a whole (the wire carries viewport rects).
+    for (var box = element.parentElement; box && box !== document.body && box !== document.documentElement; box = box.parentElement) {
+      x -= box.scrollLeft;
+      y -= box.scrollTop;
+    }
+    if (!fixed) {
+      var pos = scrollPos();
+      x -= pos.x;
+      y -= pos.y;
+    }
+    return [x, y, element.offsetWidth, element.offsetHeight];
+  }
+
+  // The element's viewport rect where the page's layout puts it. A mark lives at its document position and scrolling
+  // never moves it (owner, 2026-11-02: ink and site "move in together in sync and never being swayed"), so the
+  // visual extras a scroll can drive are taken out: transforms on the element and its ancestors (a reveal slide,
+  // parallax, scroll-driven animations) and sticky pinning. A layout change (a patch, a reload, a resize, content
+  // above) still moves it. Fixed elements keep their viewport rect, so marks on them stay on them.
   function rectOf(element, shifts) {
     var rect = element.getBoundingClientRect();
-    var shift = stickyShiftOf(element, shifts || []);
-    return [rect.left - shift[0], rect.top - shift[1], rect.width, rect.height];
+    var sticky = stickyShiftOf(element, shifts || []);
+    var dx = sticky[0];
+    var dy = sticky[1];
+    for (var node = element; node && node.nodeType === 1; node = node.parentElement) {
+      var moved = translationOf(window.getComputedStyle(node));
+      if (!moved) {
+        var box = offsetBox(element);
+        if (!box) break;
+        return [box[0] - sticky[0], box[1] - sticky[1], box[2], box[3]];
+      }
+      dx += moved[0];
+      dy += moved[1];
+    }
+    return [rect.left - dx, rect.top - dy, rect.width, rect.height];
   }
 
   function observeElements(entries) {
@@ -621,12 +701,10 @@
     var entries = [];
     var shifts = [];
     var changed = false;
-    watchedNodes = [];
     for (var i = 0; i < watchKeys.length; i += 1) {
       var key = watchKeys[i];
       var element = resolveKey(key);
       entries.push([key, element]);
-      if (element) watchedNodes.push(element);
       var rect = element ? rectOf(element, shifts) : null;
       all[key] = rect;
       // Change detection works on the DOCUMENT rect (viewport rect + scroll): core stores document rects, so a
@@ -672,55 +750,21 @@
 
   var scheduleLayout = scheduler(layoutNow);
 
-  // CSS transitions and animations move boxes without a DOM change, a resize or a scroll (a reveal-on-scroll block
-  // sliding up into place). While one runs on a watched element or an ancestor of one, the layout is read every
-  // frame, and once more when it ends, so marks bound to it come to rest where it does. An animation that never ends
-  // is followed for MOTION_MS after it starts; its end events still bring a final read.
-  var MOTION_MS = 3000;
-  var watchedNodes = [];
-  var motions = 0;
-  var motionUntil = 0;
-  var following = false;
-
-  function movesWatched(target) {
-    if (!target || target.nodeType !== 1) return false;
-    for (var i = 0; i < watchedNodes.length; i += 1) {
-      if (target === watchedNodes[i] || target.contains(watchedNodes[i])) return true;
-    }
-    return false;
-  }
-
-  function followMotion() {
-    layoutNow();
-    if (motions > 0 && Date.now() < motionUntil) {
-      window.requestAnimationFrame(followMotion);
-    } else {
-      following = false;
-    }
-  }
-
-  function motionStart(event) {
-    if (!movesWatched(event.target)) return;
-    motions += 1;
-    motionUntil = Date.now() + MOTION_MS;
-    if (following || !window.requestAnimationFrame) return;
-    following = true;
-    window.requestAnimationFrame(followMotion);
-  }
-
-  function motionEnd(event) {
-    if (!movesWatched(event.target)) return;
-    motions = Math.max(0, motions - 1);
-    scheduleLayout();
-  }
+  // A transition of a box's layout (its size, margins, offsets) moves the elements after it without a DOM change,
+  // and only a resize of a watched element itself reaches the ResizeObserver: the layout is read again when one
+  // ends. Transforms, opacity and colours never move a mark, so their transitions are ignored. An animation's end
+  // is read once too (it may have animated layout).
+  var LAYOUT_PROPERTY = /^(width|height|min-|max-|top|right|bottom|left|inset|margin|padding|border-.*width|font-size|line-height|flex|grid|gap)/;
 
   function observeMotion() {
-    ["transitionrun", "animationstart"].forEach(function (name) {
-      window.addEventListener(name, motionStart, true);
-    });
-    ["transitionend", "transitioncancel", "animationend", "animationcancel"].forEach(function (name) {
-      window.addEventListener(name, motionEnd, true);
-    });
+    window.addEventListener(
+      "transitionend",
+      function (event) {
+        if (LAYOUT_PROPERTY.test(event.propertyName || "")) scheduleLayout();
+      },
+      true
+    );
+    window.addEventListener("animationend", scheduleLayout, true);
   }
 
   // Replace the watched keys and force one layout message: a newly watched key is always carried, and a
