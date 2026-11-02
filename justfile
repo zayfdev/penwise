@@ -8,7 +8,7 @@ gate_lock := "flock /tmp/penwise-gate.lock"
 check:
     {{gate_lock}} just _check
 
-_check: fmt-check clippy test wasm-build wasm-test jni-symbols web-check adapters-check sizes deny
+_check: fmt-check clippy test wasm-build wasm-test jni-symbols web-check adapters-check sizes deny _android-check
 
 fmt-check:
     cargo fmt --all --check
@@ -59,7 +59,11 @@ android:
     cd android && ANDROID_HOME=${ANDROID_HOME:-$HOME/Android/Sdk} {{gate_lock}} ./gradlew :app:assembleDebug
 
 android-check:
-    cd android && ANDROID_HOME=${ANDROID_HOME:-$HOME/Android/Sdk} {{gate_lock}} ./gradlew :app:lintDebug ktlintCheck detekt :app:testDebugUnitTest
+    {{gate_lock}} just _android-check
+
+# The Android gates without the lock, so `check` (which already holds it) runs them without taking it twice.
+_android-check:
+    cd android && ANDROID_HOME=${ANDROID_HOME:-$HOME/Android/Sdk} ./gradlew :app:lintDebug ktlintCheck detekt :app:testDebugUnitTest
 
 install:
     cd android && ANDROID_HOME=${ANDROID_HOME:-$HOME/Android/Sdk} ./gradlew :app:installDebug
