@@ -24,7 +24,7 @@ class SettleLedgerTest {
         val ledger = SettleLedger()
         ledger.submitted(panned, style)
         ledger.sceneChanged(region(10f, 20f, 30f, 40f), everything = false)
-        assertTrue("the open render stays: no restart, so no starvation", ledger.covers(panned, style))
+        assertTrue("the open render stays: no restart, so no starvation", ledger.runs(panned, style))
         val patch = ledger.accept(panned, panned, style)
         assertNotNull("the finished render is accepted", patch)
         assertEquals(10f, patch!!.left, 0f)
@@ -64,18 +64,34 @@ class SettleLedgerTest {
         val ledger = SettleLedger()
         ledger.submitted(panned, style)
         ledger.sceneChanged(RenderPlan.Idle, everything = true)
-        assertFalse(ledger.covers(panned, style))
+        assertFalse(ledger.runs(panned, style))
         assertNull(ledger.accept(panned, panned, style))
     }
 
+    /**
+     * A finger scroll pans the camera every frame, so a background render always finishes for a view the camera has
+     * already left. Dropping it (as before) meant no fresh render landed during a scroll: strokes that came into view
+     * stayed cut at the old screen edge until the scroll stopped (tablet, 2026-11-02: 3706 red px shown mid-scroll
+     * instead of about 30 000). At the same zoom it is shown through the transform, like the bitmap it replaces.
+     */
     @Test
-    fun a_render_for_another_view_or_style_is_dropped() {
+    fun a_render_for_an_earlier_pan_lands_while_the_camera_scrolls_on() {
         val ledger = SettleLedger()
         ledger.submitted(panned, style)
-        assertNull(ledger.accept(panned, ViewTransform(2f, -310f, -120f), style))
+        ledger.sceneChanged(region(10f, 20f, 30f, 40f), everything = false)
+        val patch = ledger.accept(panned, ViewTransform(2f, -300f, -460f), style)
+        assertNotNull("a render one scroll step behind is still the freshest the layer has", patch)
+        assertEquals(20f, patch!!.top, 0f)
+    }
+
+    @Test
+    fun a_render_for_another_zoom_or_style_is_dropped() {
+        val ledger = SettleLedger()
+        ledger.submitted(panned, style)
+        assertNull(ledger.accept(panned, ViewTransform(3f, -300f, -120f), style))
         ledger.submitted(panned, style)
         assertNull(ledger.accept(panned, panned, style.copy(background = "grid")))
-        assertFalse(ledger.covers(ViewTransform(1f, 0f, 0f), style))
+        assertFalse(ledger.runs(ViewTransform(1f, 0f, 0f), style))
     }
 
     @Test
@@ -84,6 +100,6 @@ class SettleLedgerTest {
         ledger.submitted(panned, style)
         ledger.clear()
         assertNull(ledger.accept(panned, panned, style))
-        assertFalse(ledger.covers(panned, style))
+        assertFalse(ledger.runs(panned, style))
     }
 }

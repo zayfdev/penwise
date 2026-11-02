@@ -3,7 +3,6 @@ package dev.penwise.ink
 import android.graphics.Bitmap
 import android.graphics.BlendMode
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.Paint
 import androidx.core.graphics.createBitmap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -15,9 +14,12 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * Panning and zooming never re-render on this thread: while the view differs from the one the bitmap was rendered
  * under, the bitmap is drawn through the changing transform (one `drawBitmap` per frame; whatever it does not cover
- * shows the paper colour). Once the gesture settles, a [SettleRenderer] draws the visible page at the new view off
- * this thread and the finished bitmap is swapped in whole; a render the view overtook is dropped, one the scene
- * overtook gets the changed area repainted onto it ([SettleLedger]). A new gesture cancels it, never waits for it.
+ * shows the paper colour). Once a two-finger gesture settles, and all along a pan the page's scroll drives, a
+ * [SettleRenderer] draws the visible page off this thread and the finished bitmap is swapped in whole. A render the
+ * pan overtook is still shown, through the transform, with the next one already asked for: one render runs at a
+ * time and is never cut short by the next pan step, so a scroll keeps landing fresh renders and strokes that come into
+ * view are drawn whole. A render the zoom overtook is dropped; one the scene overtook gets the changed area
+ * repainted onto it ([SettleLedger]). A new two-finger gesture cancels it, never waits for it.
  *
  * A bitmap that was drawn is never painted into again: the hardware canvas records `drawBitmap` and reads the pixels
  * when it replays, a frame later. Paints go into a spare bitmap that then replaces the shown one, and a replaced
@@ -85,24 +87,19 @@ internal class DryLayer(
         val live = cache?.takeUnless { it.closed }
         val changed = full || plan !is RenderPlan.Idle
         if (changed) ledger.sceneChanged(plan, full)
+        // A finished background render shows the scene as of now (the ledger patched this frame's change onto it),
+        // for this view or one the pan has since left.
+        val swapped = swapSettled(live, style, view)
         val shown = rendered
-        // A finished background render already shows this scene state; otherwise bring the bitmap up to date here.
-        if (!swapSettled(live, style, view)) {
-            if (shown != null && shown != view) {
-                pendingFull = pendingFull || changed
-                if (gesturing) cancelSettle() else settle(live, style, view, target)
-                // What the old bitmap does not cover shows the backdrop (or the live page, under a frame).
-                if (paper) {
-                    target.drawColor(PaperPainter.backdrop(style))
-                } else {
-                    target.drawColor(Color.TRANSPARENT, BlendMode.CLEAR)
-                }
-                bitmap?.let {
-                    scaled.draw(target, it, shown, view)
-                    exposed = true
-                }
-                return
-            }
+        if (shown != null && shown != view) {
+            pendingFull = pendingFull || (changed && !swapped)
+            if (gesturing) cancelSettle() else settle(live, style, view, target)
+            // What the bitmap does not cover shows the backdrop (or the live page, under a frame).
+            exposed = scaled.drawOver(target, bitmap, shown, view, PaperPainter.backdrop(style).takeIf { paper })
+            return
+        }
+        if (!swapped) {
+            // Bring the bitmap up to date here.
             cancelSettle()
             paint(live, style, view, plan, full || shown == null || pendingFull)
             pendingFull = false
@@ -177,12 +174,12 @@ internal class DryLayer(
             settler.recycle(done.bitmap)
             return false
         }
-        // The render was never shown, so it can be painted into here.
+        // The render was never shown, so it can be painted into here, under the view it was rendered for.
         if (!patch.isEmpty) {
-            pagePainter.paint(Canvas(done.bitmap), cache, style, view, RenderPlan.Region(patch), false, paper)
+            pagePainter.paint(Canvas(done.bitmap), cache, style, done.view, RenderPlan.Region(patch), false, paper)
         }
         install(done.bitmap)
-        rendered = view
+        rendered = done.view
         pendingFull = false
         return true
     }
@@ -195,14 +192,18 @@ internal class DryLayer(
         exposed = false
     }
 
-    /** Starts (or keeps) the background render for [view]; a request for another view or style is superseded. */
+    /**
+     * Starts the background render for [view], or keeps the one running: a render for an earlier pan at this zoom and
+     * style is left to finish (it lands, and the next frame asks for this view); one for another zoom or style is
+     * superseded.
+     */
     private fun settle(
         cache: SceneRenderCache?,
         style: PageStyle,
         view: ViewTransform,
         target: Canvas,
     ) {
-        if (settler.pending && ledger.covers(view, style)) return
+        if (settler.pending && ledger.runs(view, style)) return
         ledger.submitted(view, style)
         settler.request(
             SettleRequest(

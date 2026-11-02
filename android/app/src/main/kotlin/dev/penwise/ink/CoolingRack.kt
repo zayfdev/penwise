@@ -1,7 +1,9 @@
 package dev.penwise.ink
 
 import android.graphics.Bitmap
+import android.graphics.BlendMode
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.Paint
 import androidx.core.graphics.withMatrix
@@ -48,5 +50,22 @@ internal class ScaledDraw {
         matrix.setScale(k, k)
         matrix.postTranslate(to.tx - k * from.tx, to.ty - k * from.ty)
         target.withMatrix(matrix) { drawBitmap(bitmap, 0f, 0f, paint) }
+    }
+
+    /**
+     * Clears [target] to [backdrop] (transparent when null), then draws [bitmap] (if any) as [draw] does. True when a
+     * bitmap was drawn, so it is now exposed to the canvas's replay.
+     */
+    fun drawOver(
+        target: Canvas,
+        bitmap: Bitmap?,
+        from: ViewTransform,
+        to: ViewTransform,
+        backdrop: Int?,
+    ): Boolean {
+        if (backdrop != null) target.drawColor(backdrop) else target.drawColor(Color.TRANSPARENT, BlendMode.CLEAR)
+        bitmap ?: return false
+        draw(target, bitmap, from, to)
+        return true
     }
 }

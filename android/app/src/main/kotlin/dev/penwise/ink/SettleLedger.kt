@@ -26,11 +26,14 @@ internal class SettleLedger {
         }
     }
 
-    /** Is a render for [view] / [style] open and still repairable? Then it need not be requested again. */
-    fun covers(
+    /**
+     * Is a repairable render open that the layer can show at [view] / [style] once it lands (the same zoom and style;
+     * an earlier pan is fine)? Then a new one for [view] would only cut it short.
+     */
+    fun runs(
         view: ViewTransform,
         style: PageStyle,
-    ): Boolean = this.view == view && this.style == style && !driftAll
+    ): Boolean = this.view?.scale == view.scale && this.style == style && !driftAll
 
     /** A render for [view] / [style] was requested from the scene as it is now. */
     fun submitted(
@@ -52,15 +55,20 @@ internal class SettleLedger {
     }
 
     /**
-     * A render of [rendered] finished while the layer shows [view] / [style]. Null: unusable, drop it. Otherwise the
-     * page-space area the scene changed since its snapshot, to repaint onto it (empty when it is current).
+     * A render of [rendered] finished while the camera is at [view] with [style]. Null: unusable, drop it. Otherwise
+     * the page-space area the scene changed since its snapshot, to repaint onto it (empty when it is current).
+     *
+     * A render for an earlier pan at the same zoom is usable: a finger scroll moves the camera every frame, so a
+     * render always finishes behind it, and it is shown through the transform like the bitmap it replaces. Without
+     * that no render landed during a scroll and strokes that came into view stayed cut at the old screen edge. A
+     * render for another zoom is dropped (shown scaled it would be blurred).
      */
     fun accept(
         rendered: ViewTransform,
         view: ViewTransform,
         style: PageStyle,
     ): Bounds? {
-        val usable = rendered == view && this.view == view && this.style == style && !driftAll
+        val usable = rendered.scale == view.scale && this.view == rendered && this.style == style && !driftAll
         val area = drift.copy()
         clear()
         return area.takeIf { usable }
