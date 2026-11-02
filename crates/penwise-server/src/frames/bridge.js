@@ -25,7 +25,10 @@
  * element is gone. The first message (and the first one after a new page) is full; later ones carry only the
  * rects whose value changed, plus every other field in full. A key removed from `pw:watch` is simply absent, so
  * `null` always means "the element was there and is gone". Keys are `v1|<data-pw-src>|<fingerprint>`:
- * tag, id, stable classes and the nth-of-type path from the nearest ancestor with an id.
+ * tag, id, stable classes and the nth-of-type path from the nearest ancestor with an id. A rect (and a `pw:hit`
+ * rect) is where the page's flow puts the element: a sticky box's pinning is taken out, so a mark bound inside a
+ * sticky column stays where it was drawn on the page; fixed elements keep their viewport rect. The layout is read
+ * again while a CSS transition or animation moves a watched element, and when it ends.
  *
  * The state recipe is a `;`-joined list of `click:<selector>` steps: clicks that toggled `aria-expanded`, a
  * `details`/`dialog` open state, or a state class on the target or the element it controls with `aria-controls`.
@@ -69,6 +72,7 @@
   var haveLayout = false;
   var observed = {};
   var resizeObserver = null;
+  var domObserver = null;
 
   var state = "";
   var stateSteps = [];
@@ -526,9 +530,48 @@
 
   /* ------------------------------------------------------------------ layout */
 
-  function rectOf(element) {
+  // A sticky box's shift from where the flow puts it, [dx, dy] viewport px ([0, 0] while it is not pinned). Read by
+  // taking the box out of sticky positioning for one synchronous measurement: its style attribute is put back at
+  // once, nothing is painted in between, and the bridge's own DOM observer forgets the two mutations.
+  function stickShift(box) {
+    var pinned = box.getBoundingClientRect();
+    var style = box.getAttribute("style");
+    box.style.setProperty("position", "static", "important");
+    var flow = box.getBoundingClientRect();
+    if (style === null) box.removeAttribute("style");
+    else box.setAttribute("style", style);
+    if (domObserver) domObserver.takeRecords();
+    return [pinned.left - flow.left, pinned.top - flow.top];
+  }
+
+  // How far the sticky boxes around `element` (itself included) hold it away from its place in the flow. `shifts`
+  // caches each box's shift for one layout pass ([box, shift] pairs), so a column with several marks is read once.
+  function stickyShiftOf(element, shifts) {
+    var dx = 0;
+    var dy = 0;
+    for (var node = element; node && node.nodeType === 1 && node !== document.documentElement; node = node.parentElement) {
+      if (window.getComputedStyle(node).position !== "sticky") continue;
+      var shift = null;
+      for (var i = 0; i < shifts.length; i += 1) {
+        if (shifts[i][0] === node) shift = shifts[i][1];
+      }
+      if (!shift) {
+        shift = stickShift(node);
+        shifts.push([node, shift]);
+      }
+      dx += shift[0];
+      dy += shift[1];
+    }
+    return [dx, dy];
+  }
+
+  // The element's viewport rect where the page's flow puts it. A mark stays where it was drawn on the page: a sticky
+  // column that pins while its section scrolls past must not drag the marks on it along (owner, 2026-11-02). Fixed
+  // elements are not in the flow and keep their viewport rect, so marks on them stay on them.
+  function rectOf(element, shifts) {
     var rect = element.getBoundingClientRect();
-    return [rect.left, rect.top, rect.width, rect.height];
+    var shift = stickyShiftOf(element, shifts || []);
+    return [rect.left - shift[0], rect.top - shift[1], rect.width, rect.height];
   }
 
   function observeElements(entries) {
@@ -576,12 +619,15 @@
     var rects = {};
     var all = {};
     var entries = [];
+    var shifts = [];
     var changed = false;
+    watchedNodes = [];
     for (var i = 0; i < watchKeys.length; i += 1) {
       var key = watchKeys[i];
       var element = resolveKey(key);
       entries.push([key, element]);
-      var rect = element ? rectOf(element) : null;
+      if (element) watchedNodes.push(element);
+      var rect = element ? rectOf(element, shifts) : null;
       all[key] = rect;
       // Change detection works on the DOCUMENT rect (viewport rect + scroll): core stores document rects, so a
       // fixed element (constant viewport rect) or a scroll-anchored one must be resent after a scroll. The
@@ -626,6 +672,57 @@
 
   var scheduleLayout = scheduler(layoutNow);
 
+  // CSS transitions and animations move boxes without a DOM change, a resize or a scroll (a reveal-on-scroll block
+  // sliding up into place). While one runs on a watched element or an ancestor of one, the layout is read every
+  // frame, and once more when it ends, so marks bound to it come to rest where it does. An animation that never ends
+  // is followed for MOTION_MS after it starts; its end events still bring a final read.
+  var MOTION_MS = 3000;
+  var watchedNodes = [];
+  var motions = 0;
+  var motionUntil = 0;
+  var following = false;
+
+  function movesWatched(target) {
+    if (!target || target.nodeType !== 1) return false;
+    for (var i = 0; i < watchedNodes.length; i += 1) {
+      if (target === watchedNodes[i] || target.contains(watchedNodes[i])) return true;
+    }
+    return false;
+  }
+
+  function followMotion() {
+    layoutNow();
+    if (motions > 0 && Date.now() < motionUntil) {
+      window.requestAnimationFrame(followMotion);
+    } else {
+      following = false;
+    }
+  }
+
+  function motionStart(event) {
+    if (!movesWatched(event.target)) return;
+    motions += 1;
+    motionUntil = Date.now() + MOTION_MS;
+    if (following || !window.requestAnimationFrame) return;
+    following = true;
+    window.requestAnimationFrame(followMotion);
+  }
+
+  function motionEnd(event) {
+    if (!movesWatched(event.target)) return;
+    motions = Math.max(0, motions - 1);
+    scheduleLayout();
+  }
+
+  function observeMotion() {
+    ["transitionrun", "animationstart"].forEach(function (name) {
+      window.addEventListener(name, motionStart, true);
+    });
+    ["transitionend", "transitioncancel", "animationend", "animationcancel"].forEach(function (name) {
+      window.addEventListener(name, motionEnd, true);
+    });
+  }
+
   // Replace the watched keys and force one layout message: a newly watched key is always carried, and a
   // vanished one is reported as `null` on the next frame.
   function watch(keys) {
@@ -645,9 +742,10 @@
   function observeDom() {
     if (!window.MutationObserver || !document.documentElement) return;
     try {
-      new window.MutationObserver(function () {
+      domObserver = new window.MutationObserver(function () {
         scheduleLayout();
-      }).observe(document.documentElement, {
+      });
+      domObserver.observe(document.documentElement, {
         subtree: true,
         childList: true,
         attributes: true,
@@ -1244,6 +1342,7 @@
     }
   }
   observeDom();
+  observeMotion();
 
   // Milliseconds between reload-socket retries: 1, 2, 4, 8 s, then 10 s (capped), plus up to 250 ms of jitter.
   function reloadDelay(attempt, random) {

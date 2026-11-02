@@ -1161,3 +1161,191 @@ async fn the_reload_socket_survives_a_long_outage() {
         "jitter stays under 250 ms and the cap holds: {out}"
     );
 }
+
+/// The latest rect the core holds for `key` after every `pw:layout` so far (they merge per key), as a document rect
+/// `[x, y, w, h]` (viewport rect + that message's scroll, the core's rule), or `None` when it was never sent.
+async fn core_doc_rect(inspect: &Inspect, page: &Page, key: &str) -> Option<Vec<f64>> {
+    let all = messages(inspect, page, "pw:layout").await;
+    all.iter().rev().find_map(|message| {
+        let rect = rect_of(message, key)?;
+        let sx = message["scroll"][0].as_f64()?;
+        let sy = message["scroll"][1].as_f64()?;
+        Some(vec![rect[0] + sx, rect[1] + sy, rect[2], rect[3]])
+    })
+}
+
+/// A case-study column that sticks while its section scrolls past (`position: sticky; top: 40px`), as on the
+/// owner's portfolio: placed before `#tall`, it returns the document y of the section's top.
+async fn add_sticky_case(inspect: &Inspect, page: &Page) -> f64 {
+    let top = inspect
+        .eval(
+            page,
+            "window.scrollTo(0, 0); var c = document.createElement('section'); c.id = 'pw-case'; \
+             c.style.cssText = 'height:1200px;margin:16px 0;background:#f4f4f4'; \
+             var s = document.createElement('div'); s.id = 'pw-side'; \
+             s.style.cssText = 'position:sticky;top:40px;width:200px;height:100px;background:#cde'; \
+             var p = document.createElement('p'); p.id = 'pw-side-text'; p.textContent = 'sticky words'; \
+             s.appendChild(p); c.appendChild(s); document.getElementById('tall').before(c); \
+             c.getBoundingClientRect().top + window.scrollY",
+        )
+        .await
+        .expect("sticky case");
+    top.as_f64().expect("case top")
+}
+
+/// A mark bound to a sticky element stays where it was drawn on the page: the bridge reports the element where the
+/// flow puts it, not where sticking holds it on screen, so scrolling past never drags the mark along (owner,
+/// 2026-11-02: "the drawings start moving down as well with it until they are out of view").
+#[tokio::test]
+async fn a_sticky_element_is_reported_where_the_flow_puts_it() {
+    if !chromium_installed() {
+        tracing::warn!("chromium is not installed; bridge sticky test skipped");
+        return;
+    }
+    let server = project().await;
+    let (inspect, page) = open(&server).await;
+    let case_top = add_sticky_case(&inspect, &page).await;
+    let key = hit_key(&inspect, &page, "#pw-side-text").await;
+    inspect
+        .eval(
+            &page,
+            &format!("window.scrollTo(0, {}); 1", case_top - 100.0),
+        )
+        .await
+        .expect("scroll above the case");
+    watch(&inspect, &page, std::slice::from_ref(&key)).await;
+    let first = wait_layout(&inspect, &page, |message| rect_of(message, &key).is_some()).await;
+    let flow = core_doc_rect(&inspect, &page, &key)
+        .await
+        .expect("flow rect");
+    assert!(
+        first["scroll"][1].as_f64().is_some_and(|y| y < case_top),
+        "not pinned yet: {first}"
+    );
+
+    // Scroll 500 px into the case: the column is pinned 40 px under the viewport top, 460 px below its flow place.
+    let before = layout_count(&inspect, &page).await;
+    let pinned_scroll = case_top + 500.0;
+    inspect
+        .eval(&page, &format!("window.scrollTo(0, {pinned_scroll}); 1"))
+        .await
+        .expect("scroll into the case");
+    wait_layout_since(&inspect, &page, before, |message| {
+        message["scroll"][1]
+            .as_f64()
+            .is_some_and(|y| (y - pinned_scroll).abs() < 1.0)
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let shown = inspect
+        .eval(
+            &page,
+            "document.getElementById('pw-side').getBoundingClientRect().top",
+        )
+        .await
+        .expect("pinned top");
+    assert!(
+        shown.as_f64().is_some_and(|top| (top - 40.0).abs() < 1.0),
+        "the column is pinned on screen: {shown}"
+    );
+    let held = core_doc_rect(&inspect, &page, &key).await.expect("rect");
+    assert!(
+        (held[1] - flow[1]).abs() < 0.5 && (held[0] - flow[0]).abs() < 0.5,
+        "the core keeps the flow position {flow:?} while the column is pinned, got {held:?}"
+    );
+
+    // A pen-down on the pinned column answers with the same flow rect, so a mark drawn now binds where it is drawn.
+    let hit = inspect
+        .eval(
+            &page,
+            "(function () { var r = document.getElementById('pw-side-text').getBoundingClientRect(); \
+               return window.PenwiseBridge.hitAt(r.left + 4, r.top + 4); })()",
+        )
+        .await
+        .expect("hit while pinned");
+    let hit_top = hit["rect"][1].as_f64().expect("hit rect") + pinned_scroll;
+    assert!(
+        (hit_top - flow[1]).abs() < 0.5,
+        "hit rect at the flow position: {hit}"
+    );
+
+    // Measuring leaves no trace: no inline style on the column, and no layout loop at rest.
+    let style = inspect
+        .eval(
+            &page,
+            "document.getElementById('pw-side').getAttribute('style')",
+        )
+        .await
+        .expect("style");
+    assert!(
+        style
+            .as_str()
+            .is_some_and(|s| s.contains("sticky") && !s.contains("static")),
+        "style kept: {style}"
+    );
+    let resting = layout_count(&inspect, &page).await;
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    let after = layout_count(&inspect, &page).await;
+    assert!(
+        after <= resting + 1,
+        "no layout loop at rest: {resting} -> {after}"
+    );
+
+    page.close().await;
+    inspect.shutdown().await;
+    server.shutdown().await;
+}
+
+/// A reveal-on-scroll block slides into place with a CSS transition, which moves its box without a DOM change, a
+/// resize or a scroll. The bridge reports where it comes to rest; before, the core kept the rect measured as the
+/// class was added and marks bound to it sat up to the slide's distance low (8 css px measured on the tablet).
+#[tokio::test]
+async fn a_watched_element_is_reported_where_a_transition_leaves_it() {
+    if !chromium_installed() {
+        tracing::warn!("chromium is not installed; bridge transition test skipped");
+        return;
+    }
+    let server = project().await;
+    let (inspect, page) = open(&server).await;
+    inspect
+        .eval(
+            &page,
+            "window.scrollTo(0, 0); var b = document.createElement('div'); b.id = 'pw-slide'; \
+             b.textContent = 'slides up'; \
+             b.style.cssText = 'height:60px;background:#dfd;transition:transform 300ms linear,opacity 300ms linear;\
+             transform:translateY(30px);opacity:0'; document.getElementById('tall').before(b); 1",
+        )
+        .await
+        .expect("slide block");
+    let key = hit_key(&inspect, &page, "#pw-slide").await;
+    watch(&inspect, &page, std::slice::from_ref(&key)).await;
+    wait_layout(&inspect, &page, |message| rect_of(message, &key).is_some()).await;
+
+    inspect
+        .eval(
+            &page,
+            "var b = document.getElementById('pw-slide'); b.style.transform = 'none'; b.style.opacity = '1'; 1",
+        )
+        .await
+        .expect("reveal");
+    tokio::time::sleep(Duration::from_millis(900)).await;
+    let rest = inspect
+        .eval(
+            &page,
+            "document.getElementById('pw-slide').getBoundingClientRect().top + window.scrollY",
+        )
+        .await
+        .expect("rest top")
+        .as_f64()
+        .expect("rest top");
+    let held = core_doc_rect(&inspect, &page, &key).await.expect("rect");
+    assert!(
+        (held[1] - rest).abs() < 0.5,
+        "the core holds the resting top {rest}, got {}",
+        held[1]
+    );
+
+    page.close().await;
+    inspect.shutdown().await;
+    server.shutdown().await;
+}

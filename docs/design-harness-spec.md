@@ -270,7 +270,14 @@ Run in the project folder:
 - **State replay fails** (selector changed): mark shown greyed with "state not reproducible".
 - **Patch errors** (bad selector): ghost reports which ops failed; nothing else changes.
 - **Cross-origin content** (iframes, external fonts) stays as-is; external iframes can't be inspected.
-- **Fixed/sticky elements:** bound marks follow them (rect from the bridge); area marks scroll with the document.
+- **Fixed elements:** bound marks follow them (rect from the bridge); area marks scroll with the document.
+- **Sticky elements:** a bound mark stays where it was drawn on the page; the bridge reports a sticky element where
+  the flow puts it, without its pinning, so a column that pins while its section scrolls past does not drag its marks
+  along (owner, 2026-11-02). Moving with the element made the marks ride down the page and break away from the marks
+  next to them.
+- **CSS transitions and animations** (reveal-on-scroll slides) move a bound element without a DOM change or scroll:
+  the bridge re-reads the layout while one runs on a watched element and when it ends, so its marks come to rest
+  where it does.
 - **Owner rotates the tablet or changes the canvas zoom:** frames keep preset size; only canvas zoom changes.
 
 ## 10. Milestones
