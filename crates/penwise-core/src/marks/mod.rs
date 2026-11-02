@@ -31,6 +31,7 @@ mod classify_shapes;
 mod colour;
 mod group;
 mod layout;
+mod layout_change;
 mod mark;
 mod place;
 mod space;
@@ -41,6 +42,7 @@ pub use classify::{MarkKind, MarkShape, classify, classify_with_rect};
 pub use colour::{ColourMeaning, colour_meaning};
 pub use group::{BoundStroke, GROUP_DISTANCE_PX, GROUP_GAP_MS, add_bound_stroke, prune_marks};
 pub use layout::{FrameLayout, FrameLayoutUpdate, FrameLayouts, FrameRect};
+pub use layout_change::{LayoutChange, merge_layout};
 pub use mark::{MAX_MARK_STROKES, MarkItem, MarkStatus, mark_of, set_mark_status};
 pub use place::{FrameState, PlaceQuery, Placement, Visibility, binding_origin, place};
 pub use space::{

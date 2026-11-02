@@ -11,7 +11,7 @@ use penwise_core::edit::Edit;
 use penwise_core::item::{FramePreset, ItemId, LayerSet};
 use penwise_core::marks::{
     BindingMode, BoundStroke, DIM_OPACITY, FrameLayoutUpdate, FrameLayouts, FrameRect, MarkStatus,
-    MarkView, Presentation, add_bound_stroke, prune_marks, set_mark_status,
+    MarkView, Presentation, add_bound_stroke, merge_layout, prune_marks, set_mark_status,
 };
 use penwise_core::sample::Sample;
 use serde::Deserialize;
@@ -89,7 +89,8 @@ impl LayoutRequest {
 }
 
 impl SceneHandle {
-    /// Merges one `pw:layout` message into `frame`'s layout; true when the visible output changed.
+    /// Merges one `pw:layout` message into `frame`'s layout; true when the visible output changed (a scroll alone
+    /// changes none of a full-length frame's marks, see [`merge_layout`]).
     ///
     /// # Errors
     /// [`SyncError::BadArgument`] for unreadable JSON or an unknown preset.
@@ -98,12 +99,13 @@ impl SceneHandle {
             serde_json::from_str(json).map_err(|_| SyncError::BadArgument("frame layout"))?;
         let update = request.update()?;
         let fallback = self.frame_preset(frame);
-        let changed = self.marks.get_mut().layouts.merge(frame, fallback, &update);
-        if changed {
-            self.marks.get_mut().invalidate();
+        let marks = self.marks.get_mut();
+        let change = merge_layout(&self.scene, &mut marks.layouts, frame, fallback, &update);
+        if change.moves_marks {
+            marks.invalidate();
             self.dirty.mark_all();
         }
-        Ok(changed)
+        Ok(change.moves_marks)
     }
 
     /// Drops `frame`'s layout entirely (scroll, document size, state and rects), so the next `set_frame_layout`

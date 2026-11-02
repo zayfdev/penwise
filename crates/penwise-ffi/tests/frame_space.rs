@@ -379,3 +379,73 @@ fn content_bounds_are_the_viewers_rule_for_the_whole_page() {
         Some([500.0, 100.0, 1940.0, 1000.0])
     );
 }
+
+/// A full-length frame's marks sit at document points, so the page scrolling moves none of them: the layout's scroll
+/// alone must not ask the ink layer for a full repaint. It did, for every scroll frame the bridge reported, and every
+/// background render the tablet started during a finger scroll was then thrown away as overtaken: strokes that came
+/// into view mid-scroll stayed cut off or missing until the page stopped (tablet, 2026-11-02). A viewport frame's
+/// marks do move with the scroll, and any other change (rects, document, state) still repaints.
+#[test]
+fn a_scroll_alone_repaints_a_viewport_frame_but_not_a_full_length_one() {
+    let (_core, mut scene, _page) = setup();
+    scene
+        .add_frame(
+            r#"{"project":"site","route":"/","preset":"desktop","x":0,"y":0}"#,
+            NOW,
+        )
+        .unwrap();
+    scene
+        .add_frame(
+            r#"{"project":"site","route":"/v","preset":"desktop","extent":"viewport","x":3000,"y":0}"#,
+            NOW,
+        )
+        .unwrap();
+    let all = frames(&scene);
+    let (full, viewport) = (frame_id(&all[0]), frame_id(&all[1]));
+    let at = |y: u32, rect: &str| {
+        format!(
+            r#"{{"preset":"desktop","scroll":[0,{y}],"doc":[1440,6000],"viewport":[1440,900],"state":"","rects":{{"k":{rect}}}}}"#
+        )
+    };
+    let all_dirty = |scene: &mut SceneHandle| scene.take_dirty().first() == Some(&1);
+    for frame in [full, viewport] {
+        assert!(
+            scene
+                .set_frame_layout(frame, &at(0, "[10,20,30,40]"))
+                .unwrap()
+        );
+    }
+    scene.take_dirty();
+
+    assert!(
+        !scene
+            .set_frame_layout(full, &at(400, "[10,-380,30,40]"))
+            .unwrap()
+    );
+    assert!(
+        !all_dirty(&mut scene),
+        "a full frame's scroll moves no mark"
+    );
+    assert_eq!(
+        scene.frame_live_window(full),
+        Some([0.0, 400.0, 1440.0, 900.0]),
+        "the window still follows"
+    );
+
+    assert!(
+        scene
+            .set_frame_layout(full, &at(400, "[10,-300,30,40]"))
+            .unwrap()
+    );
+    assert!(all_dirty(&mut scene), "a moved element repaints");
+
+    assert!(
+        scene
+            .set_frame_layout(viewport, &at(400, "[10,-380,30,40]"))
+            .unwrap()
+    );
+    assert!(
+        all_dirty(&mut scene),
+        "a viewport frame's marks scroll with the page"
+    );
+}
