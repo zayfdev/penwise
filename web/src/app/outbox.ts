@@ -27,3 +27,11 @@ export async function untilAcknowledged(
   }
   return true;
 }
+
+/** {@link untilAcknowledged} on the real clock. */
+export function untilAcknowledgedNow(pending: () => number): Promise<boolean> {
+  return untilAcknowledged(pending, {
+    now: () => Date.now(),
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  });
+}

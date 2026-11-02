@@ -141,11 +141,13 @@ export function useHarness() {
 }
 
 /**
- * Focuses the `index`-th frame like an owner would: a double click on its box (the mouse reaches the still, which
+ * Focuses the `index`-th frame like an owner would (from the board view): a double click on its box (the mouse reaches the still, which
  * fits the frame to the stage width and gives it the live iframe). Resolves when the iframe exists and the
  * camera glide has ended.
  */
 export async function focusFrame(viewer: Page, index = 0): Promise<void> {
+  // A board opens on one readable frame; the frame boxes are reachable from the board view.
+  await viewer.click("#tool-board");
   await viewer
     .locator("#frames .frame")
     .nth(index)

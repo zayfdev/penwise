@@ -74,6 +74,13 @@ export class DesignControls {
     if (view !== null) this.camera.glideTo(view);
   }
 
+  /** Shows the whole board at once (the "Board" button): no glide, so what follows sees the final view. */
+  showContent(): void {
+    this.camera.cancel();
+    const view = this.deps.contentView();
+    if (view !== null) this.deps.apply(view);
+  }
+
   /** In lead mode the tablet follows a frame focused here (only to a server that knows `Focus`). */
   announceFocus(frame: Frame): void {
     const page = this.deps.current();

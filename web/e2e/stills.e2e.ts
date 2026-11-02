@@ -64,6 +64,7 @@ describe("full-length frames in the PC window", () => {
     const site = await linkSite("stills long", longSite(5840));
     const { page, frame } = await pageWithFrame(site.id);
     const viewer = await h.openViewer(page);
+    await viewer.click("#tool-board");
     const box = viewer.locator("#frames .frame");
 
     // The still arrives: the box grows to the document (5840 + 100 margin + 60 probe = 6000 px)...
@@ -78,7 +79,7 @@ describe("full-length frames in the PC window", () => {
     await expect
       .poll(
         async () => {
-          await viewer.click("#tool-fit");
+          await viewer.click("#tool-board");
           return (await state(viewer))?.stills[frame]?.length ?? 0;
         },
         { timeout: 20_000, interval: 500 },
@@ -259,10 +260,10 @@ describe("full-length frames in the PC window", () => {
           .evaluateAll((nodes) => nodes.map((n) => (n as HTMLElement).dataset.frame))
       ).indexOf(id);
 
-    await viewer.click("#tool-fit");
+    await viewer.click("#tool-board");
     await focusFrame(viewer, await indexOf(a));
     expect(await liveFrame(viewer)).toBe(a);
-    await viewer.click("#tool-fit");
+    await viewer.click("#tool-board");
     await focusFrame(viewer, await indexOf(b));
     expect(await liveFrame(viewer)).toBe(b);
 
@@ -289,7 +290,7 @@ describe("full-length frames in the PC window", () => {
     expect(builds).toBe(2);
 
     // Going back to it shows the same iframe: nothing is rebuilt.
-    await viewer.click("#tool-fit");
+    await viewer.click("#tool-board");
     await focusFrame(viewer, await indexOf(a));
     expect(await liveFrame(viewer)).toBe(a);
     expect((await state(viewer))?.frameBuilds).toBe(builds);
@@ -312,7 +313,7 @@ describe("full-length frames in the PC window", () => {
           .locator("#frames .frame")
           .evaluateAll((nodes) => nodes.map((n) => (n as HTMLElement).dataset.frame))
       ).indexOf(id);
-    await viewer.click("#tool-fit");
+    await viewer.click("#tool-board");
     await focusFrame(viewer, await indexOf(a));
     await expect.poll(async () => (await state(viewer))?.layouts, { timeout: 15_000 }).toBe(1);
 
@@ -337,7 +338,7 @@ describe("full-length frames in the PC window", () => {
     await viewer.uncheck("#tool-draw-mouse");
 
     // Leave the frame: its layout is the still's now. The mark is still drawn, inside the frame's box.
-    await viewer.click("#tool-fit");
+    await viewer.click("#tool-board");
     await focusFrame(viewer, await indexOf(b));
     const box = await viewer.locator(`#frames .frame[data-frame="${a}"]`).evaluate((n) => ({
       top: Number.parseFloat((n as HTMLElement).style.top),

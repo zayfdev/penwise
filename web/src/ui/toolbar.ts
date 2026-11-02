@@ -9,7 +9,10 @@ import type { BrushChoice } from "../input/pen";
 export interface ToolbarEvents {
   undo(): void;
   redo(): void;
+  /** Fit the current frame's width (readable page). */
   fit(): void;
+  /** See the whole board. */
+  board(): void;
   mode(mode: FollowMode): void;
   /** "Draw with mouse": the mouse inks over frames instead of clicking through them. */
   mouseDraw(on: boolean): void;
@@ -83,6 +86,7 @@ export class Toolbar {
       this.undoButton,
       this.redoButton,
       this.button("Fit", "tool-fit", events.fit),
+      this.button("Board", "tool-board", events.board),
       mode,
       binding,
       el("label", { class: "toggle" }, [mouseDraw, "Draw with mouse"]),

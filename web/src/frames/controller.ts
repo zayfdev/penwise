@@ -146,6 +146,11 @@ export class FrameController {
     return this.frames;
   }
 
+  /** The shown page's frames, `[]` while they still belong to a page shown before. */
+  get shown(): readonly Frame[] {
+    return this.framesPage !== null && this.framesPage === this.deps.page() ? this.frames : [];
+  }
+
   /** Marks of the shown page as last read from the core. */
   get currentMarks(): readonly Mark[] {
     return this.marks;

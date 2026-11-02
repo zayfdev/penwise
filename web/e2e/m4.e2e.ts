@@ -148,7 +148,7 @@ describe("ghosts and variants in the PC window", () => {
     expect(typeof made.group).toBe("string");
     const group = String(made.group);
 
-    await viewer.click("#tool-fit");
+    await viewer.click("#tool-board");
     // The base plus two variants, each label on its chip and a "Use this" on the variants only. Nothing is
     // focused, so they are stills: no iframe at all.
     await expect.poll(() => viewer.locator("#frames .frame").count(), { timeout: 10_000 }).toBe(3);
@@ -164,7 +164,7 @@ describe("ghosts and variants in the PC window", () => {
     // Each variant shows its own patch: focus it and read the colour the patch gave the marker.
     const colourOf = async (chip: Locator): Promise<string> => {
       const id = await chip.getAttribute("data-frame");
-      await viewer.click("#tool-fit");
+      await viewer.click("#tool-board");
       await focusFrame(viewer, await frameIndex(viewer, String(id)));
       return viewer
         .frameLocator('#frames .frame[data-live="live"] iframe')
@@ -173,7 +173,7 @@ describe("ghosts and variants in the PC window", () => {
     };
     await expect.poll(() => colourOf(bold), { timeout: 15_000 }).toBe("rgb(200, 0, 0)");
     await expect.poll(() => colourOf(calm), { timeout: 15_000 }).toBe("rgb(0, 0, 200)");
-    await viewer.click("#tool-fit");
+    await viewer.click("#tool-board");
 
     // Picking one highlights it and dims the other variant.
     // (At the fit view three chips overlap and the lifted ones can sit under the toolbar: dispatch the click.)

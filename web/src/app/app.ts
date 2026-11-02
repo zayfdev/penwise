@@ -7,6 +7,7 @@ import { byId } from "../dom";
 import { AddFrameForm } from "../frames/add-form";
 import { FrameController } from "../frames/controller";
 import { coreApi } from "../frames/core-api";
+import { readableView } from "../frames/readable";
 import { attachHistoryKeys } from "../input/keys";
 import { PenInput } from "../input/pen";
 import { Api, fetchLocalToken } from "../net/api";
@@ -30,9 +31,10 @@ import { choosePage, findPage, type NotebookGroup, readCatalog } from "./catalog
 import { DesignControls } from "./design";
 import { type FollowMode, PendingSwitch, planReceived, SnapshotTracker } from "./follow";
 import { historyState, stepHistory } from "./history";
-import { untilAcknowledged } from "./outbox";
+import { untilAcknowledgedNow } from "./outbox";
 import { exposeProbe } from "./probe";
 import { Projects } from "./projects";
+import { Reading } from "./reading";
 import { Unsent } from "./unsent";
 
 /** All layers of a page (core `LayerSet` bits). */
@@ -71,6 +73,7 @@ export class App {
   private readonly images: ImageCache;
   private connState: ConnectionState = "closed";
   private readonly snapshots = new SnapshotTracker();
+  private readonly reading = new Reading();
 
   constructor(
     private readonly wasm: Wasm,
@@ -127,8 +130,8 @@ export class App {
       byId("live", HTMLCanvasElement),
       {
         page: () => findPage(this.groups, this.current),
-        committed: () => this.drawData("committed"),
-        live: () => this.drawData("live"),
+        committed: () => this.drawOf("committed"),
+        live: () => this.drawOf("live"),
       },
       grain,
       images,
@@ -210,7 +213,8 @@ export class App {
     this.toolbar = new Toolbar(byId("toolbar", HTMLElement), wasm.preset_names(), {
       undo: () => this.step(false),
       redo: () => this.step(true),
-      fit: () => this.refit(true),
+      fit: () => this.fitFrame(),
+      board: () => this.design.showContent(),
       mode: (mode) => {
         this.mode = mode;
         if (mode === "free") this.pendingSwitch.clear();
@@ -290,7 +294,7 @@ export class App {
     );
   }
 
-  private drawData(which: "committed" | "live"): DrawData {
+  private drawOf(which: "committed" | "live"): DrawData {
     if (this.current === null) return EMPTY_DRAW;
     const list =
       which === "committed"
@@ -331,6 +335,9 @@ export class App {
       const chosen = choosePage(this.groups, this.current, this.hint);
       if (chosen !== this.current) this.showPage(chosen);
     }
+    if (plan.move === "focus" && plan.switchTo !== null && plan.focusItem !== null) {
+      this.reading.tabletFocused(plan.switchTo, plan.focusItem);
+    }
     if (plan.switchTo !== null && plan.move !== null) {
       this.design.moves.offer(plan.switchTo, plan.move, plan.focusItem, received.device ?? null);
     }
@@ -339,8 +346,8 @@ export class App {
     if (plan.refreshCatalog) this.sidebar.render(this.groups, this.current);
     if (plan.repaintCommitted) {
       this.pageView.invalidateCommitted();
-      if (this.refitOnData) this.refit(false);
       this.refreshFrames();
+      if (this.refitOnData) this.refit(false);
     }
     if (plan.repaintLive) this.pageView.invalidateLive();
     this.design.moves.apply();
@@ -382,11 +389,11 @@ export class App {
     this.connection.watch(page);
     this.images.clearFailed();
     this.sidebar.render(this.groups, page);
+    this.refreshFrames();
     this.refit(false);
     this.pageView.invalidateCommitted();
     this.pageView.invalidateLive();
     this.refreshHistory();
-    this.refreshFrames();
     void this.projects.refresh();
   }
 
@@ -401,15 +408,30 @@ export class App {
     if (this.mode === "lead") this.connection.send(this.wasm.encode_switch_page(page));
   }
 
+  /** "Fit": the current frame's width; the whole content on a page without frames. */
+  private fitFrame(): void {
+    const frames = this.frames.shown;
+    const frame = this.reading.current(
+      frames,
+      this.frames.liveState.frame,
+      this.current,
+      this.mode,
+    );
+    if (frame === null || !this.frames.focusItem(frame.id)) this.design.fitContent();
+  }
+
   private refit(force: boolean): void {
     if (this.userMoved && !force) return;
+    const frame = this.reading.frame(this.frames.shown, this.current, this.mode);
     const page = findPage(this.groups, this.current);
-    if (!page) return;
     const bounds = this.current ? this.viewer.content_bounds(this.current, ALL_LAYERS) : undefined;
-    if (!page.fixed && bounds) this.refitOnData = false;
-    if (page.fixed) this.refitOnData = false;
+    const view = frame
+      ? readableView(frame, this.viewport)
+      : page && fitView(page, bounds, this.viewport);
+    if (!view) return;
+    if (frame || page?.fixed || bounds) this.refitOnData = false;
     this.userMoved = false;
-    this.viewChanged(fitView(page, bounds, this.viewport));
+    this.viewChanged(view);
   }
 
   private resized(viewport: Viewport, dpr: number): void {
@@ -440,10 +462,7 @@ export class App {
     this.frameForm.setSending(true);
     // The last stroke belongs to the round it was drawn for: let the server have it first.
     this.connection.flush();
-    await untilAcknowledged(() => this.viewer.pending_ops(), {
-      now: () => Date.now(),
-      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-    });
+    await untilAcknowledgedNow(() => this.viewer.pending_ops());
     this.frameForm.setSendStatus(await this.actions.sendRound(live?.project ?? project));
     this.frameForm.setSending(false);
   }
