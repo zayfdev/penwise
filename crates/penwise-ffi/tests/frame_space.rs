@@ -449,3 +449,43 @@ fn a_scroll_alone_repaints_a_viewport_frame_but_not_a_full_length_one() {
         "a viewport frame's marks scroll with the page"
     );
 }
+
+/// The bridge reports viewport rects and the core adds the scroll back, so a watched element that did not move comes
+/// back a few float ulps away from where it was whenever the scroll is fractional (the tablet's always is). That noise
+/// counted as a moved mark: every scroll frame repainted all the ink (tablet, 2026-11-02: a full repaint on 7 of 9
+/// frames of a fling). Rects within a hundredth of a px are the same rect.
+#[test]
+fn float_noise_from_a_fractional_scroll_does_not_repaint() {
+    let (_core, mut scene, _page) = setup();
+    scene
+        .add_frame(
+            r#"{"project":"site","route":"/","preset":"desktop","x":0,"y":0}"#,
+            NOW,
+        )
+        .unwrap();
+    let full = frame_id(&frames(&scene)[0]);
+    let at = |scroll: f64, rect_y: f64| {
+        format!(
+            r#"{{"preset":"desktop","scroll":[0,{scroll}],"doc":[1440,6000],"viewport":[1440,900],"state":"","rects":{{"k":[10,{rect_y},30,40]}}}}"#
+        )
+    };
+    // Reports logged on the tablet: `main` at document y 80, its viewport y and the scroll each rounded to f32.
+    assert!(scene.set_frame_layout(full, &at(0.0, 80.0)).unwrap());
+    scene.take_dirty();
+    for (scroll, rect_y) in [
+        (536.941_162_109_375, -456.941_192_626_953_1),
+        (572.705_871_582_031_2, -492.705_871_582_031_25),
+    ] {
+        let changed = scene.set_frame_layout(full, &at(scroll, rect_y)).unwrap();
+        assert!(!changed, "scroll {scroll}: the element did not move");
+        assert_ne!(
+            scene.take_dirty().first(),
+            Some(&1),
+            "scroll {scroll}: no full repaint"
+        );
+    }
+    assert!(
+        scene.set_frame_layout(full, &at(600.0, -518.0)).unwrap(),
+        "2 px is a move"
+    );
+}
