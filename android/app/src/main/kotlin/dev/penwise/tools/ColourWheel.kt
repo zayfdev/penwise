@@ -43,7 +43,7 @@ private const val THUMB_HALO = 0x66000000
  * A hue ring with a saturation/value square inside it, for any colour. [rgb] is the colour shown; dragging the ring
  * changes the hue, dragging the square the saturation and value, and each change goes to [onPick] as `0xRRGGBB`.
  * [onEnd] fires when a drag ends, once per pick. The hue is kept while the colour is a grey (where RGB has none), and
- * the ring shows no marker for a colour without a hue.
+ * the ring shows no marker for a colour without a hue, and its square is a grey ramp that only picks greys.
  */
 @Composable
 internal fun ColourWheel(
@@ -62,6 +62,8 @@ internal fun ColourWheel(
     val colors = ChromeStyle.colors
     // The wheel position the owner is dragging, while it still shows the colour handed in; else read it from [rgb].
     var dragged by remember { mutableStateOf<Hsv?>(null) }
+    // Whether the square being dragged picks a hue; fixed when the drag starts so the square doesn't flip mid-drag.
+    var dragWithHue by remember { mutableStateOf<Boolean?>(null) }
     val hsv = dragged?.takeIf { ColourMath.toRgb(it) == (rgb and RGB_MASK) } ?: ColourMath.fromRgb(rgb)
     val currentHsv by rememberUpdatedState(hsv)
     val currentPick by rememberUpdatedState(onPick)
@@ -76,35 +78,40 @@ internal fun ColourWheel(
                     val zone = geometry.zoneAt(down.position.x, down.position.y)
                     if (zone == WheelZone.NONE) return@awaitEachGesture
 
+                    val withHue = ColourMath.hasHue(currentHsv)
+
                     fun apply(at: Offset) {
                         val next =
                             if (zone == WheelZone.RING) {
                                 ColourMath.withHue(currentHsv, geometry.hueAt(at.x, at.y))
                             } else {
                                 currentHsv.copy(
-                                    saturation = geometry.saturationAt(at.x),
+                                    saturation = ColourMath.squareSaturation(geometry.saturationAt(at.x), withHue),
                                     value = geometry.valueAt(at.y),
                                 )
                             }
                         dragged = next
                         currentPick(ColourMath.toRgb(next))
                     }
+                    dragWithHue = withHue
                     apply(down.position)
                     drag(down.id) { change ->
                         change.consume()
                         apply(change.position)
                     }
+                    dragWithHue = null
                     currentEnd()
                 }
             },
     ) {
-        drawWheel(geometry, hsv, colors.well)
+        drawWheel(geometry, hsv, dragWithHue ?: ColourMath.hasHue(hsv), colors.well)
     }
 }
 
 private fun DrawScope.drawWheel(
     geometry: WheelGeometry,
     hsv: Hsv,
+    withHue: Boolean,
     well: Color,
 ) {
     val centre = Offset(geometry.side / 2, geometry.side / 2)
@@ -119,7 +126,7 @@ private fun DrawScope.drawWheel(
     val origin = geometry.squareOrigin
     val box = Size(geometry.squareSide, geometry.squareSide)
     val round = CornerRadius(SQUARE_RADIUS_DP.dp.toPx())
-    val pure = Color(ColourMath.toRgb(hsv.copy(saturation = 1f, value = 1f)) or OPAQUE)
+    val pure = Color(ColourMath.squareEdge(hsv, withHue) or OPAQUE)
     drawRoundRect(
         Brush.horizontalGradient(listOf(Color.White, pure), origin.x, origin.x + box.width),
         origin,
@@ -133,7 +140,7 @@ private fun DrawScope.drawWheel(
         round,
     )
     // Black and greys have no hue, so the ring shows no marker for them instead of one parked on red.
-    if (ColourMath.hasHue(hsv)) thumb(geometry.ringPoint(hsv.hue), RING_THUMB_DP.dp.toPx(), pure)
+    if (withHue) thumb(geometry.ringPoint(hsv.hue), RING_THUMB_DP.dp.toPx(), pure)
     thumb(geometry.squarePoint(hsv.saturation, hsv.value), SQUARE_THUMB_DP.dp.toPx(), null)
 }
 

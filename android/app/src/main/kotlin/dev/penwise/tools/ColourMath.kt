@@ -21,6 +21,7 @@ internal object ColourMath {
     private const val RGB_MASK = 0xFFFFFF
     private const val BYTE_MASK = 0xFF
     private const val MIN_VISIBLE = 0.25f
+    private const val GREY_RAMP_EDGE = 0xFFFFFF
 
     /** `0xRRGGBB` for [hsv]. */
     fun toRgb(hsv: Hsv): Int {
@@ -71,6 +72,18 @@ internal object ColourMath {
      * ring marker for them would sit on red and look like red is picked.
      */
     fun hasHue(hsv: Hsv): Boolean = hsv.saturation >= MIN_VISIBLE && hsv.value >= MIN_VISIBLE
+
+    /** The right-hand edge of the square's gradient for [hsv]: its pure hue, or white's grey ramp without a hue. */
+    fun squareEdge(
+        hsv: Hsv,
+        withHue: Boolean = hasHue(hsv),
+    ): Int = if (withHue) toRgb(hsv.copy(saturation = 1f, value = 1f)) else GREY_RAMP_EDGE
+
+    /** The saturation a square drag at [dragged] picks: a colour without a hue stays grey, so it stays at 0. */
+    fun squareSaturation(
+        dragged: Float,
+        withHue: Boolean,
+    ): Float = if (withHue) dragged else 0f
 
     /** `#RRGGBB`. */
     fun hex(rgb: Int): String = "#%06X".format(rgb and RGB_MASK)
