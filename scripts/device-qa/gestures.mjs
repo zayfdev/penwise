@@ -104,9 +104,13 @@ export async function drawStroke(ctx, { n = 0, wait = true, server = true, line 
   // a default slot, so the default strokes keep cycling through the five places (a portrait glue stroke must not land
   // on a landscape one: same slot, same document point).
   if (line) ctx.lineStrokes = (ctx.lineStrokes ?? 0) + 1;
+  // Ten places: five rows, each also shifted right by 4% of the width (a parallel line about 17 px away), so the
+  // dozen default strokes of a full run do not land on one another.
   const slot = n - (line ? 0 : ctx.lineStrokes ?? 0);
-  const y0 = s.live.h * (0.42 + 0.06 * (((slot % 5) + 5) % 5));
-  const [x1, y1, x2, y2] = line ?? [s.w * 0.3, y0, s.w * 0.6, y0 + s.live.h * 0.08];
+  const place = ((slot % 10) + 10) % 10;
+  const y0 = s.live.h * (0.42 + 0.06 * (place % 5));
+  const x0 = s.w * (0.3 + 0.04 * Math.floor(place / 5));
+  const [x1, y1, x2, y2] = line ?? [x0, y0, x0 + s.w * 0.3, y0 + s.live.h * 0.08];
   const marksBefore = server ? (await roundState()).marks : (ctx.offlineMarks ?? 0);
   const before = await shot(ctx, `stroke-${ctx.strokeNo}-before`);
   const framesBefore = await inkFrames();

@@ -20,16 +20,22 @@ const DEVICE_FILE = '/sdcard/penwise-skew.mp4';
 const lum = (r, g, b) => 0.299 * r + 0.587 * g + 0.114 * b;
 const near = (v, want) => Math.abs(v - want) < 30;
 
-/** Centres of runs of rows (consecutive within 2 px). */
-function runs(rows) {
+/**
+ * Centres of runs of rows (consecutive within 2 px). A run that touches the read band's edge ([top], [bottom]) is
+ * cut off there, and its centre would be off: it is left out.
+ */
+function runs(rows, top = -Infinity, bottom = Infinity) {
   const out = [];
   for (const y of rows) {
     const run = out.at(-1);
     if (run && y - run.at(-1) <= 2) run.push(y);
     else out.push([y]);
   }
-  return out.map((run) => run.reduce((a, v) => a + v, 0) / run.length);
+  return out.filter((run) => run[0] > top + EDGE_PX && run.at(-1) < bottom - EDGE_PX).map((run) => run.reduce((a, v) => a + v, 0) / run.length);
 }
+
+/** A run this close to the read band's edge may be cut off. */
+const EDGE_PX = 3;
 
 /**
  * One frame's column: the stroke's row (the only dark run) and the section boundaries (a white band between two
@@ -48,7 +54,7 @@ function readColumn(img, top, bottom) {
     else if (r > 245 && g > 245 && b > 245) white.push(y);
   }
   const gaps = runs(white).filter((c) => border.some((y) => y < c && c - y < 40) && border.some((y) => y > c && y - c < 40));
-  const strokes = runs(dark);
+  const strokes = runs(dark, top, bottom);
   return { stroke: strokes.length === 1 ? strokes[0] : null, gaps };
 }
 
