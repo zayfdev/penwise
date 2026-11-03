@@ -8,7 +8,9 @@ import glueSkew from './glue-skew.mjs';
 import glueSteps from './glue-steps.mjs';
 
 /** Draws a stroke, scrolls the page by a slow finger swipe, and measures stroke shift vs page shift. */
-const MIN_STROKE_PX = 500;
+// A full run draws many strokes and a later one can partly land on an earlier one: 200 new dark px still give a
+// clear shift (a portrait stroke leaves about 2300).
+const MIN_STROKE_PX = 200;
 
 export async function glueMeasure(ctx, label) {
   const g = 'glue';
