@@ -43,7 +43,8 @@ deny:
 record:
     scripts/record-pen.sh
 
-# Raw pen captures → fixtures/pwrec/*.pwrec (golden test inputs).
+# Raw pen captures → fixtures/pwrec/*.pwrec (golden test inputs). The raw captures are not in the repo:
+# record your own with `just record` first.
 fixtures:
     cargo run -p penwise-fixtures -- convert fixtures/raw/20261024-094722 fixtures/pwrec
 
